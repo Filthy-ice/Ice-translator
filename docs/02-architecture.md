@@ -38,6 +38,7 @@
 | 模块 | 关键类型 | 职责 | 需求 |
 |---|---|---|---|
 | `engine` | `TranslationEngine`（trait）、`unavailable_error()` | 通道抽象：`kind/translate/is_available` | FR-1.3 |
+| `request` | `TranslationRequest`、`TranslationResult` | 通道间唯一的入参/出参结构：语言对、术语提示、分段续译的上下文尾巴、耗时与命中来源 | FR-1.1、FR-1.3、FR-1.9 |
 | `machine` | `MachineTranslateEngine` | 零配置机翻通道，超时与重试 | FR-1.3、FR-1.7、NFR-1 |
 | `ai` | `AiEngine`、`AiEndpoint` | OpenAI 兼容 chat 通道，提示词构造、分段与拼接 | FR-1.3、FR-1.9 |
 | `protect` | `ProtectedText`、`protect()`/`restore()` | URL/邮箱/代码块/标识符/带单位数字的占位符保护 | FR-1.6 |
@@ -215,5 +216,16 @@ main() ──► Config::load() ──► (cfg, Option<reason>)
 | 4 | 错误到界面的映射穷举 | ✅ 第 5 节，覆盖全部已定义变体 |
 | 5 | 关键取舍有 ADR | ✅ ADR-001/002/003/005/006；ADR-004（机翻端点）待 P3 实测后补 |
 | 6 | 可测试性：纯函数与 IO 分离 | ✅ 吸附计算、几何合并、缓存、术语替换均为纯逻辑 |
+| 7 | 模块表与实际代码一致 | ✅ 逐 crate 核对 `pub mod` 清单，发现并补登记 `ice-providers::request`；其余计划模块按阶段落地（见下） |
 
-**验收结论（P2）**：待补——需在骨架编译通过后正式签发。
+**验收结论（P2）**：**签发**。骨架编译通过、53 项单测通过、clippy 无警告，依赖方向由 `cargo tree` 核实（`ice-core` 依赖树内无 egui/eframe/reqwest/image），ADR-001 的单窗口双形态已在 macOS 真机按预期改变窗口形态（`evidence/P1-03-window-geometry.txt`）。
+
+落地进度与本文的对应关系（本文描述 v1.0 全貌，不要求 P1 就全部存在）：
+
+| 状态 | 模块 |
+|---|---|
+| 已实现并有单测 | `ice-core` 的 6 个业务模块（40 项）；`ice-providers` 的 `engine`/`request`/`cache`/`dispatcher`/`error`（10 项，`dispatcher` 用 mock 引擎覆盖选路、缓存与可用性）；`ice-app` 的窗口形态与置顶控制（3 项无头断言） |
+| 只有接口与桩，尚无单测 | `ice-vision` 的 `ocr`/`composite`/`error`（P6/P7 填充并补测） |
+| P3 落地 | `machine`、`ai`、`protect`，以及 ADR-004 |
+| P4/P5 落地 | `state`、`mode`、`views::*`、`jobs`、`system` |
+| P6/P7 落地 | `vision_sys`、`layout`、`bg`、`font` |
