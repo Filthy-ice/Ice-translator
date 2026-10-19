@@ -3,7 +3,7 @@
   "id": "CHG-001",
   "title": "引入 SDD 工作流引擎到 Ice-translator 仓库",
   "version": "v0.1",
-  "status": "VERIFIED",
+  "status": "ACCEPTED",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -205,6 +205,20 @@
       "at": "2026-10-19T09:43:56+00:00",
       "action": "transition",
       "detail": "VERIFIED"
+    },
+    {
+      "at": "2026-10-19T09:58:29+00:00",
+      "action": "accept",
+      "detail": {
+        "at": "2026-10-19T09:58:29+00:00",
+        "by": "filthy-ice",
+        "reference": "2026-10-19 会话：用户确认 CHG-001@v0.1 记录方式可用",
+        "baseline": {
+          "change": "CHG-001",
+          "version": "v0.1",
+          "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+        }
+      }
     }
   ],
   "approval": {
@@ -220,5 +234,15 @@
       "ice-translator": "main"
     }
   },
-  "plan_hash": "514d2541ad6051c68b6ad3975d713f21fe85bee5be8d707eb80c5f232ae326f0"
+  "plan_hash": "514d2541ad6051c68b6ad3975d713f21fe85bee5be8d707eb80c5f232ae326f0",
+  "acceptance": {
+    "at": "2026-10-19T09:58:29+00:00",
+    "by": "filthy-ice",
+    "reference": "2026-10-19 会话：用户确认 CHG-001@v0.1 记录方式可用",
+    "baseline": {
+      "change": "CHG-001",
+      "version": "v0.1",
+      "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+    }
+  }
 }

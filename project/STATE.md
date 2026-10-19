@@ -2,4 +2,4 @@
 
 | Change | Version | Status | Title |
 |---|---|---|---|
-| [CHG-001](../features/CHG-001/spec.md) | v0.1 | SPEC_REVIEW | 引入 SDD 工作流引擎到 Ice-translator 仓库 |
+| [CHG-001](../features/CHG-001/spec.md) | v0.1 | ACCEPTED | 引入 SDD 工作流引擎到 Ice-translator 仓库 |
