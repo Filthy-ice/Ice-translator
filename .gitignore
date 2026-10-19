@@ -22,3 +22,14 @@ rustc-ice-*.txt
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# macOS
+.DS_Store
+
+# 本地密钥与临时导出，永不入库
+.env
+*.key
+secrets/
+
+# 验收证据里的原始截图可大，只留精选
+/docs/evidence/raw/

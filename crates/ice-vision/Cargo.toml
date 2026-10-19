@@ -1,0 +1,22 @@
+[package]
+name = "ice-vision"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Ice Translator 视觉层：图片 OCR、原文擦除与译文回填合成。"
+
+[dependencies]
+ice-core.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+image.workspace = true
+
+# P6 接入 macOS Vision 时再启用，届时按 crate 实际 feature 名补齐：
+#   objc2 = "0.6"
+#   objc2-foundation = { version = "0.3", features = ["NSString", "NSArray"] }
+#   objc2-vision = { version = "0.3", features = ["VNRecognizeTextRequest", "VNRequestHandler", "VNObservation", "VNRequest", "VNTypes"] }
+# [target.'cfg(target_os = "macos")'.dependencies]
+
+[dev-dependencies]
+tempfile = "3"

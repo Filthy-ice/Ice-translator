@@ -1,0 +1,23 @@
+[package]
+name = "ice-providers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Ice Translator 翻译引擎层：机翻与 AI 双通道、内容保护、缓存。"
+
+[dependencies]
+ice-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+async-trait = "0.1"
+lru = "0.12"
+regex = "1"
+urlencoding = "2"
+
+[dev-dependencies]
+tempfile = "3"
