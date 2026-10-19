@@ -33,3 +33,9 @@ secrets/
 
 # 验收证据里的原始截图可大，只留精选
 /docs/evidence/raw/
+
+# SDD 工作区：本机绝对路径映射、写锁与备份只属于这台机器，不入库
+.sdd/
+repos/
+__pycache__/
+*.pyc

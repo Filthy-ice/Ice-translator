@@ -35,9 +35,21 @@ Ice-translator/
 │      └── src/main.rs         # 二进制名 ice-translator
 ├── docs/                      # 本文档所在目录（顶层 document/ 是它的软链）
 │   ├── adr/                   # 不可逆决策记录
-│   └── evidence/              # 各阶段验收证据：截图、样图、命令输出
+│   ├── evidence/              # 各阶段验收证据：截图、样图、命令输出
+│   └── workflow.md            # SDD 状态机与机器记录格式
+├── sdd                        # SDD 命令行入口（./sdd --help）
+├── tools/                     # SDD 引擎与门禁脚本（Python 3.11+，仅标准库）
+├── features/ quick/ incidents/  # 变更包：spec/design/tasks/traceability/evidence
+├── project/                   # 工作区配置、项目边界、路线图、生成的 STATE
+├── codebase/                  # 代码地图与仓库登记（本机绝对路径在 .sdd/，不入库）
+├── templates/                 # 变更包模板
+├── skills/                    # 五个 SDD 技能入口
+├── tests/                     # SDD 引擎回归测试
 └── assets/                    # 图标、测试样图
 ```
+
+发布打包时 `sdd`、`tools/`、`features/`、`quick/`、`incidents/`、`project/`、`codebase/`、`templates/`、
+`skills/`、`tests/` 属于开发工作区，不进入 .app 产物（P8 的打包脚本按此排除）。
 
 ## 3. 依赖方向（硬约束，NFR-6）
 
@@ -68,6 +80,22 @@ cargo build --release -p ice-app        # 发布构建
 RUST_LOG=debug cargo run -p ice-app     # 带调试日志运行
 ```
 
+SDD 工作区（规格、批准、追踪、证据）：
+
+```bash
+./sdd status CHG-001                    # 恢复现场：状态、批准哈希、任务与证据
+./sdd new CHG-002 --title "…" --repos ice-translator
+./sdd validate --offline                # 只校验存档结构与附件完整性（CI/换机用）
+./sdd scan                              # 敏感信息基线扫描，只报位置与规则
+./sdd index                             # 刷新 project/STATE.md 导航
+python3 -B tools/check_traceability.py  # 需求基线 ↔ 追踪矩阵 编号一致性
+python3 -B tools/check_staged.py        # 暂存区规格/文档敏感信息门禁
+python3 -B tests/test_workflow.py       # SDD 引擎自身回归（32 项）
+```
+
+可选：`git config core.hooksPath .githooks` 让 `.githooks/pre-commit` 自动跑上面两道门禁。
+该配置改的是本机仓库设置，需你确认后执行；未配置时门禁靠手工跑。
+
 日志：`tracing_subscriber` 按 `RUST_LOG` 环境变量决定级别，默认 `info`。日志只记录文本长度与哈希前 8 位，不记录源文全文（NFR-3）；API Key 永远不落日志。
 
 ## 5. 编码规范
@@ -91,6 +119,9 @@ RUST_LOG=debug cargo run -p ice-app     # 带调试日志运行
 - Conventional Commits：`docs(P0): ...`、`feat(P3): ...`、`fix(P5): ...`、`test(P7): ...`
 - 每个阶段验收通过后至少一个提交；提交信息正文说明**为什么**这么改，而不是改了哪些文件。
 - 阶段验收未通过不进入下一阶段，问题以 `fix(Px)` 回到对应阶段修。
+- 由变更包驱动的开发，提交正文引用 `CHANGE-ID@version` 与 Spec SHA-256（规格与代码同仓，可同一次提交）。
+- **本仓库是公开的**：从外部引入文件前必须过 `./sdd scan`、`tools/check_staged.py`，
+  并按关键字核查不含其他项目的标识、内部域名、真实账号与未脱敏日志；任一不过即不提交。
 
 ## 8. 平台差异备忘
 

@@ -1,0 +1,14 @@
+{
+  "baseline": null,
+  "design": [{"requirement": "REQ-001", "section": "## REQ-001 实现与验证"}],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": ["REQ-001"],
+      "repo": "{{REPO}}",
+      "kind": "VERIFIED_CODE",
+      "environment": "static",
+      "required": true
+    }
+  ]
+}

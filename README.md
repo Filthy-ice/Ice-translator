@@ -25,6 +25,20 @@ v1.0 开发中，按 P0~P8 阶段推进，每阶段有验收记录。当前进�
 | P7 | 译文回填 |
 | P8 | 测试与验收收口 |
 
+## 工作方式
+
+规格与代码同仓，走一套本地 SDD 记录：`features/CHG-*/` 里每个变更包有 spec / design / tasks / traceability / evidence，
+状态机八道门禁，批准按 SHA-256 快照记账，源码变动会让旧证据过期。
+
+```bash
+./sdd status CHG-001        # 恢复现场
+./sdd validate --offline    # 校验存档
+./sdd scan                  # 敏感信息基线扫描
+```
+
+流程与数据格式见 `docs/workflow.md`，当前计划见 `project/ROADMAP.md`，代码地图见 `codebase/ARCHITECTURE.md`。
+`docs/00~07` 是项目级需求与验收基线，两者分工见 `AGENTS.md`。
+
 ## 快速开始
 
 ```bash

@@ -1,0 +1,10 @@
+# Spec、批准快照、封存设计及证据参与字节哈希，跨平台 checkout 保留原始字节。
+/features/** -text
+/project/** -text
+/codebase/** -text
+/quick/** -text
+/incidents/** -text
+/templates/** -text
+# 原始命令输出保留行尾空白，避免为了格式检查改写已封存的证据附件。
+/features/**/evidence/*.txt -whitespace
+/quick/**/evidence/*.txt -whitespace

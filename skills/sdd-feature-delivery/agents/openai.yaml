@@ -1,0 +1,6 @@
+interface:
+  display_name: "SDD · 需求交付"
+  short_description: "依据批准版本完成设计、任务、实现与分层验证，保存可追溯证据"
+  default_prompt: "使用 $sdd-feature-delivery，按当前规格与实际授权处理这项工作。"
+policy:
+  allow_implicit_invocation: true

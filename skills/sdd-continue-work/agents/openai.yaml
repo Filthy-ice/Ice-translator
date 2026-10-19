@@ -1,0 +1,6 @@
+interface:
+  display_name: "SDD · 恢复工作"
+  short_description: "从持久化规格与 Git 状态恢复批准基线、剩余任务和真实阻塞"
+  default_prompt: "使用 $sdd-continue-work，按当前规格与实际授权处理这项工作。"
+policy:
+  allow_implicit_invocation: true

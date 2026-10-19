@@ -1,0 +1,13 @@
+{
+  "baseline": null,
+  "tasks": [
+    {
+      "id": "T-001",
+      "title": "待填写：可独立完成和验证的任务",
+      "requirements": ["REQ-001"],
+      "repo": "{{REPO}}",
+      "status": "todo",
+      "code_refs": []
+    }
+  ]
+}

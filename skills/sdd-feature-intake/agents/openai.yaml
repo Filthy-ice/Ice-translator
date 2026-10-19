@@ -1,0 +1,6 @@
+interface:
+  display_name: "SDD · 需求调查"
+  short_description: "调查真实需求与跨仓入口，建立有事实来源和决策边界的可评审规格"
+  default_prompt: "使用 $sdd-feature-intake，按当前规格与实际授权处理这项工作。"
+policy:
+  allow_implicit_invocation: true
