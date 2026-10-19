@@ -1,0 +1,8 @@
+/var/folders/rf/54yrwss1511_vbzkn6h5sjr40000gn/T/tmpf53vim9v/installed/demo
+/var/folders/rf/54yrwss1511_vbzkn6h5sjr40000gn/T/tmpf53vim9v/installed/demo
+
+................................
+----------------------------------------------------------------------
+Ran 32 tests in 11.543s
+
+OK

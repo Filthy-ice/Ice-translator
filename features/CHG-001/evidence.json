@@ -1,3 +1,304 @@
 {
-  "events": []
+  "events": [
+    {
+      "at": "2026-10-19T09:30:33+00:00",
+      "verification": "V-001",
+      "requirements": [
+        "REQ-001"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "99d762e0bd9546d0b9ae164dc2c721d1a5c9d560dc42e83e2eebb488296b515b",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "efbb9a96bce27f762f38316b113c299163524b3d75098fe7d00dc74a8ca5607e",
+      "result": "passed",
+      "summary": "argv=[\"./sdd\", \"validate\", \"--offline\"] exit=0",
+      "artifact": "evidence/0001-V-001.txt",
+      "artifact_hash": "254030cdecfca76b205dda0cd083657415723847891c15b8526b49ba2218d7b3"
+    },
+    {
+      "at": "2026-10-19T09:30:34+00:00",
+      "verification": "V-004",
+      "requirements": [
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "ea90bba0254a4694c8cf0a99e0783228f1b87d73aacebae0e249d7524f3803e4",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "efbb9a96bce27f762f38316b113c299163524b3d75098fe7d00dc74a8ca5607e",
+      "result": "passed",
+      "summary": "argv=[\"python3\", \"-B\", \"tools/check_traceability.py\"] exit=0",
+      "artifact": "evidence/0002-V-004.txt",
+      "artifact_hash": "0134bb18bdd25e34fd6fb07bc154a4f19700d471a55fa7eb74b93474e800828d"
+    },
+    {
+      "at": "2026-10-19T09:30:53+00:00",
+      "verification": "V-002",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "8dba2ebdb12ac671886aafc09c928544b847ed8c380b135669447cfe2f2f8a78",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "efbb9a96bce27f762f38316b113c299163524b3d75098fe7d00dc74a8ca5607e",
+      "result": "passed",
+      "summary": "argv=[\"python3\", \"-B\", \"tests/test_workflow.py\"] exit=0",
+      "artifact": "evidence/0003-V-002.txt",
+      "artifact_hash": "a9798b28d00a8c46487091e0c2f9c8bcd403570c28e2063bf0dce22bc596db40"
+    },
+    {
+      "at": "2026-10-19T09:30:53+00:00",
+      "verification": "V-003",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "98a5b0ad7e5972b2d95ff29fc1a26a82f2d8b5325b64e6ffe4555d9ea43dc06e",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "efbb9a96bce27f762f38316b113c299163524b3d75098fe7d00dc74a8ca5607e",
+      "result": "passed",
+      "summary": "argv=[\"./sdd\", \"scan\"] exit=0",
+      "artifact": "evidence/0004-V-003.txt",
+      "artifact_hash": "0aeba1998fea21b35462abc8486766f93bf061a7339e02280daffb374af459de"
+    },
+    {
+      "at": "2026-10-19T09:31:30+00:00",
+      "verification": "V-001",
+      "requirements": [
+        "REQ-001"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "060acd242c87092617a5c96c283a42262b101baa5ee5b8f253d6a3e042069d83",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "efbb9a96bce27f762f38316b113c299163524b3d75098fe7d00dc74a8ca5607e",
+      "result": "passed",
+      "summary": "argv=[\"./sdd\", \"validate\", \"--offline\"] exit=0",
+      "artifact": "evidence/0005-V-001.txt",
+      "artifact_hash": "254030cdecfca76b205dda0cd083657415723847891c15b8526b49ba2218d7b3"
+    },
+    {
+      "at": "2026-10-19T09:31:42+00:00",
+      "verification": "V-002",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "a6c5cf0480ab9b532c85c2231d3bd6c1f7c070891186f8544f4d2a073a1cc750",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "efbb9a96bce27f762f38316b113c299163524b3d75098fe7d00dc74a8ca5607e",
+      "result": "passed",
+      "summary": "argv=[\"python3\", \"-B\", \"tests/test_workflow.py\"] exit=0",
+      "artifact": "evidence/0006-V-002.txt",
+      "artifact_hash": "0bdca3e934a07208d648ebc6cda044c01c96fb3e8030afc92c2b2d6651951c0b"
+    },
+    {
+      "at": "2026-10-19T09:31:42+00:00",
+      "verification": "V-003",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "4abf59bc9cd334c56c7571aff1f084ad31bf859e1932427d32bb3460bcc206af",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "efbb9a96bce27f762f38316b113c299163524b3d75098fe7d00dc74a8ca5607e",
+      "result": "passed",
+      "summary": "argv=[\"./sdd\", \"scan\"] exit=0",
+      "artifact": "evidence/0007-V-003.txt",
+      "artifact_hash": "0aeba1998fea21b35462abc8486766f93bf061a7339e02280daffb374af459de"
+    },
+    {
+      "at": "2026-10-19T09:31:42+00:00",
+      "verification": "V-004",
+      "requirements": [
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "a4d635f10512bca55fa2b106af821b4b0d88f447d822deff381daf2b0493892d",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "efbb9a96bce27f762f38316b113c299163524b3d75098fe7d00dc74a8ca5607e",
+      "result": "passed",
+      "summary": "argv=[\"python3\", \"-B\", \"tools/check_traceability.py\"] exit=0",
+      "artifact": "evidence/0008-V-004.txt",
+      "artifact_hash": "0134bb18bdd25e34fd6fb07bc154a4f19700d471a55fa7eb74b93474e800828d"
+    },
+    {
+      "at": "2026-10-19T09:43:31+00:00",
+      "verification": "V-001",
+      "requirements": [
+        "REQ-001"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "ace91b6d28c63c3cd024e6e8ad6e41fbe74ae306921fce28566364ad893d9fcb",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "514d2541ad6051c68b6ad3975d713f21fe85bee5be8d707eb80c5f232ae326f0",
+      "result": "passed",
+      "summary": "argv=[\"./sdd\", \"validate\", \"--offline\"] exit=0",
+      "artifact": "evidence/0009-V-001.txt",
+      "artifact_hash": "254030cdecfca76b205dda0cd083657415723847891c15b8526b49ba2218d7b3"
+    },
+    {
+      "at": "2026-10-19T09:43:51+00:00",
+      "verification": "V-002",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "ace91b6d28c63c3cd024e6e8ad6e41fbe74ae306921fce28566364ad893d9fcb",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "514d2541ad6051c68b6ad3975d713f21fe85bee5be8d707eb80c5f232ae326f0",
+      "result": "passed",
+      "summary": "argv=[\"python3\", \"-B\", \"tests/test_workflow.py\"] exit=0",
+      "artifact": "evidence/0010-V-002.txt",
+      "artifact_hash": "f2d231d90fedb55615a0b411d2b100ed11ef19b1d4fedb177d3af8ffe428a4f4"
+    },
+    {
+      "at": "2026-10-19T09:43:51+00:00",
+      "verification": "V-003",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "ace91b6d28c63c3cd024e6e8ad6e41fbe74ae306921fce28566364ad893d9fcb",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "514d2541ad6051c68b6ad3975d713f21fe85bee5be8d707eb80c5f232ae326f0",
+      "result": "passed",
+      "summary": "argv=[\"./sdd\", \"scan\"] exit=0",
+      "artifact": "evidence/0011-V-003.txt",
+      "artifact_hash": "0aeba1998fea21b35462abc8486766f93bf061a7339e02280daffb374af459de"
+    },
+    {
+      "at": "2026-10-19T09:43:52+00:00",
+      "verification": "V-004",
+      "requirements": [
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "524943f3e593ebbf5b36ed0cf73438ee22c94516",
+        "tree_hash": "ace91b6d28c63c3cd024e6e8ad6e41fbe74ae306921fce28566364ad893d9fcb",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      },
+      "plan_hash": "514d2541ad6051c68b6ad3975d713f21fe85bee5be8d707eb80c5f232ae326f0",
+      "result": "passed",
+      "summary": "argv=[\"python3\", \"-B\", \"tools/check_traceability.py\"] exit=0",
+      "artifact": "evidence/0012-V-004.txt",
+      "artifact_hash": "0134bb18bdd25e34fd6fb07bc154a4f19700d471a55fa7eb74b93474e800828d"
+    }
+  ]
 }

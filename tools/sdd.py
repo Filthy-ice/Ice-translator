@@ -157,21 +157,35 @@ def mapped_repo(root, repo_id):
     return path
 
 
-def fingerprint(path):
+def fingerprint(path, exclude=()):
     # Hash content, including untracked but not ignored files; commits/dirty state stay separate.
+    # `exclude` drops paths that this tool itself writes when specs live in the code repo.
     files = git(path, 'ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')
     entries = []
     for name in sorted(set(n for n in files if n)):
-        p = path / os.fsdecode(name)
+        rel = os.fsdecode(name)
+        if exclude and rel.startswith(exclude):
+            continue
+        p = path / rel
         if p.is_symlink():
             content = b'link:' + os.readlink(p).encode()
         elif p.is_file():
             content = p.read_bytes()
         else:
             content = b'MISSING'
-        entries.append([os.fsdecode(name), digest(content), p.stat().st_mode & 0o111 if p.exists() else 0])
+        entries.append([rel, digest(content), p.stat().st_mode & 0o111 if p.exists() else 0])
     return {'head': git(path, 'rev-parse', 'HEAD').decode().strip(), 'tree_hash': digest(canonical(entries)),
             'dirty': bool(git(path, 'status', '--porcelain'))}
+
+
+# 规格与代码同仓时，账本（证据、状态、生成视图）的写入不得使已记录证据过期：
+# 它是证据的存放处，不是被测代码。`.sdd/` 里的写锁内容是 PID，每次调用都不同，同样属于工具状态。
+# 分开布局下 repo != root，排除集为空，行为与来源一致。
+LEDGER = ('features/', 'quick/', 'incidents/', 'project/STATE.md', '.sdd/')
+
+
+def ledger_for(root, repo):
+    return LEDGER if repo == root else ()
 
 
 def plan_valid(root, p, m, sealed=True):
@@ -240,7 +254,9 @@ def verified(root, p, m, offline=False):
         require(relevant and relevant[-1]['result'] == 'passed', f"{v['id']} 缺少当前基线成功证据或最后一次失败")
         e = relevant[-1]
         if not offline:
-            require(e['repo_state']['tree_hash'] == fingerprint(mapped_repo(root, v['repo']))['tree_hash'],
+            r = mapped_repo(root, v['repo'])
+            require(e['repo_state']['tree_hash'] ==
+                    fingerprint(r, ledger_for(root, r))['tree_hash'],
                     f"{v['id']} 检查后代码改变，证据过期")
         require(e['requirements'] == v['requirements'] and e['repo'] == v['repo'] and
                 e['kind'] == v['kind'] and e['environment'] == v['environment'], '证据元数据与验证计划不一致')
@@ -376,7 +392,8 @@ def execute(root, a):
         print(json.dumps(m, ensure_ascii=False, indent=2))
         for repo_id in m['repos']:
             try:
-                state = fingerprint(mapped_repo(root, repo_id))
+                r = mapped_repo(root, repo_id)
+                state = fingerprint(r, ledger_for(root, r))
                 print(repo_id, json.dumps(state))
             except ValueError as e:
                 print(repo_id, str(e))
@@ -482,7 +499,8 @@ def execute(root, a):
         v = next((v for v in read(p / 'traceability.json')['verifications'] if v['id'] == a.verification), None)
         require(v is not None, 'Verification 不存在')
         repo = mapped_repo(root, v['repo'])
-        state = fingerprint(repo)
+        exclude = ledger_for(root, repo)
+        state = fingerprint(repo, exclude)
         if a.cmd == 'check':
             require(v.get('command'), '未登记本地检查命令')
             try:
@@ -493,7 +511,8 @@ def execute(root, a):
             except subprocess.TimeoutExpired as e:
                 output = (e.stdout or b'') + b'\n' + (e.stderr or b'')
                 result, summary = 'failed', '检查超时'
-            require(fingerprint(repo)['tree_hash'] == state['tree_hash'], '检查修改了源码/非忽略文件；清理构建输出后重新运行')
+            require(fingerprint(repo, exclude)['tree_hash'] == state['tree_hash'],
+                    '检查修改了源码/非忽略文件；清理构建输出后重新运行')
         else:
             require(not v.get('command'), '有 command 的验证必须通过 check 运行，不能手工声称通过')
             source = Path(a.source).expanduser()

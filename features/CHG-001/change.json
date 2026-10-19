@@ -3,7 +3,7 @@
   "id": "CHG-001",
   "title": "引入 SDD 工作流引擎到 Ice-translator 仓库",
   "version": "v0.1",
-  "status": "SPEC_REVIEW",
+  "status": "VERIFIED",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -24,8 +24,201 @@
       "at": "2026-10-19T09:19:31+00:00",
       "action": "transition",
       "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-10-19T09:28:37+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f",
+        "version": "v0.1",
+        "by": "filthy-ice",
+        "reference": "2026-10-19 会话：用户回复\"我看了spec，没问题\"，确认 CHG-001@v0.1 当前哈希与 local-delivery 范围",
+        "at": "2026-10-19T09:28:37+00:00",
+        "snapshot": "approvals/v0.1-213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f.md",
+        "scope": "local-delivery",
+        "context_hash": "1d9b0d12bd527eef058a602f023adec7aa127f51895be6d3a3501ba0155a68e5",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-10-19T09:30:26+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      }
+    },
+    {
+      "at": "2026-10-19T09:30:27+00:00",
+      "action": "seal-plan",
+      "detail": "efbb9a96bce27f762f38316b113c299163524b3d75098fe7d00dc74a8ca5607e"
+    },
+    {
+      "at": "2026-10-19T09:30:33+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-10-19T09:30:33+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:30:34+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-004",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:30:53+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:30:53+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-003",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:31:06+00:00",
+      "action": "task-done",
+      "detail": "T-001"
+    },
+    {
+      "at": "2026-10-19T09:31:06+00:00",
+      "action": "task-done",
+      "detail": "T-002"
+    },
+    {
+      "at": "2026-10-19T09:31:06+00:00",
+      "action": "task-done",
+      "detail": "T-003"
+    },
+    {
+      "at": "2026-10-19T09:31:06+00:00",
+      "action": "task-done",
+      "detail": "T-004"
+    },
+    {
+      "at": "2026-10-19T09:31:30+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:31:42+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:31:42+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-003",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:31:42+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-004",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:40:46+00:00",
+      "action": "replan",
+      "detail": "单仓布局下账本写入改变被测树哈希，刚记录的证据立即过期；指纹改为排除账本自身路径（技术修复，不改已批准行为）"
+    },
+    {
+      "at": "2026-10-19T09:43:19+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-001",
+        "version": "v0.1",
+        "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+      }
+    },
+    {
+      "at": "2026-10-19T09:43:19+00:00",
+      "action": "seal-plan",
+      "detail": "514d2541ad6051c68b6ad3975d713f21fe85bee5be8d707eb80c5f232ae326f0"
+    },
+    {
+      "at": "2026-10-19T09:43:30+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-10-19T09:43:31+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:43:51+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:43:51+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-003",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:43:52+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-004",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T09:43:56+00:00",
+      "action": "transition",
+      "detail": "VERIFIED"
     }
   ],
-  "approval": null,
-  "plan_hash": null
+  "approval": {
+    "hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f",
+    "version": "v0.1",
+    "by": "filthy-ice",
+    "reference": "2026-10-19 会话：用户回复\"我看了spec，没问题\"，确认 CHG-001@v0.1 当前哈希与 local-delivery 范围",
+    "at": "2026-10-19T09:28:37+00:00",
+    "snapshot": "approvals/v0.1-213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f.md",
+    "scope": "local-delivery",
+    "context_hash": "1d9b0d12bd527eef058a602f023adec7aa127f51895be6d3a3501ba0155a68e5",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "514d2541ad6051c68b6ad3975d713f21fe85bee5be8d707eb80c5f232ae326f0"
 }
