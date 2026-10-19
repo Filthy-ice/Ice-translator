@@ -68,11 +68,12 @@
 | NFR-3 隐私 | M | ADR-002/005 | `ice-vision`、日志实现 | TC-P-5 | 待 P8 |
 | NFR-4 中文界面·主题跟随系统+三态开关 | M | 03 §1 | `ice-app`（`ThemePreference`） | TC-P-9 | 待 P4 |
 | NFR-5 资源占用 | S | 05 §1 | release 构建 | TC-P-6 | 待 P8 |
-| NFR-6 分层依赖 | M | ADR-006 | workspace | `cargo tree` 检查 | 待 P8 |
+| NFR-6 分层依赖 | M | ADR-006 | workspace | `cargo tree` 检查 | 部分 ✅ P1 已核（core 依赖树无 egui/eframe/reqwest/image），P8 三目标复核 |
 | NFR-7 跨平台可用与降级 | S | ADR-002 | `ice-vision::native_ocr_supported` | TC-P-7 | 待 P8 |
+| NFR-8 可访问性：字号缩放与键盘可达 | C | 03 §1、§5 | `ice-app`（`pixels_per_point` 跟随 + Tab 顺序） | 走查 W-1、§5 第 5 步 | 待 P4 |
 
 ## 统计
 
-- Must：27 条　Should：16 条　Could：2 条
+- 需求共 44 条：**Must 30 · Should 12 · Could 2**（按 `01-requirements.md` 逐行重新计数得出；此前记的 27/16/2 是 P0 时的旧值，FR-3.9 加入后未重算，已在 P2 自检时更正）。
 - 骨架阶段（P1）已闭环的 Must：FR-3.4 的置顶能力、FR-4.3 全部、FR-3.6 的几何判定部分、FR-1.4 的一部分（语言模型与持久化）。
 - 2026-10-19 需求变更（用户在 P1 走查后提出）：FR-3.2 明确"无边框必须仍可拖动"、新增 FR-3.9 形变动画、NFR-4 改为默认跟随系统深浅色并保留三态开关。三项均落在 P4/P5。
