@@ -1,0 +1,6 @@
+interface:
+  display_name: "SDD · 轻量变更"
+  short_description: "处理单仓规则明确的小变更，逐项排除业务、数据和集成风险"
+  default_prompt: "使用 $sdd-quick-change，按当前规格与实际授权处理这项工作。"
+policy:
+  allow_implicit_invocation: true

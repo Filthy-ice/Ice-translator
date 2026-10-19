@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "CHG-001",
+  "title": "引入 SDD 工作流引擎到 Ice-translator 仓库",
+  "version": "v0.1",
+  "status": "SPEC_REVIEW",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [],
+  "history": [
+    {
+      "at": "2026-10-19T09:18:03+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-10-19T09:19:31+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-10-19T09:19:31+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    }
+  ],
+  "approval": null,
+  "plan_hash": null
+}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "SDD · 事件修复"
+  short_description: "保存事件现场与止血授权，将已确认根因转成独立永久修复需求"
+  default_prompt: "使用 $sdd-incident-repair，按当前规格与实际授权处理这项工作。"
+policy:
+  allow_implicit_invocation: true

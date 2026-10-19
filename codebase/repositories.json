@@ -1,0 +1,6 @@
+{
+  "ice-translator": {
+    "branch": "main",
+    "role": "Ice Translator：Rust 跨平台翻译客户端（eframe/egui 双形态界面、机翻+AI 双通道、本机 OCR 与译文回填）"
+  }
+}
