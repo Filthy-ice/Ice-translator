@@ -1,0 +1,18 @@
+[package]
+name = "ice-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Ice Translator 领域层：数据模型、配置、历史、术语表。不依赖 UI 与网络。"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+dirs.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

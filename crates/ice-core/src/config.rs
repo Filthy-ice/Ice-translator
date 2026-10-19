@@ -1,0 +1,461 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::CoreError;
+use crate::language::{EngineKind, LangPair, Language};
+
+pub const APP_ID: &str = "IceTranslator";
+/// AI 服务 API Key 在钥匙串中的固定条目名（FR-4.2）
+pub const KEYCHAIN_SERVICE: &str = "IceTranslator";
+pub const KEYCHAIN_ACCOUNT: &str = "ai-api-key";
+
+/// 屏幕矩形，用于持久化窗口位置（FR-3.6）
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WindowRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl WindowRect {
+    /// 位置是否落在某块屏幕的可用区内；屏幕拔掉后旧坐标会失败，此时应回到屏幕中心。
+    pub fn within(self, monitor: &WindowRect) -> bool {
+        self.x >= monitor.x - 1.0
+            && self.y >= monitor.y - 1.0
+            && self.right() <= monitor.right() + 1.0
+            && self.bottom() <= monitor.bottom() + 1.0
+    }
+
+    pub const fn right(self) -> f32 {
+        self.x + self.w
+    }
+
+    pub const fn bottom(self) -> f32 {
+        self.y + self.h
+    }
+
+    pub fn centered_in(monitor: &WindowRect, w: f32, h: f32) -> Self {
+        Self {
+            x: monitor.x + (monitor.w - w) / 2.0,
+            y: monitor.y + (monitor.h - h) / 2.0,
+            w,
+            h,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UiMode {
+    Full,
+    Compact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum DockEdge {
+    Left,
+    #[default]
+    Right,
+    Top,
+    Bottom,
+    /// 自由浮动
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiConfig {
+    pub mode: UiMode,
+    pub always_on_top: bool,
+    pub theme: Theme,
+    /// 界面缩放，合法区间 [0.8, 2.0]
+    pub font_scale: f32,
+    /// 简洁模式失焦时半透明（FR-3.7）
+    pub dim_when_unfocused: bool,
+    /// 复制即翻（FR-3.8）
+    pub clipboard_watch: bool,
+    pub full_rect: WindowRect,
+    pub compact_rect: WindowRect,
+    pub docked_edge: DockEdge,
+    /// 贴边停靠时保留的可见热区宽度（FR-3.5）
+    pub dock_sliver_px: f32,
+    /// 距边缘小于该值即吸附（FR-3.5）
+    pub snap_threshold_px: f32,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            mode: UiMode::Full,
+            always_on_top: false,
+            theme: Theme::System,
+            font_scale: 1.0,
+            dim_when_unfocused: true,
+            clipboard_watch: false,
+            full_rect: WindowRect {
+                x: 120.0,
+                y: 120.0,
+                w: 1080.0,
+                h: 720.0,
+            },
+            compact_rect: WindowRect {
+                x: 1400.0,
+                y: 320.0,
+                w: 460.0,
+                h: 96.0,
+            },
+            docked_edge: DockEdge::None,
+            dock_sliver_px: 6.0,
+            snap_threshold_px: 40.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TranslationConfig {
+    pub default_engine: EngineKind,
+    pub source: Option<Language>,
+    pub target: Language,
+    /// 除中英日之外额外启用的语言（FR-1.4）
+    pub extra_languages: Vec<Language>,
+    /// 最近使用的目标语言，最多 5 个
+    pub recent_targets: Vec<Language>,
+    /// AI 超长输入分段阈值（FR-1.9）
+    pub ai_chunk_chars: usize,
+    /// 单次请求超时（NFR-1）
+    pub timeout_ms: u64,
+}
+
+impl Default for TranslationConfig {
+    fn default() -> Self {
+        Self {
+            default_engine: EngineKind::Machine,
+            source: None,
+            target: Language::ZhHans,
+            extra_languages: Vec::new(),
+            recent_targets: vec![Language::ZhHans],
+            ai_chunk_chars: 3500,
+            timeout_ms: 15_000,
+        }
+    }
+}
+
+impl TranslationConfig {
+    pub fn lang_pair(&self) -> LangPair {
+        LangPair {
+            source: self.source,
+            target: self.target,
+        }
+    }
+
+    pub fn remember_target(&mut self, lang: Language) {
+        self.recent_targets.retain(|l| *l != lang);
+        self.recent_targets.insert(0, lang);
+        self.recent_targets.truncate(5);
+    }
+
+    /// 界面语言下拉可见的语言集合
+    pub fn visible_languages(&self) -> Vec<Language> {
+        let mut out: Vec<Language> = Language::preferred().to_vec();
+        for lang in &self.extra_languages {
+            if !out.contains(lang) {
+                out.push(*lang);
+            }
+        }
+        for lang in &self.recent_targets {
+            if !out.contains(lang) {
+                out.push(*lang);
+            }
+        }
+        out
+    }
+}
+
+/// AI 服务参数。**不包含 Key 本身**，只包含钥匙串条目引用（FR-4.2）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiConfig {
+    pub base_url: String,
+    pub model: String,
+    /// 留空表示用服务默认
+    pub temperature: Option<f32>,
+    pub key_configured: bool,
+}
+
+impl AiConfig {
+    pub fn is_ready(&self) -> bool {
+        !self.base_url.trim().is_empty() && !self.model.trim().is_empty() && self.key_configured
+    }
+
+    /// 归一化后的 chat/completions 端点
+    pub fn endpoint(&self) -> String {
+        let base = self.base_url.trim().trim_end_matches('/');
+        if base.ends_with("/chat/completions") {
+            base.to_string()
+        } else {
+            format!("{base}/chat/completions")
+        }
+    }
+}
+
+/// 顶层配置。FR-4.1 / FR-4.3
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    pub ui: UiConfig,
+    pub translation: TranslationConfig,
+    pub ai: AiConfig,
+}
+
+impl Config {
+    pub fn config_dir() -> Result<PathBuf, CoreError> {
+        dirs::config_dir()
+            .map(|p| p.join(APP_ID))
+            .ok_or_else(|| CoreError::ConfigDir("系统找不到配置目录".into()))
+    }
+
+    pub fn config_path() -> Result<PathBuf, CoreError> {
+        Ok(Self::config_dir()?.join("config.toml"))
+    }
+
+    /// 读取配置。文件不存在时返回默认值；内容损坏时回退默认值并记录原因（FR-4.3）。
+    pub fn load() -> Result<(Config, Option<String>), CoreError> {
+        Self::load_at(&Self::config_path()?)
+    }
+
+    pub fn load_at(path: &Path) -> Result<(Config, Option<String>), CoreError> {
+        if !path.exists() {
+            return Ok((Self::default(), None));
+        }
+        let raw = fs::read_to_string(path)?;
+        match toml::from_str::<Config>(&raw) {
+            Ok(cfg) => Ok((cfg.sanitized(), None)),
+            Err(e) => {
+                let reason = format!("配置文件 {path:?} 解析失败，本次以默认配置启动：{e}");
+                tracing::warn!("{reason}");
+                Ok((Self::default(), Some(reason)))
+            }
+        }
+    }
+
+    pub fn save(&self) -> Result<PathBuf, CoreError> {
+        let path = Self::config_path()?;
+        self.save_at(&path)?;
+        Ok(path)
+    }
+
+    /// 先写临时文件再改名，避免中途崩溃留下半份配置。
+    pub fn save_at(&self, path: &Path) -> Result<(), CoreError> {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let rendered =
+            toml::to_string_pretty(self).map_err(|e| CoreError::ConfigParse(e.to_string()))?;
+        let tmp = path.with_extension("toml.tmp");
+        fs::write(&tmp, rendered)?;
+        fs::rename(&tmp, path)?;
+        Ok(())
+    }
+
+    /// 把越界数值夹回合法区间，防止坏配置导致窗口不可用。
+    pub fn sanitized(mut self) -> Self {
+        self.ui.font_scale = self.ui.font_scale.clamp(0.8, 2.0);
+        self.ui.dock_sliver_px = self.ui.dock_sliver_px.clamp(2.0, 24.0);
+        self.ui.snap_threshold_px = self.ui.snap_threshold_px.clamp(8.0, 200.0);
+        self.ui.full_rect.w = self.ui.full_rect.w.max(640.0);
+        self.ui.full_rect.h = self.ui.full_rect.h.max(420.0);
+        self.ui.compact_rect.w = self.ui.compact_rect.w.max(320.0);
+        self.ui.compact_rect.h = self.ui.compact_rect.h.max(64.0);
+        if self.translation.timeout_ms < 1_000 {
+            self.translation.timeout_ms = 1_000;
+        }
+        if self.translation.ai_chunk_chars < 500 {
+            self.translation.ai_chunk_chars = 500;
+        }
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_config_uses_defaults_for_missing_sections() {
+        let cfg: Config = toml::from_str("[ui]\nalways_on_top = true\n").unwrap();
+        assert!(cfg.ui.always_on_top);
+        assert_eq!(cfg.ui.font_scale, 1.0);
+        assert_eq!(cfg.translation.target, Language::ZhHans);
+    }
+
+    #[test]
+    fn roundtrip_keeps_values() {
+        let mut cfg = Config::default();
+        cfg.ui.mode = UiMode::Compact;
+        cfg.ui.always_on_top = true;
+        cfg.translation.default_engine = EngineKind::Ai;
+        cfg.translation.target = Language::Ja;
+        cfg.ai.base_url = "https://api.example.com/v1".into();
+        cfg.ai.model = "some-model".into();
+
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        let back: Config = toml::from_str(&text).unwrap();
+        assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn corrupt_config_is_rejected_not_panic() {
+        let err = toml::from_str::<Config>("ui = ][ this is not toml").is_err();
+        assert!(err);
+    }
+
+    #[test]
+    fn load_at_falls_back_to_defaults_with_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "this is = = not valid toml").unwrap();
+        let (cfg, reason) = Config::load_at(&path).unwrap();
+        assert_eq!(cfg, Config::default());
+        assert!(reason.unwrap().contains("解析失败"));
+    }
+
+    #[test]
+    fn load_at_missing_file_returns_defaults_without_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let (cfg, reason) = Config::load_at(&dir.path().join("absent.toml")).unwrap();
+        assert_eq!(cfg, Config::default());
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn save_at_creates_dirs_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("config.toml");
+        let mut cfg = Config::default();
+        cfg.ui.always_on_top = true;
+        cfg.save_at(&path).unwrap();
+        assert!(path.exists());
+        assert!(!path.with_extension("toml.tmp").exists());
+        let (loaded, _) = Config::load_at(&path).unwrap();
+        assert_eq!(loaded, cfg);
+    }
+
+    #[test]
+    fn sanitize_clamps_out_of_range_values() {
+        let mut cfg = Config::default();
+        cfg.ui.font_scale = 99.0;
+        cfg.ui.snap_threshold_px = 0.1;
+        cfg.ui.compact_rect.w = 10.0;
+        cfg.translation.timeout_ms = 5;
+        let cfg = cfg.sanitized();
+        assert_eq!(cfg.ui.font_scale, 2.0);
+        assert_eq!(cfg.ui.snap_threshold_px, 8.0);
+        assert_eq!(cfg.ui.compact_rect.w, 320.0);
+        assert_eq!(cfg.translation.timeout_ms, 1_000);
+    }
+
+    #[test]
+    fn ai_endpoint_accepts_both_forms() {
+        let mut cfg = AiConfig {
+            base_url: "https://api.example.com/v1/".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.endpoint(),
+            "https://api.example.com/v1/chat/completions"
+        );
+        cfg.base_url = "https://gateway.internal/v1/chat/completions".into();
+        assert_eq!(
+            cfg.endpoint(),
+            "https://gateway.internal/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn ai_not_ready_without_key() {
+        let mut cfg = AiConfig {
+            base_url: "https://a/v1".into(),
+            model: "m".into(),
+            ..Default::default()
+        };
+        assert!(!cfg.is_ready());
+        cfg.key_configured = true;
+        assert!(cfg.is_ready());
+    }
+
+    #[test]
+    fn remember_target_keeps_five_and_most_recent_first() {
+        let mut cfg = TranslationConfig::default();
+        for lang in [
+            Language::En,
+            Language::Ja,
+            Language::De,
+            Language::Fr,
+            Language::Es,
+            Language::Ru,
+        ] {
+            cfg.remember_target(lang);
+        }
+        assert_eq!(cfg.recent_targets.len(), 5);
+        assert_eq!(cfg.recent_targets[0], Language::Ru);
+        assert!(!cfg.recent_targets.contains(&Language::ZhHans));
+    }
+
+    #[test]
+    fn visible_languages_always_includes_preferred() {
+        let cfg = TranslationConfig {
+            extra_languages: vec![Language::De, Language::En],
+            ..Default::default()
+        };
+        let visible = cfg.visible_languages();
+        for lang in Language::preferred() {
+            assert!(visible.contains(lang));
+        }
+        assert!(visible.contains(&Language::De));
+        assert_eq!(visible.iter().filter(|l| **l == Language::En).count(), 1);
+    }
+
+    #[test]
+    fn window_off_screen_detection() {
+        let monitor = WindowRect {
+            x: 0.0,
+            y: 0.0,
+            w: 1440.0,
+            h: 900.0,
+        };
+        assert!(
+            WindowRect {
+                x: 100.0,
+                y: 100.0,
+                w: 400.0,
+                h: 300.0
+            }
+            .within(&monitor)
+        );
+        assert!(
+            !WindowRect {
+                x: 2200.0,
+                y: 100.0,
+                w: 400.0,
+                h: 300.0
+            }
+            .within(&monitor)
+        );
+        let centered = WindowRect::centered_in(&monitor, 400.0, 300.0);
+        assert!(centered.within(&monitor));
+    }
+}

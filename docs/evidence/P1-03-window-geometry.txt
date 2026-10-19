@@ -1,0 +1,26 @@
+P1 窗口几何证据（由 ice-app 在 ViewportCommand 生效后的下一帧打印，tracing level=info）
+
+命令：RUST_LOG=info HOME=<隔离配置目录> ./target/debug/ice-translator
+屏幕：内置屏，pixels_per_point=1.0（非 HiDPI）
+
+1) 简洁模式 · 置顶开
+   mode=Compact 置顶=true  inner=[460.0 96.0]  outer=[460.0 96.0]
+   → inner 与 outer 完全等大，说明标题栏不存在（Decorations(false) 生效）
+   → 尺寸等于 config 的 [ui.compact_rect] 460×96
+
+2) 全量模式 · 置顶关（同一台机器、同一次会话）
+   mode=Full    置顶=false inner=[1000.0 640.0] outer=[1000.0 672.0]
+   → outer 比 inner 高 32pt，正是 macOS 标题栏高度，说明边框恢复（Decorations(true) 生效）
+   → 宽度与 inner 一致，说明没有横向装饰
+
+3) 畸形配置回退
+   WARN 配置文件 ".../config.toml" 解析失败，本次以默认配置启动：TOML parse error at line 1, column 5
+   mode=Full    置顶=false inner=[1080.0 720.0] outer=[1080.0 752.0]
+   → 回退到默认 1080×720，窗口照常创建，界面上方显示橙色告警条
+
+4) 复测（16:52，两个实例并行启动，隔离 HOME 各一份配置）
+   mode=Full    置顶=false inner=[1000.0 640.0] outer=[1000.0 672.0]
+   mode=Compact 置顶=true  inner=[460.0 96.0]  outer=[460.0 96.0]
+   → 与 1)、2) 一致，说明结论可复现，不是单次巧合
+
+结论：单窗口双形态所需的 ViewportCommand 组合在 macOS 上全部按预期改变窗口形态，ADR-001 成立。
