@@ -1,0 +1,8 @@
+/var/folders/rf/54yrwss1511_vbzkn6h5sjr40000gn/T/tmpygruexb9/installed/demo
+/var/folders/rf/54yrwss1511_vbzkn6h5sjr40000gn/T/tmpygruexb9/installed/demo
+
+................................
+----------------------------------------------------------------------
+Ran 32 tests in 11.510s
+
+OK

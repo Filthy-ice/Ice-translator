@@ -1,9 +1,25 @@
 {
-  "baseline": null,
+  "baseline": {
+    "change": "CHG-001",
+    "version": "v0.1",
+    "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+  },
   "design": [
     {
       "requirement": "REQ-001",
       "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
     }
   ],
   "verifications": [
@@ -14,8 +30,57 @@
       ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
-      "environment": "static",
-      "required": true
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "validate",
+        "--offline"
+      ]
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "python3",
+        "-B",
+        "tests/test_workflow.py"
+      ]
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "scan"
+      ]
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "python3",
+        "-B",
+        "tools/check_traceability.py"
+      ]
     }
   ]
 }

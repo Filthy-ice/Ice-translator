@@ -1,15 +1,65 @@
 {
-  "baseline": null,
+  "baseline": {
+    "change": "CHG-001",
+    "version": "v0.1",
+    "spec_hash": "213335f8c4be153a769af710f4e6d51127c1876ccf53684f68924c80823b8b3f"
+  },
   "tasks": [
     {
       "id": "T-001",
-      "title": "待填写：可独立完成和验证的任务",
+      "title": "工作区自持：init + repo 绑定，根目录与子目录均可运行 ./sdd",
       "requirements": [
         "REQ-001"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "sdd",
+        "tools/sdd.py",
+        "project/config.json",
+        "codebase/repositories.json"
+      ]
+    },
+    {
+      "id": "T-002",
+      "title": "移植引擎回归测试并确认只操作隔离临时仓库",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "tests/test_workflow.py",
+        "tools/sdd.py"
+      ]
+    },
+    {
+      "id": "T-003",
+      "title": "建立公开仓库内容门禁：scan、check_staged、外部文件关键字核查",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "tools/sdd.py",
+        "tools/check_staged.py",
+        "AGENTS.md",
+        "docs/verification.md"
+      ]
+    },
+    {
+      "id": "T-004",
+      "title": "新增需求基线与追踪矩阵的编号一致性检查脚本",
+      "requirements": [
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "tools/check_traceability.py",
+        "docs/traceability.md"
+      ]
     }
   ]
 }

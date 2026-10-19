@@ -21,6 +21,8 @@ Rust 跨平台翻译客户端。规格与代码同仓：SDD 记录平铺在根�
 - APPROVED 可设计与拆任务；`seal-plan` 后 DESIGNED；进入 IMPLEMENTING 才实施映射任务。
 - `tasks.json`、`traceability.json`、`evidence.json` 是机器可校验记录；`tasks.md`/`evidence.md` 是生成视图，不手改。
 - 验证引用当前批准哈希和 plan_hash；源码变动使旧证据过期。VERIFIED 后记录实际业务验收才能 ACCEPTED。
+  本仓库规格与代码同仓，被测哈希已排除账本路径（`features/ quick/ incidents/ project/STATE.md .sdd/`），
+  不要再把"证据写完即过期"当成 bug 去改门禁。
 - 外部契约推翻前提时记录 SPEC_DEVIATION 并退回 SPEC_REVIEW；改规格用 `revise` 递增版本，仅技术方案变化用 `replan`。
 - 删除任何东西（含临时文件、旧证据）前先征得同意；不碰用户自己的文件。
 

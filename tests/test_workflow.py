@@ -13,23 +13,8 @@ from install_skills import install
 from check_staged import staged_findings
 
 
-class Workflow(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name) / 'spec-store'
-        sdd.init(self.root)
-        self.repo = Path(self.tmp.name) / 'code'
-        self.repo.mkdir()
-        self.g('init', '-b', 'main')
-        (self.repo / 'calc.py').write_text('def add(a, b):\n    return a + b\n')
-        (self.repo / 'test_calc.py').write_text('from calc import add\nassert add(1, 2) == 3\n')
-        self.g('add', '.')
-        self.g('-c', 'user.name=SDD Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'fixture')
-        self.cli('repo', 'app', '--path', str(self.repo), '--branch', 'main', '--role', '测试样本')
-        self.cli('new', 'CHG-001', '--title', '计算器验证样本', '--repos', 'app')
-        self.p = self.root / 'features/CHG-001'
-        (self.p / 'spec.md').write_text('# 测试规格\n\n### REQ-001: 两个整数相加\nWHEN 1 和 2 相加 THEN SHALL 返回 3。\n')
+class Fixture:
+    """夹具操作；子类用 setUp 决定 SDD 工程与业务仓库的布局。"""
 
     def g(self, *args):
         return subprocess.run(['git', '-C', str(self.repo), *args], check=True, capture_output=True).stdout
@@ -74,6 +59,25 @@ class Workflow(unittest.TestCase):
         self.cli('task-done', 'CHG-001', 'T-001', '--code', 'calc.py', 'test_calc.py')
         self.cli('check', 'CHG-001', 'V-001')
         self.cli('transition', 'CHG-001', 'VERIFIED')
+
+
+class Workflow(Fixture, unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / 'spec-store'
+        sdd.init(self.root)
+        self.repo = Path(self.tmp.name) / 'code'
+        self.repo.mkdir()
+        self.g('init', '-b', 'main')
+        (self.repo / 'calc.py').write_text('def add(a, b):\n    return a + b\n')
+        (self.repo / 'test_calc.py').write_text('from calc import add\nassert add(1, 2) == 3\n')
+        self.g('add', '.')
+        self.g('-c', 'user.name=SDD Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'fixture')
+        self.cli('repo', 'app', '--path', str(self.repo), '--branch', 'main', '--role', '测试样本')
+        self.cli('new', 'CHG-001', '--title', '计算器验证样本', '--repos', 'app')
+        self.p = self.root / 'features/CHG-001'
+        (self.p / 'spec.md').write_text('# 测试规格\n\n### REQ-001: 两个整数相加\nWHEN 1 和 2 相加 THEN SHALL 返回 3。\n')
 
     def test_end_to_end_acceptance_is_separate(self):
         self.verify()
@@ -286,6 +290,50 @@ class Workflow(unittest.TestCase):
         (dst / 'demo/SKILL.md').write_text('user customization')
         with self.assertRaises(ValueError): install(src, dst)
         self.assertEqual((dst / 'demo/SKILL.md').read_text(), 'user customization')
+
+
+class SameRepoWorkspace(Fixture, unittest.TestCase):
+    """规格与代码同仓（本工程的实际布局）：账本自身写入不得使证据过期。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / 'mono'
+        self.root.mkdir()
+        self.repo = self.root
+        self.g('init', '-b', 'main')
+        (self.root / 'calc.py').write_text('def add(a, b):\n    return a + b\n')
+        (self.root / 'test_calc.py').write_text('from calc import add\nassert add(1, 2) == 3\n')
+        self.g('add', '.')
+        self.g('-c', 'user.name=SDD Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'fixture')
+        sdd.init(self.root)
+        self.cli('repo', 'app', '--path', str(self.root), '--branch', 'main', '--role', '同仓样本')
+        self.cli('new', 'CHG-001', '--title', '同仓证据保鲜', '--repos', 'app')
+        self.p = self.root / 'features/CHG-001'
+        (self.p / 'spec.md').write_text('# 测试规格\n\n### REQ-001: 两个整数相加\nWHEN 1 和 2 相加 THEN SHALL 返回 3。\n')
+
+    def test_ledger_writes_keep_evidence_fresh(self):
+        self.verify()
+        self.cli('validate', 'CHG-001')
+        events = sdd.read(self.p / 'evidence.json')['events']
+        self.assertEqual([e['result'] for e in events], ['passed'])
+
+    def test_state_refresh_does_not_invalidate_evidence(self):
+        self.implementing()
+        self.cli('task-done', 'CHG-001', 'T-001', '--code', 'calc.py', 'test_calc.py')
+        self.cli('check', 'CHG-001', 'V-001')
+        self.cli('refresh', 'CHG-001')
+        self.cli('transition', 'CHG-001', 'VERIFIED')
+
+    def test_source_change_still_invalidates_evidence(self):
+        self.verify()
+        (self.repo / 'calc.py').write_text('def add(a, b):\n    return a - b\n')
+        self.cli('validate', 'CHG-001', code=2)
+
+    def test_new_untracked_source_still_invalidates_evidence(self):
+        self.verify()
+        (self.repo / 'extra.py').write_text('print(42)\n')
+        self.cli('validate', 'CHG-001', code=2)
 
 
 if __name__ == '__main__':

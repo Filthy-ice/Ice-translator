@@ -1,0 +1,8 @@
+/var/folders/rf/54yrwss1511_vbzkn6h5sjr40000gn/T/tmpbzz4d65l/installed/demo
+/var/folders/rf/54yrwss1511_vbzkn6h5sjr40000gn/T/tmpbzz4d65l/installed/demo
+
+....................................
+----------------------------------------------------------------------
+Ran 36 tests in 13.931s
+
+OK

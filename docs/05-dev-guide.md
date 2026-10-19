@@ -90,7 +90,7 @@ SDD 工作区（规格、批准、追踪、证据）：
 ./sdd index                             # 刷新 project/STATE.md 导航
 python3 -B tools/check_traceability.py  # 需求基线 ↔ 追踪矩阵 编号一致性
 python3 -B tools/check_staged.py        # 暂存区规格/文档敏感信息门禁
-python3 -B tests/test_workflow.py       # SDD 引擎自身回归（32 项）
+python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 ```
 
 可选：`git config core.hooksPath .githooks` 让 `.githooks/pre-commit` 自动跑上面两道门禁。

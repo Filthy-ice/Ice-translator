@@ -102,6 +102,9 @@ traceability.json：
 ```
 
 检查前后对 Git 跟踪文件和非忽略新文件计算内容哈希（含执行位），Git SHA 和 dirty 状态单独留存。构建/缓存目录应在代码仓库正确忽略；测试修改源码或非忽略文件时本次检查不作为有效证据。失败或超时保存失败记录并返回非零；同一 Verification 的最新当前基线结果决定门禁。
+规格与代码同仓时（本仓库布局），账本自身的写入不计入被测哈希：排除 `features/ quick/ incidents/ project/STATE.md .sdd/`，
+否则 `check` 写完证据就使自己刚记录的证据过期。排除集只在登记仓库等于工作区根时生效，分开布局与来源行为一致；
+被测代码（`crates/`、`tools/`、`docs/`、`templates/`）的变动仍会使证据过期。
 源码变动后旧证据过期；已 VERIFIED 需 `replan --reason`，再次封存并进入 IMPLEMENTING 后重跑。基线/计划变化要求新证据，不复用旧通过结果。
 ACCEPTED 保留历史代码哈希和验收，不与将来的业务仓库内容比较。`validate --offline` 只校验存档的结构、批准/计划与附件完整性，用于 CI/换机；不能证明当前本机代码通过，也不能用来进入 VERIFIED 或 ACCEPTED。
 
