@@ -185,11 +185,84 @@ impl TranslationConfig {
     }
 }
 
+/// AI 供应商预设（FR-1.5、FR-4.4）。
+///
+/// 国内几家已收敛到 OpenAI 兼容的 `/chat/completions`，差异只剩 base_url、默认模型名，
+/// 以及方舟必须填推理接入点 ID。预设只负责"选了就少打字"，任何一项都仍可手改。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AiProvider {
+    Bailian,
+    DeepSeek,
+    Zhipu,
+    Kimi,
+    VolcengineArk,
+    /// 其他 OpenAI 兼容服务，base_url 由用户填写
+    #[default]
+    Custom,
+}
+
+impl AiProvider {
+    pub const fn all() -> [AiProvider; 6] {
+        [
+            AiProvider::Bailian,
+            AiProvider::DeepSeek,
+            AiProvider::Zhipu,
+            AiProvider::Kimi,
+            AiProvider::VolcengineArk,
+            AiProvider::Custom,
+        ]
+    }
+
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            AiProvider::Bailian => "阿里百炼",
+            AiProvider::DeepSeek => "DeepSeek",
+            AiProvider::Zhipu => "智谱 GLM",
+            AiProvider::Kimi => "Kimi（月之暗面）",
+            AiProvider::VolcengineArk => "火山方舟",
+            AiProvider::Custom => "自定义 OpenAI 兼容服务",
+        }
+    }
+
+    /// 预设的 base_url；Custom 返回空串，表示必须由用户填写
+    pub const fn preset_base_url(self) -> &'static str {
+        match self {
+            AiProvider::Bailian => "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            AiProvider::DeepSeek => "https://api.deepseek.com",
+            AiProvider::Zhipu => "https://open.bigmodel.cn/api/paas/v4",
+            AiProvider::Kimi => "https://api.moonshot.cn/v1",
+            AiProvider::VolcengineArk => "https://ark.cn-beijing.volces.com/api/v3",
+            AiProvider::Custom => "",
+        }
+    }
+
+    /// 预设的默认模型名。方舟没有可用默认值（要填推理接入点 ID），留空提示用户。
+    pub const fn preset_model(self) -> &'static str {
+        match self {
+            AiProvider::Bailian => "qwen-plus",
+            AiProvider::DeepSeek => "deepseek-chat",
+            AiProvider::Zhipu => "glm-4-flash",
+            AiProvider::Kimi => "moonshot-v1-8k",
+            AiProvider::VolcengineArk => "",
+            AiProvider::Custom => "",
+        }
+    }
+
+    /// 界面提示：这一项是否需要用户自己填模型
+    pub const fn needs_manual_model(self) -> bool {
+        self.preset_model().is_empty()
+    }
+}
+
 /// AI 服务参数。**不包含 Key 本身**，只包含钥匙串条目引用（FR-4.2）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AiConfig {
+    pub provider: AiProvider,
+    /// 留空表示用预设自带的地址
     pub base_url: String,
+    /// 留空表示用预设自带的模型
     pub model: String,
     /// 留空表示用服务默认
     pub temperature: Option<f32>,
@@ -197,13 +270,38 @@ pub struct AiConfig {
 }
 
 impl AiConfig {
-    pub fn is_ready(&self) -> bool {
-        !self.base_url.trim().is_empty() && !self.model.trim().is_empty() && self.key_configured
+    /// 实际生效的 base_url：手填优先，否则取预设
+    pub fn effective_base_url(&self) -> String {
+        let trimmed = self.base_url.trim();
+        if trimmed.is_empty() {
+            self.provider.preset_base_url().to_string()
+        } else {
+            trimmed.to_string()
+        }
     }
 
-    /// 归一化后的 chat/completions 端点
+    pub fn effective_model(&self) -> String {
+        let trimmed = self.model.trim();
+        if trimmed.is_empty() {
+            self.provider.preset_model().to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        !self.effective_base_url().is_empty()
+            && !self.effective_model().is_empty()
+            && self.key_configured
+    }
+
+    /// 归一化后的 chat/completions 端点；地址缺失时返回空串（此时 `is_ready()` 必为 false）
     pub fn endpoint(&self) -> String {
-        let base = self.base_url.trim().trim_end_matches('/');
+        let base = self.effective_base_url();
+        if base.is_empty() {
+            return String::new();
+        }
+        let base = base.trim_end_matches('/');
         if base.ends_with("/chat/completions") {
             base.to_string()
         } else {
@@ -383,6 +481,69 @@ mod tests {
             cfg.endpoint(),
             "https://gateway.internal/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn preset_provider_supplies_url_and_model() {
+        let cfg = AiConfig {
+            provider: AiProvider::DeepSeek,
+            key_configured: true,
+            ..Default::default()
+        };
+        assert_eq!(cfg.endpoint(), "https://api.deepseek.com/chat/completions");
+        assert_eq!(cfg.effective_model(), "deepseek-chat");
+        assert!(cfg.is_ready(), "选完供应商就能用，不该再要求手填地址");
+    }
+
+    #[test]
+    fn manual_values_beat_the_preset() {
+        let cfg = AiConfig {
+            provider: AiProvider::DeepSeek,
+            base_url: "https://proxy.example.com/v1".into(),
+            model: "deepseek-reasoner".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.endpoint(),
+            "https://proxy.example.com/v1/chat/completions"
+        );
+        assert_eq!(cfg.effective_model(), "deepseek-reasoner");
+    }
+
+    #[test]
+    fn custom_without_url_is_not_ready() {
+        let cfg = AiConfig {
+            provider: AiProvider::Custom,
+            key_configured: true,
+            ..Default::default()
+        };
+        assert!(cfg.effective_base_url().is_empty());
+        assert!(!cfg.is_ready());
+    }
+
+    #[test]
+    fn every_preset_except_custom_has_an_address() {
+        for p in AiProvider::all() {
+            if p == AiProvider::Custom {
+                assert!(p.preset_base_url().is_empty());
+            } else {
+                assert!(
+                    p.preset_base_url().starts_with("https://"),
+                    "{} 必须用 https",
+                    p.display_name()
+                );
+                assert_eq!(p.needs_manual_model(), p.preset_model().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn config_without_provider_field_still_loads() {
+        // 老配置没有 provider 这一项，必须按 Custom 理解而不是报错
+        let cfg: Config = toml::from_str("[ai]\nbase_url = \"https://a/v1\"\nmodel = \"m\"\n")
+            .expect("旧配置应能加载");
+        assert_eq!(cfg.ai.provider, AiProvider::Custom);
+        assert_eq!(cfg.ai.effective_base_url(), "https://a/v1");
     }
 
     #[test]

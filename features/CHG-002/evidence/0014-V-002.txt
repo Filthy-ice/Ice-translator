@@ -1,0 +1,29 @@
+
+running 15 tests
+test protect::tests::chunks_respect_char_limit_and_order ... ok
+test protect::tests::no_near_empty_chunks ... ok
+test protect::tests::prefer_line_break_over_hard_cut ... ok
+test protect::tests::plain_text_gets_no_placeholder ... ok
+test protect::tests::ordinary_capitalized_words_are_not_protected ... ok
+test protect::tests::fenced_code_block_is_protected_as_a_whole ... ok
+test protect::tests::identity_roundtrip_keeps_every_byte ... ok
+test protect::tests::existing_bracket_placeholder_in_source_is_escaped ... ok
+test protect::tests::reordered_placeholders_still_restore ... ok
+test protect::tests::protects_the_declared_kinds_of_untranslatable_content ... ok
+test protect::tests::missing_placeholder_is_reported_as_lost ... ok
+test protect::tests::chunk_never_splits_a_placeholder ... ok
+test protect::tests::oversized_code_block_never_reaches_the_chunk_limit ... ok
+test protect::tests::same_identifier_is_restored_everywhere ... ok
+test machine::tests::protected_content_survives_a_service_that_mangles_numbers ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/ice_providers-8ebe0030a87c3260)
+     Running tests/live.rs (target/debug/deps/live-9a097790427bb733)

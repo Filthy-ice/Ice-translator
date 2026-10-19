@@ -13,7 +13,7 @@
 | 验收方法 | 按 `01-requirements.md` 第 6 节自检清单逐条核对：编号唯一性、Must 项可测性、无不可测表述、范围自洽 |
 | 证据 | `docs/00-charter.md`、`docs/01-requirements.md`；提交 `docs(P0)` |
 | 结论 | **通过** |
-| 遗留 | 需求基线锁定；后续变更须改需求文档并在本文件登记原因。机翻端点选择尚未实测（转 P3 的 ADR-004） |
+| 遗留 | 需求基线锁定；后续变更须改需求文档并在本文件登记原因。机翻端点选择尚未实测（转 P3 的 ADR-004；P3 已实测并落档） |
 
 ## P1 工程骨架 — 2026-10-19
 
@@ -63,7 +63,7 @@
 | 验收方法 | ① 用脚本把 `01-requirements.md` 的需求编号集合与 `traceability.md` 的行集合做双向差集；② 检查矩阵中每条 Must 的"实现"列非空；③ 逐 crate 把 `pub mod` 清单与 `02-architecture.md` §2 的模块表对照；④ 核对 §8 自检 7 项；⑤ ADR 是否覆盖 GUI/OCR/擦除/密钥/分层五项取舍 |
 | 证据 | 差集结果 44 ↔ 44 双向为空（无孤儿需求，也无凭空多出的行）；Must 行"实现"列 0 空；`02-architecture.md` §8；`docs/adr/ADR-001/002/003/005/006` |
 | 结论 | **通过（签发）** |
-| 遗留 | ADR-004（机翻端点选型）依计划待 P3 实测后补；`ice-vision` 四个模块与 `ice-app` 六个模块按 §8 的落地表在 P4~P7 填充 |
+| 遗留 | ADR-004（机翻端点选型）依计划待 P3 实测后补（P3 已落档，见下）；`ice-vision` 四个模块与 `ice-app` 六个模块按 §8 的落地表在 P4~P7 填充 |
 
 ### P2 过程中确定/修正的事实
 
@@ -75,7 +75,50 @@
 
 ---
 
-## P3 引擎层 — 待记录
+## P3 引擎层 — 2026-10-19
+
+变更包：`features/CHG-002`（`CHANGE-ID@v0.1`，Spec SHA-256 `88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c`，用户批准）。
+
+| 项 | 内容 |
+|---|---|
+| 目标 | 机翻与 AI 两条真实通道可用且行为可证；不可译内容逐字节保持；超长输入自动分段；错误可诊断且不泄源文与 Key；机翻端点选型落 ADR |
+| 验收方法 | ① 本地假服务覆盖全部 HTTP 行为（端点、状态码、超时、畸形 JSON 都由测试注入）；② `cargo test -p ice-core -p ice-providers` 与 `cargo clippy --workspace --all-targets -- -D warnings`；③ 真实服务端点由 3 条 `#[ignore]` 用例实测，输出用 `./sdd record` 导入为证据；④ `./sdd check` 逐条登记验证；⑤ `tools/check_traceability.py` 保证编号集合仍一致；⑥ `./sdd scan` + `tools/check_staged.py` 做敏感信息门禁 |
+| 证据 | `features/CHG-002/`（spec/design/tasks/approvals/evidence + `project/ledger` 里的证据件）；`docs/adr/ADR-004-machine-translate-endpoint.md`；测试计数 ice-core 45 · ice-providers 51 · ice-app 3（共 99 通过、3 项 ignore 需真实网络） |
+| 结论 | **通过（签发）** — 7 项必需验证全部有证据：V-001/002/005/006/007 由 `./sdd check` 本地跑，V-003/V-004 由 `./sdd record` 导入真实服务端点的实测输出 |
+| 遗留 | FR-1.7 的"源文仍在输入框"、FR-1.2 的回显、401 的"去设置"动作属界面行为，转 P4 走查；NFR-1 的 P50<800ms 目标本阶段只留下单次样本，判定转 P8 的 20 次采样脚本；`AiProvider` 五家预设里只有 DeepSeek 经本机关联调（其余四家本机 TLS 建连被重置，未验），P4 设置页若切换需再各跑一次 live |
+
+### P3 验收项
+
+| # | 检查 | 方法 | 结果 |
+|---|---|---|---|
+| 1 | 规格先于代码 | `./sdd status CHG-002` | ✅ APPROVED（批准哈希与当前 spec 一致；实施期只 `replan` 设计，未改 spec，故批准仍然有效） |
+| 2 | 机翻通道契约 | `cargo test -p ice-providers machine` | ✅ 10 项：显式源语言不外传检测、自动检测走本地、判不出按 `en` 且不回显、450 字符切块后拼接与原文逐字符守恒、body 级错误不当成译文、空译文算失败、状态形态不认识算 `Decode`、超时带重试次数、连接失败说"不可达"而非"被拒"、被服务端改写数字后仍能还原 |
+| 3 | AI 通道契约 | `cargo test -p ice-providers ai` | ✅ 14 项：请求体符合 OpenAI chat 形状（含 `authorization: bearer …`，未配置 temperature 时不发该键）、术语与目标语言进 system 提示词、分段带上一段尾巴、按序拼回并补换行、第 2 段失败不返回半截、401/429/500 映射不同且不重试非网络类、占位符丢失报失败、无 Key 时 `is_available()==false` |
+| 4 | 内容保护 | `cargo test -p ice-providers protect` | ✅ 14 项（V-002） |
+| 5 | 错误与隐私边界 | `cargo test -p ice-providers error` + `debug_output_hides_the_key`、`query_string_is_scrubbed_from_error_text`、`error_text_never_carries_the_source_text` | ✅ 错误文本剔除 URL 查询串；`Debug` 只打 `key_len`；`toml::to_string(&config)` 不含 `api_key` |
+| 6 | 全量单测 | `cargo test --workspace` | ✅ 99 passed / 0 failed / 3 ignored（V-001） |
+| 7 | Lint | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ exit 0（V-007） |
+| 8 | 机翻真实端点实测 | `cargo test -p ice-providers --test live -- --ignored --nocapture machine` | ✅（V-003 已用 `./sdd record` 导入，最终代码态重跑一次）`machine_live_short`："你好世界"，1 段；`machine_live_long_text_is_chunked`：1060 字符 → 3 段、译文 260 字符，且响应不含 `QUERY LENGTH`。**延迟抖动大**：两轮单句 731 / 2133ms，3 段 1.9 / 3.2s |
+| 9 | AI 真实通道实测 | `cargo test -p ice-providers --test live -- --ignored --nocapture ai`（Key 从钥匙串读，不落文件） | ✅（V-004 已用 `./sdd record` 导入，最终代码态重跑一次）`ai_live_deepseek`：英文单句 → 中文译文（1 段，1142 / 1226ms）；混合句 `https://a.example.com` / `12 MB` / `getUserInfo` 经 protect→模型→restore 后三个片段**逐字节回来**。Key 全程未进入终端回显、证据件与仓库（两轮证据件里 `sk-` 出现 0 次）。本机对国内其他供应商 TLS 建连被重置，故 AI 的真实契约以 DeepSeek 为准（Q-001 的落地口径），其余四家预设未联调，已记入遗留 |
+| 10 | 供应商可选 | `preset_provider_supplies_url_and_model`、`manual_values_beat_the_preset`、`custom_without_url_is_not_ready`、`every_preset_except_custom_has_an_address` | ✅ 百炼/DeepSeek/智谱/Kimi/方舟五家预设 + 自定义；手填优先、预设填空；地址已带 `/chat/completions` 时不重复拼接 |
+| 11 | ADR-004 落档 | `grep -q "状态：已接受" docs/adr/ADR-004-*.md` | ✅（V-005）字段齐全，含实测到的 body 级错误、450 而非 500 的余量理由、以及三条失效/降级条件 |
+| 12 | 需求编号一致 | `python3 -B tools/check_traceability.py` | ✅ 44 ↔ 44（V-006） |
+| 13 | 追踪矩阵回填 | 人工核对 `traceability.md` 的 FR-1.2/1.3/1.6/1.7/1.9、NFR-1/2/3 行 | ✅ 实现列补上本包模块，结果列写清"引擎层已测 / 界面待 P4"的边界 |
+
+### P3 过程中确定/修正的事实
+
+- **切块按字符索引会切开多字节汉字**：`chunk_chars` 最初按字节偏移切片，实测 panic 于 "end byte index 1348 is not a char boundary … inside '。'"。修正为自然断点必须加上断点串自身的 UTF-8 长度（`natural_cut`），并由 `chunks_respect_char_limit_and_order` 固化。这是 NFR-2 在本阶段唯一真实踩到的一次崩溃。
+- **占位符还原失败的处理与 P2 设计相反**：`02-architecture.md` §3.1 与 `TC-1.6-c` 原写"降级为不保护、返回原始译文并提示"。静默返回一段被改写的文本等于把破坏当成成功，CHG-002 spec 的 REQ-003 明确"无法还原时报失败"。代码按 spec 实现（`restore` 返回 `lost`，非空即 `Decode`），两处文档按 spec 更正并在此登记。
+- **还原按占位符编号匹配而非按位置**：模型常调整语序，按位置回填会错位。乱序由 `reordered_placeholders_still_restore` 覆盖；源文本身就带 `[[0]]` 的情况在 `protect` 阶段先转义，避免与占位符命名空间相撞（`existing_bracket_placeholder_in_source_is_escaped`）。
+- **免费机翻端点的错误写在响应体里，HTTP 仍是 200**：只看状态码会把 `"responseStatus":"403"` + `responseDetails` 当成成功；且该字段有时是数字有时是字符串。归一化为 `u16` 后比较，形态不认识一律失败（`unrecognized_status_shape_is_decode_failure`）。
+- **错误文本可能带出源文**：`reqwest` 的错误串包含完整 URL，查询参数里就是用户原文。新增 `scrub_queries` 剔除 `?` 之后的部分，连接失败只报主机名。
+- **标识符保护只认"看得出是标识符"的写法**（多段驼峰、下划线连接）。单个首字母大写的普通英文词（Kubernetes）不保护——它按规则也是驼峰，保护它会让正常译文里出现无法还原的原文。这是范围决定，不是遗漏，写在 `protect.rs` 的模块注释里并由 `ordinary_capitalized_words_are_not_protected` 锁定。
+- **引擎不读钥匙串、不读磁盘**：`AiEngine` 只从构造参数拿 Key，钥匙串归 P4 的 `ice-app::system::Secrets`（ADR-005）。于是 `ice-providers` 生产依赖里没有 `keyring`，只有 `tests/live.rs` 用 dev-dependency 读一次。
+- **reqwest 0.13 把 `RequestBuilder::query` 关在 `query` feature 后面**：编译报错后读 vendored 源码确认，根 `Cargo.toml` 补开该特性。
+- **超时与分段上限改由配置驱动**：设计期写死的常量（8000ms / 3500 字符）改为读 `config.translation.{timeout_ms, ai_chunk_chars}`，机翻的单次查询上限 450 是端点硬约束，保留为常量。经 `replan` → `seal-plan` 重新封板，spec 未动。
+
+---
+
 ## P4 全量界面 — 待记录
 ## P5 简洁悬浮模式 — 待记录
 ## P6 OCR — 待记录
@@ -95,3 +138,7 @@
 | 2026-10-19 | 需求基线变更 3 项：FR-3.2 增补"无边框不得导致窗口不可移动"；新增 **FR-3.9 形态切换形变动画**（M）；NFR-4 由"提供暗色主题"改为"**默认跟随系统深浅色 + 三态开关**" | 用户实测 P1 骨架窗口后反馈：置顶简洁窗拖不动影响干活、切换太硬、要求配色跟随系统。三项均已确认 egui/eframe 0.37 有对应能力（`StartDrag`、逐帧 `InnerSize`、`ThemePreference::System`），落在 P4/P5 实现 |
 | 2026-10-19 | 引入 SDD 工作流引擎（P2.5，变更包 `CHG-001`）：根目录新增 `sdd`/`tools/`/`templates/`/`skills/`/`features/`/`project/`/`codebase/`/`tests/`，P3 起的阶段变更走 `features/CHG-0NN/` 的批准与证据门禁；`docs/00~07` 基线继续作为需求事实源 | 用户要求把改动纳入结构化记录。来源为其本地工作区的通用模板层，公司项目内容一律不取；本仓库公开，提交前跑 `./sdd scan` 与 `tools/check_staged.py` 两道门禁 |
 | 2026-10-19 | `CHG-001` 实施中修实一处引擎缺陷：同仓布局下 `check` 写入的账本改变被测树哈希，证据写完即过期，`transition VERIFIED` 被阻塞；`fingerprint` 增加账本路径排除，并补 4 项同仓回归（引擎测试 32 → 36） | 真跑才暴露的问题：来源工作区规格与代码分仓，本仓库同仓后语义不成立。属实现选择变化、不改已批准业务行为，按流程走 `replan` 重新封存计划，不重开规格评审；`docs/verification.md` 记为与来源的第 4 处差异 |
+| 2026-10-19 | **`TC-1.6-c` 预期更正**：由"占位符被改写→退回不保护、返回原始译文并提示"改为"还原失败→报 `ProviderError::Decode`，不返回任何文本"；`02-architecture.md` §3.1 同步改写 | CHG-002 spec 的 REQ-003 已批准为"无法还原时报失败"。旧写法会静默返回被改写的译文，与 FR-1.6"不得被篡改"的验收意图相反。需求本身（FR-1.6）未改 |
+| 2026-10-19 | 联网测试命名规范由 `net_` 前缀改为 `tests/live.rs` + `<通道>_live_<场景>`；`05-dev-guide.md` §4/§6 补真实端点命令与钥匙串配置一行；测试计数 53 → 99（+3 项 `--ignored`） | 一条通道往往要验多个场景（短文本/超长切块/真实模型），通道名在前才能用一条过滤命令选中整组。属文档规范对齐实现，不改需求 |
+| 2026-10-19 | ADR-004 落档；`traceability.md` 的 FR-1.2/1.3/1.6/1.7/1.9 与 NFR-1/2/3 回填实现列与结果列；`02-architecture.md` §2 模块表补 `error` 行、更正 `machine`/`ai`/`protect` 的关键类型与 §8 落地表 | P3 实测完成，"待 P3"的三处引用按 CHG-002 REQ-007 回写。⚠ NFR-1 的机翻 P50<800ms 本阶段只有单次样本（731–1422ms），**未确认达标**，判定推给 P8 的 20 次采样脚本 |
+| 2026-10-19 | `CHG-002` 走 `replan` 重新封存计划（spec 哈希不变，用户批准仍然有效）：超时与 AI 分段上限改读 `config.translation.{timeout_ms, ai_chunk_chars}`，设计期两个切块函数合并为 `chunk_chars` + `choose_cut`，`restore` 返回 `Restored{lost}`，`AiConfig` 取值规则改名 `effective_*`，机翻引擎新增错误文本剔除查询串 | 都是实施中浮现的实现选择变化（可配置性、避免重复实现、错误语义要能表达"丢了哪个占位符"、源文不得进错误文本），未改动已批准的业务行为，按流程不重开规格评审 |

@@ -21,3 +21,5 @@ urlencoding = "2"
 
 [dev-dependencies]
 tempfile = "3"
+# 只有 tests/live.rs（默认 #[ignore]）读钥匙串，生产代码不依赖 keyring（ADR-005）
+keyring.workspace = true

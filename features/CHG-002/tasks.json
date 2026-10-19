@@ -1,0 +1,107 @@
+{
+  "baseline": {
+    "change": "CHG-002",
+    "version": "v0.1",
+    "spec_hash": "88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c"
+  },
+  "tasks": [
+    {
+      "id": "T-001",
+      "title": "实现机翻通道与超长切块",
+      "requirements": [
+        "REQ-001"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "crates/ice-providers/src/machine.rs",
+        "crates/ice-providers/src/lib.rs",
+        "crates/ice-providers/tests/live.rs"
+      ]
+    },
+    {
+      "id": "T-002",
+      "title": "实现供应商预设与 AI 通道请求",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "crates/ice-core/src/config.rs",
+        "crates/ice-providers/src/ai.rs",
+        "crates/ice-providers/tests/live.rs"
+      ]
+    },
+    {
+      "id": "T-003",
+      "title": "实现不可译内容保护与还原",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "crates/ice-providers/src/protect.rs"
+      ]
+    },
+    {
+      "id": "T-004",
+      "title": "实现 AI 分段与段间上下文",
+      "requirements": [
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "crates/ice-providers/src/ai.rs",
+        "crates/ice-providers/src/protect.rs"
+      ]
+    },
+    {
+      "id": "T-005",
+      "title": "实现错误映射与重试上限",
+      "requirements": [
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "crates/ice-providers/src/error.rs",
+        "crates/ice-providers/src/machine.rs",
+        "crates/ice-providers/src/ai.rs"
+      ]
+    },
+    {
+      "id": "T-006",
+      "title": "落实密钥与日志边界",
+      "requirements": [
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "crates/ice-providers/src/ai.rs",
+        "crates/ice-core/src/config.rs",
+        "crates/ice-providers/Cargo.toml"
+      ]
+    },
+    {
+      "id": "T-007",
+      "title": "撰写 ADR-004 并回写文档引用",
+      "requirements": [
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "docs/adr/ADR-004-machine-translate-endpoint.md",
+        "docs/02-architecture.md",
+        "docs/07-acceptance.md",
+        "docs/traceability.md",
+        "docs/05-dev-guide.md",
+        "docs/06-test-cases.md"
+      ]
+    }
+  ]
+}

@@ -70,9 +70,14 @@ ice-app  ──►  ice-providers  ──►  ice-core
 
 ```bash
 cargo check --workspace                 # 快速全量类型检查
-cargo test  --workspace                 # 全部单元测试
-cargo test  -p ice-core                 # 只测领域层
+cargo test  --workspace                 # 全部单元测试（当前 99 项通过 + 3 项 ignore）
+cargo test  -p ice-core                 # 只测领域层（45 项）
+cargo test  -p ice-providers            # 只测引擎层（51 项，HTTP 走本地假服务，不联网）
 cargo test  --workspace -- --ignored    # 跑需要真实网络/真机的集成测试
+cargo test  -p ice-providers --test live -- --ignored --nocapture machine
+                                        # 只验机翻真实端点（MyMemory，无需 Key）
+cargo test  -p ice-providers --test live -- --ignored --nocapture ai
+                                        # 只验 AI 真实通道，需先在钥匙串存 Key（见 §6 末）
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check              # 格式检查
 cargo run  -p ice-app                   # 开发运行
@@ -111,7 +116,13 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 
 - 单元测试与被测代码同文件，放 `#[cfg(test)] mod tests`，函数名用 `描述性行为`（如 `second_identical_request_hits_cache_and_skips_engine`）。
 - 涉及文件读写的用 `tempfile::tempdir()`，禁止写真实的用户配置目录。
-- 需要外部服务的测试标 `#[ignore]`，命名前缀 `net_`，通过 `-- --ignored` 单独触发。
+- 需要真实外部服务的测试单独放 `crates/<crate>/tests/live.rs`，标 `#[ignore]`，命名 `<通道>_live_<场景>`（如 `machine_live_short`、`ai_live_deepseek`），通过 `-- --ignored <通道>` 触发。原规范的 `net_` 前缀没采用：同一通道往往要跑两三个场景，把通道名放在前面才能用一条过滤命令选中整组。
+- 真实端点的契约测试**必须能被本地假服务替代**：引擎构造接受端点注入（`with_endpoint` / `from_config`），默认测试全部走 `fake_server`，联网用例只是补充，不是唯一证据。
+- AI 联网用例从 macOS 钥匙串读 Key（ service `IceTranslator` / account `ai-api-key`），生产代码不依赖 `keyring`（只作为 `ice-providers` 的 dev-dependency，见 `ADR-005`）：
+  ```bash
+  security add-generic-password -a ai-api-key -s IceTranslator -w   # -w 隐藏输入，不落终端记录
+  ```
+  测试失败信息会直接提示这条命令；Key 不进仓库、不进日志、不进对话。
 - UI 无法单测的部分走"人工走查表"，见 `06-test-cases.md`，走查结论与截图存进 `docs/evidence/`。
 
 ## 7. 提交规范

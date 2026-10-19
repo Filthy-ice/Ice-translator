@@ -1,0 +1,12 @@
+2026-10-19T11:56:16Z
+$ cargo test -p ice-providers --test live -- --ignored --nocapture ai
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.48s
+     Running tests/live.rs (target/debug/deps/live-9a097790427bb733)
+
+running 1 test
+AI 译文：这是对AI频道的实时合约检查。 (1226ms, 1段)
+AI 保护内容：Refer to the descriptions of https://a.example.com and 12 MB; the interface name is getUserInfo.
+test ai_live_deepseek ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 19.44s
+
