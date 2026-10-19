@@ -8,14 +8,14 @@
 | 需求 | 级 | 设计 | 实现 | 验证 | 结果 |
 |---|---|---|---|---|---|
 | FR-1.1 输入区 ≥20k 字符 | M | 02 §3.1、03 §2 | `ice-app::views::full` | TC-1.1-a/b | 待 P4 |
-| FR-1.2 源语言与自动检测回显 | M | 02 §2 core/detect | `ice-core::detect`、`ice-app::views::full` | TC-1.2-a/b | 待 P3 |
-| FR-1.3 双引擎切换即重译 | M | 02 §2 dispatcher | `ice-providers::dispatcher` | TC-1.3-a/b/c | 待 P3 |
+| FR-1.2 源语言与自动检测回显 | M | 02 §2 core/detect | `ice-core::detect`、`ice-providers::{machine,ai}::detected`、`ice-app::views::full` | TC-1.2-a/b | 部分 ✅ 检测与"显式源语言不回显、判不出不瞎回显"已单测（`auto_source_uses_local_detection` 等 3 条），界面回显待 P4 |
+| FR-1.3 双引擎切换即重译 | M | 02 §2 dispatcher | `ice-providers::{dispatcher,machine,ai}` | TC-1.3-a/b/c | 部分 ✅ 两条真实引擎已实现（`machine` 10 项、`ai` 14 项单测），且两条通道的真实服务端点均已实测（机翻 MyMemory、AI DeepSeek）；切换即重译的 UI 触发待 P4 |
 | FR-1.4 目标语言与最近使用 | M | 02 §2 core/config | `ice-core::config::remember_target` | TC-1.4-a/b | ✅ 单测 `remember_target_keeps_five_and_most_recent_first` |
 | FR-1.5 复制/对照/替换剪贴板 | M | 03 §2 F-09 | `ice-app::system::clipboard` | TC-1.5-a/b/c | 待 P4 |
-| FR-1.6 不可译内容保护 | M | 02 §3.1 protect | `ice-providers::protect` | TC-1.6-a..f | 待 P3 |
-| FR-1.7 失败可诊断不丢源文 | M | 02 §5 | `ice-providers::error` + `ice-app` | TC-1.7-a/b/c | 部分 ✅ `unregistered_engine_reports_not_configured_for_ai` |
+| FR-1.6 不可译内容保护 | M | 02 §3.1 protect | `ice-providers::protect`（被 `machine`/`ai` 在请求前调用） | TC-1.6-a..f | ✅ 单测 14 项：六类片段逐字节保持、多次出现全还原、乱序仍还原、源文自带 `[[0]]` 转义、占位符丢失报失败；真实模型链路另由 `ai_live_deepseek` 实测（URL/`12 MB`/`getUserInfo` 逐字节回来） |
+| FR-1.7 失败可诊断不丢源文 | M | 02 §5 | `ice-providers::error`（`from_reqwest`/`from_status`/`retryable`） + `ice-app` | TC-1.7-a/b/c | 部分 ✅ 十种错误种类、超时/连接/401/429/500/畸形 JSON 均有单测，错误文本剔除查询串（`query_string_is_scrubbed_from_error_text`）；"源文仍在输入框"待 P4 |
 | FR-1.8 缓存命中 | S | 02 §2 cache | `ice-providers::cache` | TC-1.8-a/b | ✅ 单测 `second_identical_request_hits_cache_and_skips_engine` |
-| FR-1.9 AI 超长分段 | S | 02 §3.1 | `ice-providers::ai` | TC-1.9-a | 待 P3 |
+| FR-1.9 AI 超长分段 | S | 02 §3.1 | `ice-providers::{ai,protect::chunk_chars}` | TC-1.9-a | ✅ 单测 `long_text_is_split_and_second_segment_gets_context`、`segments_join_in_order_and_keep_the_line_break`、`second_segment_failure_returns_error_not_half_output` |
 
 ## 图片翻译
 
@@ -63,9 +63,9 @@
 | FR-5.1 应用内快捷键 | M | 03 §4 | `ice-app::system::HotKeys` | 走查 W-4 | 待 P4 |
 | FR-5.2 关窗不退出 | M | 03 §4 | `ice-app`（`Visible(false)` + Dock 恢复） | TC-5.2-a/b | 待 P4 |
 | FR-5.3 屏变化后状态正常 | S | 02 §3.3 | `ice-app::mode` | TC-5.3-a | 待 P5 |
-| NFR-1 性能指标 | M | 05 §4 | `ice-app::jobs` + 采样脚本 | TC-P-1..3 | 待 P8 |
-| NFR-2 无 panic | M | 02 §5 | 全 crate | TC-P-4 | 待 P8 |
-| NFR-3 隐私 | M | ADR-002/005 | `ice-vision`、日志实现 | TC-P-5 | 待 P8 |
+| NFR-1 性能指标 | M | 05 §4 | `ice-app::jobs` + 采样脚本；引擎层实测样本记录在 `ADR-004` 与 `features/CHG-002/evidence.md` | TC-P-1..3 | ⚠ 待 P8 判定：机翻实测单句 731–2133ms、1060 字符 3 段 1.9–3.2s，P50<800ms 的目标**尚未确认达标**（免费端点抖动大），需 P8 的 20 次采样脚本判定；AI 单句实测 1.1–1.2s |
+| NFR-2 无 panic | M | 02 §5 | 全 crate | TC-P-4 | 部分 ✅ 引擎层无输入可触发的 panic：`expect` 只用于字面量正则与非零容量；曾真实发生的切块字符边界 panic 由 `chunks_respect_char_limit_and_order` 锁死。图像流水线待 P6/P7 |
+| NFR-3 隐私 | M | ADR-002/005 | `ice-vision`、日志实现 | TC-P-5 | 部分 ✅ Key 不进 `config.toml`/`Debug`/错误文本（`debug_output_hides_the_key`、`toml` 序列化断言），日志只记长度与哈希前 8 位（`fingerprint_is_stable_and_short`），错误文本剔除查询串（`query_string_is_scrubbed_from_error_text`）；OCR 本地性与整体日志审查待 P6/P8 |
 | NFR-4 中文界面·主题跟随系统+三态开关 | M | 03 §1 | `ice-app`（`ThemePreference`） | TC-P-9 | 待 P4 |
 | NFR-5 资源占用 | S | 05 §1 | release 构建 | TC-P-6 | 待 P8 |
 | NFR-6 分层依赖 | M | ADR-006 | workspace | `cargo tree` 检查 | 部分 ✅ P1 已核（core 依赖树无 egui/eframe/reqwest/image），P8 三目标复核 |

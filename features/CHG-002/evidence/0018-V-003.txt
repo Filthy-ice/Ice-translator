@@ -1,0 +1,13 @@
+2026-10-19T11:58:15Z
+$ cargo test -p ice-providers --test live -- --ignored --nocapture machine
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.11s
+     Running tests/live.rs (target/debug/deps/live-9a097790427bb733)
+
+running 2 tests
+机翻短文本："你好世界" (2133ms, 1段)
+test machine_live_short ... ok
+机翻长文本：3 段，译文 260 字符 (3223ms)
+test machine_live_long_text_is_chunked ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.23s
+

@@ -22,7 +22,7 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
 dirs = "7.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 arboard = "3.7"

@@ -39,11 +39,12 @@
 |---|---|---|---|
 | `engine` | `TranslationEngine`（trait）、`unavailable_error()` | 通道抽象：`kind/translate/is_available` | FR-1.3 |
 | `request` | `TranslationRequest`、`TranslationResult` | 通道间唯一的入参/出参结构：语言对、术语提示、分段续译的上下文尾巴、耗时与命中来源 | FR-1.1、FR-1.3、FR-1.9 |
-| `machine` | `MachineTranslateEngine` | 零配置机翻通道，超时与重试 | FR-1.3、FR-1.7、NFR-1 |
-| `ai` | `AiEngine`、`AiEndpoint` | OpenAI 兼容 chat 通道，提示词构造、分段与拼接 | FR-1.3、FR-1.9 |
-| `protect` | `ProtectedText`、`protect()`/`restore()` | URL/邮箱/代码块/标识符/带单位数字的占位符保护 | FR-1.6 |
+| `machine` | `MachineTranslateEngine`、`MACHINE_QUERY_CHARS` | 零配置机翻通道（MyMemory），单次查询 450 字符上限、超时与网络类重试 ≤2 | FR-1.3、FR-1.7、NFR-1 |
+| `ai` | `AiEngine` | OpenAI 兼容 chat 通道，提示词构造、分段与上下文续译、拼回 | FR-1.3、FR-1.9 |
+| `protect` | `ProtectedText`、`Restored`、`protect()`/`restore()`、`chunk_chars()` | URL/邮箱/代码块/标识符/带单位数字的占位符保护，以及"优先在换行或句末断开、不切开占位符"的切块 | FR-1.6、FR-1.9 |
 | `cache` | `TranslationCache`、`CacheKey`、`CachedValue` | LRU；AI 通道以术语表版本号加盐 | FR-1.8、FR-4.5 |
 | `dispatcher` | `Translator` | 选引擎→查缓存→调用→术语后处理→回写缓存；`availability()` | FR-1.3、FR-1.7、FR-1.8 |
+| `error` | `ProviderError`（10 个变体）、`retryable()`、`from_reqwest()`/`from_status()` | 网络/状态/解析错误归一化为可读种类；错误文本剔除 URL 查询串，不回显源文与 Key | FR-1.7、NFR-3 |
 
 `Translator` 是 UI 唯一允许接触的入口。UI 不知道有几个 HTTP 端点、缓存怎么键控。
 
@@ -105,7 +106,7 @@
 要点：
 - `request_id` 单调递增，回投消息 id 小于当前 id 时**丢弃**，防止"慢请求覆盖快请求"。
 - 引擎切换（FR-1.3）视为新提交，用同一源文重新 submit，而不是复用旧结果。
-- `protect` 失败（占位符被模型改写）时降级为"不保护直接返回原文"并在界面提示，绝不返回被破坏的文本。
+- `protect` 失败（模型把占位符改掉或丢掉，`restore` 返回的 `lost` 非空）时报 `ProviderError::Decode` 失败，**不返回残缺译文**；早期设想的"降级为不保护直接返回原文"会静默返回一段被改写的文本，被 CHG-002 spec 的 REQ-003 否掉（依据见 `features/CHG-002/spec.md` 与 `ADR-004` 决策 3）。
 
 ### 3.2 图片翻译（FR-2.1~2.9）
 
@@ -214,7 +215,7 @@ main() ──► Config::load() ──► (cfg, Option<reason>)
 | 2 | 无"设计了但没人调用"的模块 | ✅ 骨架只落地被调用的接口；回写侧的中间抽象（块级排版计划等）等 P7 有真实文字测量需求时再定义，不预先设计 |
 | 3 | 并发与取消语义明确 | ✅ 第 4 节 |
 | 4 | 错误到界面的映射穷举 | ✅ 第 5 节，覆盖全部已定义变体 |
-| 5 | 关键取舍有 ADR | ✅ ADR-001/002/003/005/006；ADR-004（机翻端点）待 P3 实测后补 |
+| 5 | 关键取舍有 ADR | ✅ ADR-001/002/003/005/006；ADR-004（机翻端点）当时留待 P3 实测，P3 已落档 |
 | 6 | 可测试性：纯函数与 IO 分离 | ✅ 吸附计算、几何合并、缓存、术语替换均为纯逻辑 |
 | 7 | 模块表与实际代码一致 | ✅ 逐 crate 核对 `pub mod` 清单，发现并补登记 `ice-providers::request`；其余计划模块按阶段落地（见下） |
 
@@ -224,8 +225,8 @@ main() ──► Config::load() ──► (cfg, Option<reason>)
 
 | 状态 | 模块 |
 |---|---|
-| 已实现并有单测 | `ice-core` 的 6 个业务模块（40 项）；`ice-providers` 的 `engine`/`request`/`cache`/`dispatcher`/`error`（10 项，`dispatcher` 用 mock 引擎覆盖选路、缓存与可用性）；`ice-app` 的窗口形态与置顶控制（3 项无头断言） |
+| 已实现并有单测 | `ice-core` 的 7 个业务模块（45 项，含 `config` 的供应商预设与有效值规则）；`ice-providers` 的 `engine`/`request`/`cache`/`dispatcher`/`error`/`machine`/`ai`/`protect`（51 项，HTTP 行为由本地假服务覆盖；`dispatcher` 用 mock 引擎覆盖选路、缓存与可用性）；`ice-app` 的窗口形态与置顶控制（3 项无头断言） |
+| 已实现、靠 `#[ignore]` 实测 | `ice-providers/tests/live.rs`（3 项：机翻短文本、机翻长文本切块、AI 真实通道）——需要真实网络与钥匙串里的 Key，不进默认测试集 |
 | 只有接口与桩，尚无单测 | `ice-vision` 的 `ocr`/`composite`/`error`（P6/P7 填充并补测） |
-| P3 落地 | `machine`、`ai`、`protect`，以及 ADR-004 |
 | P4/P5 落地 | `state`、`mode`、`views::*`、`jobs`、`system` |
 | P6/P7 落地 | `vision_sys`、`layout`、`bg`、`font` |

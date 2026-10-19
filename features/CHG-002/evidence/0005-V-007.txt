@@ -1,0 +1,7 @@
+
+    Checking keyring-core v1.0.1
+    Checking ice-providers v0.1.0 (/Users/filthy-ice/Desktop/my-translator/Ice-translator/crates/ice-providers)
+    Checking apple-native-keyring-store v1.0.2
+    Checking keyring v4.2.0
+    Checking ice-app v0.1.0 (/Users/filthy-ice/Desktop/my-translator/Ice-translator/crates/ice-app)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.98s

@@ -1,0 +1,312 @@
+{
+  "schema_version": 1,
+  "id": "CHG-002",
+  "title": "翻译引擎层：机翻通道、AI 通道与不可译内容保护",
+  "version": "v0.1",
+  "status": "VERIFIED",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-001",
+      "blocking": true,
+      "resolution": "本阶段用 DeepSeek 做真实契约验证（该端点实测可达，无 Key 返回 401）；百炼/智谱/Kimi/火山方舟因本机网络 TLS 建连被重置，只保留为可选预设并以本地/Mock 证据覆盖，其真实契约验证在验收记录中标注为未验证，等可用网络下补做。",
+      "source": "2026-10-19 会话：用户在 CHG-002@v0.1 规格评审中选择'配 DeepSeek Key，本阶段验'，同时批准该哈希。",
+      "question": "REQ-002/REQ-004 的 AI 真实供应商契约验证是否在本阶段（P3）完成？本机网络对百炼/智谱/Kimi/火山方舟在 TLS 建连即被重置，只有 DeepSeek 端点可达（实测 401）；真实验证需要用户配置 Key 并授权可能产生计费的请求。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-10-19T10:00:14+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-10-19T10:02:21+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-10-19T10:02:21+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-10-19T10:04:33+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c",
+        "version": "v0.1",
+        "by": "filthy-ice",
+        "reference": "2026-10-19 会话：用户回复\"批准，按此实施\"，确认 CHG-002@v0.1 当前哈希与 local-delivery 范围",
+        "at": "2026-10-19T10:04:33+00:00",
+        "snapshot": "approvals/v0.1-88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c.md",
+        "scope": "local-delivery",
+        "context_hash": "5fec3893046aa975e37cc7740378b8ddb65bc509f960e371de615d0073d94fe8",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-10-19T10:06:20+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-002",
+        "version": "v0.1",
+        "spec_hash": "88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c"
+      }
+    },
+    {
+      "at": "2026-10-19T10:06:33+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-002",
+        "version": "v0.1",
+        "spec_hash": "88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c"
+      }
+    },
+    {
+      "at": "2026-10-19T10:06:43+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-002",
+        "version": "v0.1",
+        "spec_hash": "88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c"
+      }
+    },
+    {
+      "at": "2026-10-19T10:06:43+00:00",
+      "action": "seal-plan",
+      "detail": "75b237844bdf3847b33592b0004a6d6108635f37c9936dcfa269704184a7cf1b"
+    },
+    {
+      "at": "2026-10-19T10:06:43+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-10-19T10:35:01+00:00",
+      "action": "replan",
+      "detail": "实施中的技术性偏差需回写设计：超时与 AI 分段上限改为读 config.translation（design 原写死 8 秒/常量 3500）；chunk 由 design 的 chunk_for_machine/chunk_for_ai 合并为 chunk_chars+choose_cut（修了中文标点的字符边界 panic，并加'断点太靠前就硬切'规则）；restore 返回 Restored{lost} 而非 String；标识符保护范围明确为 PascalCase/camelCase/snake_case，单个首字母大写的普通英文词不保护；AiProvider 方法名 preset_base_url/preset_model（Volcengine 改名 VolcengineArk），并新增 effective_* 让预设填空；错误文本剥离 URL 查询串以防源文进日志。需求语义未变。"
+    },
+    {
+      "at": "2026-10-19T10:38:28+00:00",
+      "action": "seal-plan",
+      "detail": "d628fd4b0f3a2b1ab6bf837cb7ccea66e20c8283ec4b36a4e1615cb4735250c3"
+    },
+    {
+      "at": "2026-10-19T10:38:28+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-10-19T10:50:22+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T10:50:23+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T10:50:23+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-005",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T10:50:23+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-006",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T10:50:29+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-007",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T10:50:29+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-003",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T10:50:47+00:00",
+      "action": "task-done",
+      "detail": "T-001"
+    },
+    {
+      "at": "2026-10-19T10:50:47+00:00",
+      "action": "task-done",
+      "detail": "T-002"
+    },
+    {
+      "at": "2026-10-19T10:50:47+00:00",
+      "action": "task-done",
+      "detail": "T-003"
+    },
+    {
+      "at": "2026-10-19T10:50:47+00:00",
+      "action": "task-done",
+      "detail": "T-004"
+    },
+    {
+      "at": "2026-10-19T10:50:47+00:00",
+      "action": "task-done",
+      "detail": "T-005"
+    },
+    {
+      "at": "2026-10-19T10:50:47+00:00",
+      "action": "task-done",
+      "detail": "T-006"
+    },
+    {
+      "at": "2026-10-19T10:50:47+00:00",
+      "action": "task-done",
+      "detail": "T-007"
+    },
+    {
+      "at": "2026-10-19T11:57:02+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-004",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:58:08+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:58:08+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:58:09+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-007",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:58:09+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-005",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:58:09+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-006",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:59:45+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:59:45+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:59:46+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-007",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:59:46+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-005",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:59:46+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-006",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:59:46+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-003",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:59:47+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-004",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-10-19T11:59:50+00:00",
+      "action": "transition",
+      "detail": "VERIFIED"
+    }
+  ],
+  "approval": {
+    "hash": "88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c",
+    "version": "v0.1",
+    "by": "filthy-ice",
+    "reference": "2026-10-19 会话：用户回复\"批准，按此实施\"，确认 CHG-002@v0.1 当前哈希与 local-delivery 范围",
+    "at": "2026-10-19T10:04:33+00:00",
+    "snapshot": "approvals/v0.1-88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c.md",
+    "scope": "local-delivery",
+    "context_hash": "5fec3893046aa975e37cc7740378b8ddb65bc509f960e371de615d0073d94fe8",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "d628fd4b0f3a2b1ab6bf837cb7ccea66e20c8283ec4b36a4e1615cb4735250c3"
+}

@@ -1,0 +1,156 @@
+{
+  "baseline": {
+    "change": "CHG-002",
+    "version": "v0.1",
+    "spec_hash": "88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c"
+  },
+  "design": [
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    },
+    {
+      "requirement": "REQ-007",
+      "section": "## REQ-007 实现与验证"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-core",
+        "-p",
+        "ice-providers"
+      ]
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-providers",
+        "protect"
+      ]
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-001"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真实外部服务端点，无 command；由 ./sdd record 导入实际运行输出（含时间、命令与结果）"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-002",
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真实外部服务端点，无 command；由 ./sdd record 导入实际运行输出（含时间、命令与结果）"
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "grep",
+        "-q",
+        "状态：已接受",
+        "docs/adr/ADR-004-machine-translate-endpoint.md"
+      ]
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "python3",
+        "-B",
+        "tools/check_traceability.py"
+      ]
+    },
+    {
+      "id": "V-007",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    }
+  ]
+}

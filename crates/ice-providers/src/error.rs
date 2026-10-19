@@ -44,3 +44,99 @@ impl ProviderError {
         )
     }
 }
+
+/// 引擎内部自动重试的判据：**只有网络类失败**才重试。
+///
+/// 与 `retryable()` 的区别是有意为之：429 时界面上可以放"再试一次"按钮，
+/// 但自动立刻重试只会放大限流；401 与解析失败重试也不会改变结果。
+pub fn should_retry(err: &ProviderError) -> bool {
+    matches!(err, ProviderError::Timeout(..) | ProviderError::Http(_))
+}
+
+/// reqwest 的错误文本里会带上完整请求 URL，而我们的查询串里就是用户的原文。
+/// 错误会进日志也会显示在界面上，因此把 `?` 之后的查询段整段剥掉（NFR-3）。
+fn scrub_queries(msg: &str) -> String {
+    let mut out = String::with_capacity(msg.len());
+    let mut chars = msg.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '?' {
+            out.push(c);
+            continue;
+        }
+        while let Some(&next) = chars.peek() {
+            if next == ' ' || next == ')' || next == '"' {
+                break;
+            }
+            chars.next();
+        }
+    }
+    out
+}
+
+/// 把 reqwest 的错误分门别类（FR-1.7）。连接失败必须说成"连不上"，
+/// 不能与"服务端拒绝"混为一谈，否则用户会去查 Key 而问题在网络。
+/// `retries` 是本次调用之前已经重试的次数。
+pub fn from_reqwest(
+    err: &reqwest::Error,
+    timeout: std::time::Duration,
+    retries: u32,
+) -> ProviderError {
+    if err.is_timeout() {
+        return ProviderError::Timeout(timeout.as_millis() as u64, retries);
+    }
+    if err.is_connect() {
+        // 只取主机名：不把 URL 的查询串（用户原文）写进错误
+        let host = err
+            .url()
+            .and_then(|u| u.host_str())
+            .unwrap_or("服务端")
+            .to_string();
+        return ProviderError::Http(format!(
+            "无法连接 {host}：网络不可达或被中间网络设备拦截，不是服务端拒绝"
+        ));
+    }
+    ProviderError::Http(scrub_queries(&err.to_string()))
+}
+
+/// HTTP 状态码映射；原因文本截断，避免把整个响应体塞进错误里
+pub fn from_status(status: u16, body: &str) -> ProviderError {
+    match status {
+        401 => ProviderError::Unauthorized,
+        429 => ProviderError::RateLimited,
+        other => {
+            let clipped: String = body.chars().take(200).collect();
+            ProviderError::Status(other, clipped)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_string_is_scrubbed_from_error_text() {
+        let raw = "error sending request for url (https://x.example/get?q=%E4%BD%A0%E5%A5%BD&langpair=en%7Czh)";
+        let clean = scrub_queries(raw);
+        assert!(!clean.contains("q="), "{clean}");
+        assert!(clean.contains("x.example"), "{clean}");
+    }
+
+    #[test]
+    fn status_codes_map_to_distinct_readable_errors() {
+        assert!(matches!(from_status(401, ""), ProviderError::Unauthorized));
+        assert!(matches!(from_status(429, ""), ProviderError::RateLimited));
+        assert!(
+            matches!(&from_status(403, "forbidden"), ProviderError::Status(403, t) if t.as_str() == "forbidden"),
+            "403 不能冒充 401"
+        );
+    }
+
+    #[test]
+    fn long_error_bodies_are_clipped() {
+        let body = "x".repeat(5000);
+        let err = from_status(500, &body);
+        let text = err.to_string();
+        assert!(text.chars().count() < 400, "{text}");
+    }
+}

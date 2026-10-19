@@ -9,24 +9,24 @@
 
 | 编号 | 需求 | 步骤 | 预期 | 状态 |
 |---|---|---|---|---|
-| TC-1.2-a | FR-1.2 | 对中文、英文、日文、韩文、俄文各一句调用 `guess_language` | 五种均判对；纯数字/符号句返回 `None` 而非误判 | 待 P3 |
-| TC-1.2-b | FR-1.2 | 混合中英的段落 | 按主导字符集判定，且置信度低于纯单语句 | 待 P3 |
+| TC-1.2-a | FR-1.2 | 对中文、英文、日文、韩文、俄文各一句调用 `ice_core::detect`（原名 `guess_language`） | 五种均判对；纯数字/符号句返回 `None` 而非误判 | ✅ 单测 `detects_common_scripts`、`digits_symbols_and_empty_are_not_guessed`、`japanese_with_kanji_still_reads_as_japanese` |
+| TC-1.2-b | FR-1.2 | 混合中英的段落 | 按主导字符集判定，且置信度低于纯单语句 | ✅ 单测 `mixed_chinese_english_reads_as_chinese_with_lower_confidence` |
 | TC-1.3-a | FR-1.3 | `Translator` 注册两个 mock 引擎，分别请求 | 两通道返回不同文本，各自 `engine` 字段正确 | ✅ `different_engines_do_not_share_cache_entries` |
-| TC-1.3-b | FR-1.3 | 真实网络（`#[ignore]`）：同一句分别走机翻与 AI | 两条均返回非空译文，且 `elapsed_ms` 均 > 0 | 待 P3 `net_engine_pair` |
-| TC-1.3-c | FR-1.3 | AI 未配置 Key 时请求 AI 通道 | `ProviderError::NotConfigured`，错误文本含"未配置" | ✅ `unregistered_engine_reports_not_configured_for_ai` |
+| TC-1.3-b | FR-1.3 | 真实网络（`#[ignore]`）：同一句分别走机翻与 AI | 两条均返回非空译文，且 `elapsed_ms` 均 > 0 | ✅ 两条真实通道均已实测：`machine_live_short`、`machine_live_long_text_is_chunked`、`ai_live_deepseek`（`cargo test -p ice-providers --test live -- --ignored`） |
+| TC-1.3-c | FR-1.3 | AI 未配置 Key 时请求 AI 通道 | `ProviderError::NotConfigured`，错误文本含"未配置" | ✅ `unregistered_engine_reports_not_configured_for_ai`、`unavailable_without_key_or_config` |
 | TC-1.4-a | FR-1.4 | 连续切换 6 种目标语言 | `recent_targets` 长度为 5，最新在前 | ✅ `remember_target_keeps_five_and_most_recent_first` |
 | TC-1.4-b | FR-1.4 | 设置中启用德语后重启 | `visible_languages()` 含德语与中英日，无重复 | ✅ `visible_languages_always_includes_preferred` |
-| TC-1.6-a | FR-1.6 | 输入含 `https://example.com/a?b=1` 的句子 | 译文中原样保留该 URL，逐字节一致 | 待 P3 |
-| TC-1.6-b | FR-1.6 | 含邮箱、`userId`、`12 MB`、`2026-10-19`、```` ``` ````代码块 | 五类片段均未被翻译或改动 | 待 P3 |
-| TC-1.6-c | FR-1.6 | 服务端返回时把占位符改写成别的字符串 | 检测失败 → 退回"不保护"路径，返回原始译文并给出提示，绝不返回残缺文本 | 待 P3 |
-| TC-1.6-d | FR-1.6 | 代码块内含 URL | 整块作为一个保护单元，块内不再二次占位 | 待 P3 |
-| TC-1.7-a | FR-1.7 | 断开网络后请求 | `Timeout`/`Http` 错误，源文仍在输入框 | 待 P3（人工断网） |
-| TC-1.7-b | FR-1.7 | 填错误 Key 请求 AI | `Unauthorized`，提示含"Key 无效"，界面出现"去设置"动作 | 待 P3 |
-| TC-1.7-c | FR-1.7 | 服务端返回 200 但译文为空 | `Empty` 错误，界面显示原文 + 警告 | 待 P3 |
+| TC-1.6-a | FR-1.6 | 输入含 `https://example.com/a?b=1` 的句子 | 译文中原样保留该 URL，逐字节一致 | ✅ 单测 `protects_the_declared_kinds_of_untranslatable_content`、`identity_roundtrip_keeps_every_byte`；引擎侧 `protected_content_survives_a_service_that_mangles_numbers` |
+| TC-1.6-b | FR-1.6 | 含邮箱、`userId`、`12 MB`、`2026-10-19`、```` ``` ````代码块 | 五类片段均未被翻译或改动 | ✅ 同上（六类片段各构造一例）+ `same_identifier_is_restored_everywhere`（同一标识符出现多次全部还原） |
+| TC-1.6-c | FR-1.6 | 服务端返回时把占位符改丢掉或改写（`[[n]]` 在译文中消失） | **报失败**：`restore` 返回的 `lost` 非空 → `ProviderError::Decode`，绝不返回残缺文本，也不静默退回"不保护"路径（预期由 CHG-002 spec REQ-003 定；本条原写"退回不保护并返回原文"，与 spec 冲突，已按 spec 更正） | ✅ 单测 `missing_placeholder_is_reported_as_lost`、`missing_placeholder_from_model_is_a_failure`；另 `reordered_placeholders_still_restore`、`existing_bracket_placeholder_in_source_is_escaped` 覆盖按编号匹配与源文自带 `[[0]]` 的转义 |
+| TC-1.6-d | FR-1.6 | 代码块内含 URL | 整块作为一个保护单元，块内不再二次占位 | ✅ 单测 `fenced_code_block_is_protected_as_a_whole` |
+| TC-1.7-a | FR-1.7 | 断开网络后请求 | `Timeout`/`Http` 错误，源文仍在输入框 | 部分 ✅ 单测 `timeout_is_reported_with_retry_count`（Timeout 带超时毫秒与重试次数）、`connection_refused_says_unreachable_not_rejected`（区分"不可达"与"被拒绝"）；"源文仍在输入框"属界面行为，待 P4 走查 |
+| TC-1.7-b | FR-1.7 | 填错误 Key 请求 AI | `Unauthorized`，提示含"Key 无效"，界面出现"去设置"动作 | 部分 ✅ 单测 `auth_and_rate_limit_map_to_distinct_errors`（401 → `Unauthorized`，不重试）；"去设置"按钮待 P4 |
+| TC-1.7-c | FR-1.7 | 服务端返回 200 但译文为空 | `Empty` 错误，界面显示原文 + 警告 | 部分 ✅ 单测 `empty_translation_is_a_failure_not_empty_success`、`body_level_error_is_not_mistaken_for_translation`；界面告警待 P4 |
 | TC-1.8-a | FR-1.8 | 同一请求连续两次 | 第二次 `cache_hit=true`、`elapsed_ms=0`、引擎调用次数不变 | ✅ `second_identical_request_hits_cache_and_skips_engine` |
 | TC-1.8-b | FR-1.8 | 改目标语言后请求同一句 | 缓存未命中（键含语言对） | ✅ `cache.rs` LRU 用例 + 键定义 |
-| TC-1.9-a | FR-1.9 | 12,000 字符输入走 AI 通道 | 分段数 = ⌈长度/3500⌉，拼接顺序与原文段落顺序一致，段落间无重复或丢失 | 待 P3 |
-| TC-1.9-b | FR-1.9 | 分段中间含代码块 | 占位符保护在分段之前执行，跨段占位符不冲突 | 待 P3 |
+| TC-1.9-a | FR-1.9 | 12,000 字符输入走 AI 通道 | 分段数 = ⌈长度/3500⌉（3500 为 `config.translation.ai_chunk_chars` 默认值），拼接顺序与原文段落顺序一致，段落间无重复或丢失 | ✅ 单测把上限注入为小值以逼出多段（机制与 12k 一致，不靠魔法数字）：`long_text_is_split_and_second_segment_gets_context`（第二段拿到上一段译文尾巴）、`segments_join_in_order_and_keep_the_line_break`（按序相接、补回被模型吞掉的换行）、`second_segment_failure_returns_error_not_half_output` |
+| TC-1.9-b | FR-1.9 | 分段中间含代码块 | 占位符保护在分段之前执行，跨段占位符不冲突 | ✅ 单测 `chunk_never_splits_a_placeholder`、`oversized_code_block_never_reaches_the_chunk_limit`、`no_near_empty_chunks`、`prefer_line_break_over_hard_cut` |
 
 ### 配置、历史与术语
 
