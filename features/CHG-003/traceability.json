@@ -1,0 +1,256 @@
+{
+  "baseline": {
+    "change": "CHG-003",
+    "version": "v0.1",
+    "spec_hash": "84a04e7d9c990d045a19e52310be07f856a31b043669a7bf05862269ee111dc7"
+  },
+  "design": [
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    },
+    {
+      "requirement": "REQ-007",
+      "section": "## REQ-007 实现与验证"
+    },
+    {
+      "requirement": "REQ-008",
+      "section": "## REQ-008 实现与验证"
+    },
+    {
+      "requirement": "REQ-009",
+      "section": "## REQ-009 实现与验证"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-009",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "note": "全量单测；含 P3 既有测试的回归"
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-core"
+      ],
+      "note": "术语入 config 的 TOML 往返、旧文件导入的四种输入、历史裁剪与搜索"
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-007",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
+      "note": "无头断言：页签状态保留、竞态丢弃、错误映射与动作、快捷键映射、ViewportCommand、PID 锁"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ]
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "python3",
+        "-B",
+        "tools/check_traceability.py"
+      ],
+      "note": "需求基线与追踪矩阵编号一致（文档回写后必须仍成立）"
+    },
+    {
+      "id": "V-007",
+      "requirements": [
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "scan"
+      ],
+      "note": "敏感信息基线扫描（仓库公开）"
+    },
+    {
+      "id": "V-008",
+      "requirements": [
+        "REQ-005",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "sh",
+        "-c",
+        "! grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates 2>/dev/null"
+      ],
+      "note": "文档、证据与源码里不得出现真 Key 形态的字符串；模式对 'task-done' 与测试夹具 sk-test-key 不误报"
+    },
+    {
+      "id": "V-009",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "用户按走查表 W-1~W-6 真人验证（控件清单、空/加载/错误态截图、最小尺寸、快捷键、Tab 顺序、亮暗主题），结论与截图入 docs/evidence 与 07-acceptance 的 P4 段"
+    },
+    {
+      "id": "V-010",
+      "requirements": [
+        "REQ-002",
+        "REQ-007",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真机运行：真机运行证据，无 command；由 ./sdd record 导入实际输出（含时间、命令与结果），敏感值只留长度与哈希前缀。内容含 18k 字符粘贴手感与单帧耗时、Cmd+W 隐藏后 30 秒 CPU 取样、Dock 恢复、双开被拒且 config.toml mtime 不变"
+    },
+    {
+      "id": "V-011",
+      "requirements": [
+        "REQ-002",
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真实端点两条（机翻 MyMemory 无需 Key；AI 用用户钥匙串里的 Key）：真机运行证据，无 command；由 ./sdd record 导入实际输出（含时间、命令与结果），敏感值只留长度与哈希前缀"
+    },
+    {
+      "id": "V-012",
+      "requirements": [
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "钥匙串三件套：真机运行证据，无 command；由 ./sdd record 导入实际输出（含时间、命令与结果），敏感值只留长度与哈希前缀。只记条目存在性退出码、Key 长度与哈希前 8 位，界面截图不回显任何片段"
+    }
+  ]
+}
