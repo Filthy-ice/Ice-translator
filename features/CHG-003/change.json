@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "id": "CHG-003",
+  "title": "全量界面：翻译闭环、设置页与密钥边界、系统集成",
+  "version": "v0.1",
+  "status": "DESIGNED",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-001",
+      "blocking": false,
+      "question": "需求 §5 第 5 条的“单实例运行”（第二个实例提示并退出）此前没有归属阶段，架构模块表里也没有对应模块；放 P4 还是 P8？",
+      "resolution": "放本包（REQ-009）：锁文件写在配置目录、记录 PID，检测到活实例则提示并以非零码退出，陈旧锁可接管，退出时只删自己创建的锁。判定依据是产品规范本身——需求 §5 明写单实例，且 P4 起 history.jsonl 与 config.toml 第一次被真实界面写入，两实例并发写会损坏用户数据，等不到 P8。实现阶段在 docs/02-architecture.md §2 的 ice-app 模块表补 system::single_instance。",
+      "source": "2026-10-20 会话：用户在 CHG-003@v0.1 规格评审问答中作出选择，随后批准该 Spec 哈希。用户答复：“哪个更符合产品规范就用哪个”。"
+    },
+    {
+      "id": "Q-002",
+      "blocking": false,
+      "question": "FR-1.5 的“复制译文”与“一键替换系统剪贴板为译文”在实现上是同一次 set_text，保留三个按钮还是合并？",
+      "resolution": "合并成两个按钮：只留“复制译文”（其效果即整体替换剪贴板）与“复制对照”，空译文时两者都不触碰剪贴板并提示“没有可复制的译文”。属需求文字调整，实现阶段同步改 docs/01-requirements.md FR-1.5、docs/03-ui-design.md F-09、docs/06-test-cases.md TC-1.5-*，并在 docs/07-acceptance.md 变更登记新增一行。",
+      "source": "2026-10-20 会话：用户在 CHG-003@v0.1 规格评审问答中作出选择，随后批准该 Spec 哈希。用户答复：“合并成两个按钮”。"
+    },
+    {
+      "id": "Q-003",
+      "blocking": false,
+      "question": "术语表实际存 glossary.toml 的 [[terms]]，而需求 §4.5 写的是 config.toml 内 [[term]]；按现状接线（P8 更正需求文字）还是改成写进 config.toml？",
+      "resolution": "改成写进 config.toml 的 [[term]]，改完即与需求 §4.5 一致，需求文字无需修改。ice-core 的 Glossary 持久化职责移到 config.rs，术语字段必须是 Config 的最后一个字段（TOML array-of-tables 顺序约束）；启动时若 config 内无术语而存在旧 glossary.toml，做一次性幂等导入并在设置页提示导入条数，绝不删除或改写用户的 glossary.toml；损坏时以空表降级、不阻塞翻译。渲染顺序的不确定性用实现第一步的往返单测打掉，不成立则改为手写渲染。",
+      "source": "2026-10-20 会话：用户在 CHG-003@v0.1 规格评审问答中作出选择，随后批准该 Spec 哈希。用户答复：“改成写进 config.toml”。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-10-20T03:55:25+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-10-20T06:11:20+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-10-20T06:11:20+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-10-20T06:13:19+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "84a04e7d9c990d045a19e52310be07f856a31b043669a7bf05862269ee111dc7",
+        "version": "v0.1",
+        "by": "filthy-ice",
+        "reference": "P4 全量界面规格批准（含单实例/两按钮/术语入 config 三项决定）",
+        "at": "2026-10-20T06:13:19+00:00",
+        "snapshot": "approvals/v0.1-84a04e7d9c990d045a19e52310be07f856a31b043669a7bf05862269ee111dc7.md",
+        "scope": "local-delivery",
+        "context_hash": "dfefff3ec90ef35991280438fe24518f2cb849cc055489293b65222d66c2e9ab",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-10-20T06:25:14+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-003",
+        "version": "v0.1",
+        "spec_hash": "84a04e7d9c990d045a19e52310be07f856a31b043669a7bf05862269ee111dc7"
+      }
+    },
+    {
+      "at": "2026-10-20T06:25:15+00:00",
+      "action": "seal-plan",
+      "detail": "67a50461851f2827f522b03da81accd686664c0453d2b8bab6b00c114a2fd3c7"
+    },
+    {
+      "at": "2026-10-20T06:25:54+00:00",
+      "action": "replan",
+      "detail": "V-008 的 grep 模式写成 'sk-'，会命中 tools 输出里的 'task-done' 与 ice-providers 测试夹具 sk-test-key，必然误报失败；改为 'sk-[A-Za-z0-9]{20,}'（真 Key 形态），并双向自证：仓库内 exit 0、对构造的真 Key 形态字符串能命中"
+    },
+    {
+      "at": "2026-10-20T06:25:54+00:00",
+      "action": "seal-plan",
+      "detail": "0511782ad47161d5d002190fc804b378eaed71b4814fb692bbd3010d06f58fcc"
+    }
+  ],
+  "approval": {
+    "hash": "84a04e7d9c990d045a19e52310be07f856a31b043669a7bf05862269ee111dc7",
+    "version": "v0.1",
+    "by": "filthy-ice",
+    "reference": "P4 全量界面规格批准（含单实例/两按钮/术语入 config 三项决定）",
+    "at": "2026-10-20T06:13:19+00:00",
+    "snapshot": "approvals/v0.1-84a04e7d9c990d045a19e52310be07f856a31b043669a7bf05862269ee111dc7.md",
+    "scope": "local-delivery",
+    "context_hash": "dfefff3ec90ef35991280438fe24518f2cb849cc055489293b65222d66c2e9ab",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "0511782ad47161d5d002190fc804b378eaed71b4814fb692bbd3010d06f58fcc"
+}

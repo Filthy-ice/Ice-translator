@@ -1,0 +1,109 @@
+{
+  "baseline": {
+    "change": "CHG-003",
+    "version": "v0.1",
+    "spec_hash": "84a04e7d9c990d045a19e52310be07f856a31b043669a7bf05862269ee111dc7"
+  },
+  "tasks": [
+    {
+      "id": "T-001",
+      "title": "术语迁入 config.toml（[[term]]）与旧 glossary.toml 只读导入",
+      "requirements": [
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-002",
+      "title": "ice-app 模块骨架：AppState、四页签、状态条、主题与字号",
+      "requirements": [
+        "REQ-001"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-003",
+      "title": "翻译闭环：任务派发、request_id 竞态丢弃、加载态、20k 字符实测",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-004",
+      "title": "剪贴板两个按钮：复制译文 / 复制对照，含空译文保护",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-005",
+      "title": "错误映射与动作按钮（去设置 / 改用机翻）",
+      "requirements": [
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-006",
+      "title": "设置页：供应商预设、密钥写钥匙串、主题三态、字号、额外语言",
+      "requirements": [
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-007",
+      "title": "历史页与设置页术语分区接线",
+      "requirements": [
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-008",
+      "title": "快捷键映射、关窗常驻与退出落盘",
+      "requirements": [
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-009",
+      "title": "单实例互斥：PID 锁、陈旧锁接管、只删自己的锁",
+      "requirements": [
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-010",
+      "title": "文档回写、走查取证与 P4 验收记录",
+      "requirements": [
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    }
+  ]
+}
