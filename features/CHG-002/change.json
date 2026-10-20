@@ -3,7 +3,7 @@
   "id": "CHG-002",
   "title": "翻译引擎层：机翻通道、AI 通道与不可译内容保护",
   "version": "v0.1",
-  "status": "VERIFIED",
+  "status": "ACCEPTED",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -293,6 +293,20 @@
       "at": "2026-10-19T11:59:50+00:00",
       "action": "transition",
       "detail": "VERIFIED"
+    },
+    {
+      "at": "2026-10-20T03:52:26+00:00",
+      "action": "accept",
+      "detail": {
+        "at": "2026-10-20T03:52:26+00:00",
+        "by": "filthy-ice",
+        "reference": "P3 验收通过",
+        "baseline": {
+          "change": "CHG-002",
+          "version": "v0.1",
+          "spec_hash": "88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c"
+        }
+      }
     }
   ],
   "approval": {
@@ -308,5 +322,15 @@
       "ice-translator": "main"
     }
   },
-  "plan_hash": "d628fd4b0f3a2b1ab6bf837cb7ccea66e20c8283ec4b36a4e1615cb4735250c3"
+  "plan_hash": "d628fd4b0f3a2b1ab6bf837cb7ccea66e20c8283ec4b36a4e1615cb4735250c3",
+  "acceptance": {
+    "at": "2026-10-20T03:52:26+00:00",
+    "by": "filthy-ice",
+    "reference": "P3 验收通过",
+    "baseline": {
+      "change": "CHG-002",
+      "version": "v0.1",
+      "spec_hash": "88f16377d47b5f67e0e99073eb0d02650235d9092e5fbef544656d107f1f487c"
+    }
+  }
 }
