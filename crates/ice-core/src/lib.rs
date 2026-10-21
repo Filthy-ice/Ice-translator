@@ -14,6 +14,6 @@ pub use config::Config;
 pub use detect::{Detection, detect};
 pub use document::{OcrDocument, PixelPoint, PixelRect, TextBlock};
 pub use error::CoreError;
-pub use glossary::Glossary;
+pub use glossary::{Glossary, LegacyImport, Term};
 pub use history::{HistoryRecord, HistoryStore};
 pub use language::{EngineKind, LangPair, Language};

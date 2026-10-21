@@ -1,0 +1,62 @@
+# V-012 钥匙串三件套证据（2026-10-21，macOS，debug 构建，用户真机操作）
+
+要求（REQ-005 / FR-4.2 / ADR-005）：API Key 只存 macOS 钥匙串（service `IceTranslator`、account `ai-api-key`），
+写入 / 读取 / 清除三个动作都能在界面上完成；敏感值只以长度与哈希前缀出现，不进 `config.toml`、不进日志、不回显任何片段。
+
+**证据等级说明（先讲清楚）**：本件的"写入"与"清除"两个动作是**用户口述**（2026-10-21，用户原话"钥匙串我已经试过了"），
+加上启动日志里指纹变化这一**间接印证**；没有这两个动作当刻的日志行。原因是用户操作时那个运行实例的日志过滤目标写错了
+（用 `RUST_LOG=ice_app=debug` 启动，而二进制 crate 名是 `ice_translator`，等于把所有日志过滤掉了），
+代理不能替用户处置其真实凭据，因此没有代跑。"读取"这一项有两份**直接日志证据**。
+
+## 1. 读取（直接日志证据，两次）
+
+```
+2026-10-20T09:25:07.796782Z  INFO ice_translator::app: 读到 API Key key_len=35 key_hash8="d5477b63"
+2026-10-21T08:19:52.217512Z  INFO ice_translator::app: 读到 API Key key_len=35 key_hash8="4b507e46"
+```
+
+第一次是 P4 首轮走查（钥匙串读取排在后台线程，用户在系统授权框上花了 18s，窗口期间持续渲染，见 V-010 §1）；
+第二次是 2026-10-21 重启实例（pid 19436）时的启动读取。两次都只有长度与哈希前缀。
+
+## 2. 写入（用户口述 + 指纹变化印证）
+
+用户在设置页做过「保存 Key」。**印证**：两次启动读取的指纹前缀不同（`d5477b63` → `4b507e46`），
+说明钥匙串里的条目在此期间被重写过——若只是读取，指纹必然一致。
+
+指纹算法（`crates/ice-app/src/system/secrets.rs:13-18`）：`std::hash::DefaultHasher`（SipHash）对 Key 求摘要，
+取 16 位十六进制的**前 8 位**；单测 `fingerprint_is_stable_and_hides_the_key` 断言同一 Key 指纹稳定、
+差一个字符指纹就变、且指纹里不含 Key 的任何片段。所以指纹变化只能来自 Key 值变化，不能来自实现抖动。
+
+写入路径的日志点存在且只记长度与指纹（`crates/ice-app/src/app.rs:220-221`）：
+
+```rust
+if let KeyState::Configured { len, hash8 } = &self.state.key {
+    tracing::info!(key_len = len, key_hash8 = hash8, "API Key 已存入钥匙串");
+```
+
+## 3. 清除（用户口述）
+
+用户在设置页点过「清除 Key」并过了二次确认（`Confirm::ClearKey`），随后状态条回到未配置、
+工具条的 AI 引擎按钮变灰（`engine_picker` 里 `enabled = kind != EngineKind::Ai || ai_available`）。
+清除后用户重新保存了一次，因此当前实例启动时仍能读到 Key（§1 第二行）——这与"清除→未配置→重新保存"的顺序自洽。
+
+清除是**不可逆地删掉用户真实凭据**的动作，按项目规则不由代理执行、也不由代理复跑取证。
+
+## 4. 边界核对（代码级，与真机操作无关但同属 V-012）
+
+| 检查 | 结果 |
+|---|---|
+| Key 不落 `config.toml` | ✅ `ice-core` 的 `Config` 结构里**根本没有 Key 字段**（全仓 `api_key` 只出现在 `main.rs` 从钥匙串取值、`ai.rs` 作为入参、`live.rs` 测试三处），所以不存在写进 TOML 的路径；ADR-005 明令禁止环境变量注入，代码里 `env::var` 取 Key 的路径为 0 处 |
+| Key 不进日志 | ✅ 全仓只有 `key_len` 与 `key_hash8` 两个字段出现在 `tracing` 调用里（`main.rs:77`、`app.rs:221`、`app.rs:278`） |
+| Key 不在界面回显任何片段（含末四位） | ✅ 设置页只显示 `已配置（35 位，存在系统钥匙串）` 或未配置（`views/settings.rs:184-190`，注释即"不回显任何可还原片段（FR-4.2）"）；**连指纹都不显示**，指纹只进日志。输入框存的是待写入的新值 |
+| 钥匙串错误不给用户看原始字节 | ✅ `describe_error` 对 `BadEncoding`/`BadDataFormat` 只说"格式不可读"，不转 `Display`（这两个变体的 Display 会打出原始字节），单测 `describe_error_never_echoes_payload_bytes` 锁住 |
+| 敏感信息门禁 | ✅ `./sdd scan` 通过；`grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates` 0 命中（含本件） |
+
+## 5. 未取到的一支
+
+**W-1.8 的"故意填错 Key → 红色可读原因 + 「去设置」按钮"未用假 Key 在真机复现**：填假 Key 会覆盖用户钥匙串里的真 Key，
+用户选择不走。已有的替代证据：① 错误态的渲染路径在真机上被 429 走通过——状态条转红、显示可读中文原因
+"被限流（HTTP 429），请稍后再试"，进程不崩、源文不丢（`/tmp/ice-round4.log` 三条 WARN，见 V-010 §4）；
+② `Unauthorized`/`NotConfigured` → `FailureAction::GoSettings` → 状态条上出现「去设置」这条链由无头测试覆盖
+（`failure_keeps_source_and_maps_action`、`failure_action_go_settings_switches_tab_and_focuses_the_key_field`：
+切到设置页签并把焦点送进 Key 输入框）。二者合起来覆盖了 W-1.8 的行为，只有"红字 + 按钮"的视觉同框未经真机确认。

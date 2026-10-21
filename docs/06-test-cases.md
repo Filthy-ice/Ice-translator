@@ -11,6 +11,7 @@
 |---|---|---|---|---|
 | TC-1.2-a | FR-1.2 | 对中文、英文、日文、韩文、俄文各一句调用 `ice_core::detect`（原名 `guess_language`） | 五种均判对；纯数字/符号句返回 `None` 而非误判 | ✅ 单测 `detects_common_scripts`、`digits_symbols_and_empty_are_not_guessed`、`japanese_with_kanji_still_reads_as_japanese` |
 | TC-1.2-b | FR-1.2 | 混合中英的段落 | 按主导字符集判定，且置信度低于纯单语句 | ✅ 单测 `mixed_chinese_english_reads_as_chinese_with_lower_confidence` |
+| TC-1.2-c | FR-1.2 / FR-1.4 | **自动检测出的语言与目标语言相同**（源=自动检测、目标=英语、源文为英文） | 目标语言自动翻转到简体中文并**持久写回**（工具条下拉跟着变），提示条说明"检测到英语，已自动改为 英语 → 简体中文"，本次直接出译文；若目标本来就是简体中文则翻转到英语；源语言仍保持自动检测 | ☐ **未实现，转 CHG-004**（用户 2026-10-21 决定）：当前行为是本地拦下并给中文可读错误 `SameLanguage`（`machine.rs:164`），真机复现为"源语言与目标语言相同（都是英语），不需要翻译；请换一个目标语言"。这是对 FR 行为的改动，不在已批准的 CHG-003 范围内 |
 | TC-1.3-a | FR-1.3 | `Translator` 注册两个 mock 引擎，分别请求 | 两通道返回不同文本，各自 `engine` 字段正确 | ✅ `different_engines_do_not_share_cache_entries` |
 | TC-1.3-b | FR-1.3 | 真实网络（`#[ignore]`）：同一句分别走机翻与 AI | 两条均返回非空译文，且 `elapsed_ms` 均 > 0 | ✅ 两条真实通道均已实测：`machine_live_short`、`machine_live_long_text_is_chunked`、`ai_live_deepseek`（`cargo test -p ice-providers --test live -- --ignored`） |
 | TC-1.3-c | FR-1.3 | AI 未配置 Key 时请求 AI 通道 | `ProviderError::NotConfigured`，错误文本含"未配置" | ✅ `unregistered_engine_reports_not_configured_for_ai`、`unavailable_without_key_or_config` |
@@ -60,29 +61,64 @@
 | TC-3.5-d | FR-3.5 | 停靠状态下再拖离 200px | 恢复自由浮动，热区消失 | 待 P5 |
 | TC-3.5-e | FR-3.5 | 窗口高度大于屏幕可用高度 | 不产生负坐标，夹在可视区内 | 待 P5 |
 
+### 界面层（P4，`cargo test -p ice-app`）
+
+| 编号 | 需求 | 用例 | 期望 | 状态 |
+|---|---|---|---|---|
+| TC-1.1-a | FR-1.1 | 无头渲染文本页后检查源文框的 `return_key` | 裸 Enter 提交翻译、Shift+Enter 只换行；粘贴不自动提交 | ✅ `plain_enter_translates_only_when_focus_is_in_source`、`shift_enter_is_a_newline_even_with_focus_in_source` |
+| TC-1.5-a | FR-1.5 | 有译文时点「复制译文」/「复制对照」 | 前者只写译文，后者写"原文+分隔线+译文"，保留源文换行 | ✅ `translation_copy_writes_only_the_translation`、`bilingual_copy_keeps_source_newlines_and_fixed_separator` |
+| TC-1.5-b | FR-1.5 | 译文为空时点任一复制按钮 | 剪贴板**完全不被触碰**，只出一条提示 | ✅ `empty_translation_never_touches_clipboard`、`copy_buttons_refuse_to_touch_the_clipboard_without_a_translation` |
+| TC-1.7-d | FR-1.7 | 逐一注入 10 个 `ProviderError` 变体 | 每个都有可读文案、不 panic、源文保留 | ✅ `every_error_variant_renders_a_message_and_never_panics`、`failure_is_mapped_and_source_survives` |
+| TC-1.7-e | FR-1.7 | 401 → 点「去设置页填 Key」；AI 超时 → 点「改用机翻」 | 前者切到设置页并聚焦 Key 输入框，后者用机翻重发同一句 | ✅ `failure_action_go_settings_switches_tab_and_focuses_the_key_field`、`failure_action_use_machine_resubmits_with_the_machine_engine`、`timeout_on_ai_offers_machine_fallback_but_not_on_machine` |
+| TC-2.1-a | REQ-002 | 结果回来时 `request_id` 已变（用户改了源文/语言） | 过期结果静默丢弃，界面不闪旧内容 | ✅ `stale_outcome_is_dropped_without_touching_the_ui`、`stale_outcome_is_dropped_without_touching_visible_text` |
+| TC-2.1-b | REQ-002 | 请求在飞时再次提交 | 忽略第二次，同一时刻只有一个在飞 | ✅ `submit_while_in_flight_is_ignored` |
+| TC-2.1-c | REQ-002 | 20,000 字符中英混排的单帧布局耗时 | < 100ms（**实测 15.6ms**，REQ-002 的 HYPOTHESIS 成立） | ✅ `twenty_thousand_characters_layout_within_budget` |
+| TC-2.1-d | REQ-002 | 慢任务（人为延迟）期间的帧循环 | UI 线程不阻塞，结果晚到也能落盘 | ✅ `a_slow_job_does_not_block_the_ui_thread` |
+| TC-4.2-a | FR-4.2 | 保存 Key / 空 Key / 已配置态的界面呈现 | 明文只交出一次且随即清空缓冲区；空 Key 永不写出；界面只显示位数，不显示任何片段 | ✅ `saving_a_key_hands_over_the_plaintext_once_and_clears_the_buffer`、`an_empty_key_is_never_handed_over`、`a_configured_key_shows_only_its_length`、`fingerprint_is_stable_and_hides_the_key`、`describe_error_never_echoes_payload_bytes` |
+| TC-4.2-b | FR-4.2 | 启动时钥匙串读取被系统授权框阻塞 | 窗口**先**建好，读取在后台线程；结果回来后补装 AI 引擎并请求重绘 | ✅ `the_probe_result_actually_arrives_over_the_channel`、`a_pending_key_probe_leaves_ai_unavailable_until_it_lands`；真机 W-1.18 已过（2026-10-20，日志时序取证）：建窗与取锁在 `09:24:49.513`，钥匙串回值在 `09:25:07.796`——中间 18.3s 是用户在回答 macOS 授权框，窗口全程可交互；证据 `features/CHG-003/evidence/*-V-010.txt`（取编号最大者） |
+| TC-4.3-d | FR-4.3 | 钥匙串里条目被手动删除，config 仍标记已配置 | 以钥匙串为准清掉标记并落盘 | ✅ `the_probe_overrides_a_stale_configured_flag`、`a_stale_key_configured_flag_is_cleared` |
+| TC-4.5-e | FR-4.5 | `config.toml` 里已有术语，启动后第一次派发 | 术语提示词已经在请求里，不需要用户先改一次术语 | ✅ `glossary_from_config_reaches_the_engine_on_the_first_job` |
+| TC-4.5-f | FR-4.5 | 设置页增/删术语 | 同帧把新术语表推给派发器，并标脏落盘 | ✅ `adding_a_term_pushes_the_new_glossary_to_the_dispatcher`、`removing_a_term_also_syncs_and_dirties_the_config`、`glossary_change_reaches_the_engine_prompt` |
+| TC-4.5-g | FR-4.5 | 换供应商/存 Key 触发引擎整套重建 | 重建后术语表仍然生效（不随旧实例丢失） | ✅ `rebuilding_the_translator_keeps_the_glossary`、`replacing_the_translator_takes_effect_on_the_next_job` |
+| TC-5.2-a | FR-5.2 | Cmd+W / 点窗口关闭按钮 | 撤销关闭并最小化，进程不退、内容原样 | ✅ `hide_window_keeps_the_process_and_the_content`、`hide_cancels_close_and_minimizes`；⚠ **真机两轮失败（缺陷 D-2，见 W-1.21）**：收进后台没问题，点 Dock 恢复回来的是一张被拉伸的旧画面、完全不能交互。无头测试看不出来，因为它手工把 `minimized` 塞进 `RawInput`，而真机上 egui-winit 在 macOS 运行时根本不刷新这个字段；第二轮才查出更硬的一层——隐藏期间 eframe 只调 `App::logic`，写在 `ui()` 里的修复代码从未执行。恢复判据现由 4 条 `RevealGuard` 测试锁住（静默期内不判、焦点单独成立、几何单独成立、可见时不成立）；**第三轮真机复验通过**（2026-10-21，用户确认"收起叫回后依然能够使用"），FR-5.2 成立 |
+| TC-5.2-b | FR-5.2 | Cmd+Q | 先落盘配置再关窗，最后才释放单实例锁 | ✅ `quit_writes_the_config_before_releasing_the_lock`、`quit_sets_the_flag_and_really_closes` |
+| TC-5.1-a | REQ-007 | 逐条按键分类 | Cmd+Enter 翻译、Cmd+Shift+M/C/P 全局、Cmd+W 隐藏、Cmd+Q 退出；按住不重复触发；未绑定键放行 | ✅ `system::hotkeys::tests` 全部 8 条 |
+| TC-6.1-a | REQ-006 | 历史页渲染与点选 | 渲染本身不提交任何请求；点一行只回填到文本页，**不自动翻译** | ✅ `rendering_the_history_page_does_not_submit_anything`、`picking_a_row_fills_the_text_page_without_translating` |
+| TC-6.1-b | REQ-006 | 历史文件损坏 / 读不出来 | 坏行跳过、整页仍可用；读不出来时给可读原因，翻译不受影响 | ✅ `corrupt_history_lines_are_skipped_and_the_page_stays_usable`、`an_unreadable_history_file_reports_a_reason` |
+| TC-9.1-a | REQ-009 | 另一进程持锁时启动 | 第二个实例拿不到锁、非零码退出，不碰配置/历史/钥匙串 | ✅ `second_acquire_in_same_dir_is_rejected_while_holder_lives`；真机 W-1.19 已过（2026-10-20）：第二实例退出码 **1**，打印中文三行（含持有者 PID 21841 与自愈步骤）；`config.toml`/`history.jsonl` 的 mtime 与大小均未变，钥匙串未被访问；第一实例存活，锁文件内容仍是 `21841`（没有删别人的锁）；证据 `features/CHG-003/evidence/*-V-010.txt`（取编号最大者） |
+| TC-9.1-b | REQ-009 | 陈旧锁（PID 已消失 / 内容损坏 / PID 被回收） | 一律接管；释放时只删 PID 与自己相符的那一份 | ✅ `stale_lock_from_dead_pid_is_taken_over`、`corrupt_lock_content_is_treated_as_stale`、`a_stale_lock_recording_our_own_recycled_pid_is_taken_over`、`release_does_not_remove_someone_elses_lock` |
+| TC-N-1 | NFR-2 | 空闲帧循环 | 无提示条、无在飞请求时不请求重绘 | ✅ 代码审查 `app.rs::ui`（只有 toast 与结果到达才请求重绘）；真机 W-1.20 已过（2026-10-20）。**`ps -o %cpu` 测不了空闲窗口**（它是进程生命周期的平均值），改用 cputime 差值：30.2s 观察窗内 cputime `0:15.62 → 0:15.62`，即消耗 **0.000s = 0.0000%**（阈值 <1%），RSS 93.3MB；证据 `features/CHG-003/evidence/*-V-010.txt`（取编号最大者） |
+
 ## 2. 界面人工走查（P4）
 
 对照 `03-ui-design.md` 的控件清单逐行勾选。走查结论表：
 
 | 编号 | 检查项 | 存在 | 位置符合 | 行为符合 | 备注 |
 |---|---|---|---|---|---|
-| W-1.1 | 页签四项（文本/图片/历史/设置）齐全且切换保留状态 | ☐ | ☐ | ☐ | |
-| W-1.2 | 语言对下拉在顶部居中，源→目标方向箭头清晰 | ☐ | ☐ | ☐ | |
-| W-1.3 | 机翻/AI 为分段选择器（非两个独立按钮），当前项高亮 | ☐ | ☐ | ☐ | |
-| W-1.4 | ⌗ 悬浮按钮在最右上角，与页签不粘连 | ☐ | ☐ | ☐ | |
-| W-1.5 | 源文区与译文区 50/50 分栏，间距 8px，缩窗后不重叠 | ☐ | ☐ | ☐ | |
-| W-1.6 | 空态提示文案"输入后按 Enter 翻译"存在且为灰色 | ☐ | ☐ | ☐ | |
-| W-1.7 | 加载态主按钮禁用并显示"翻译中…"，旧译文不被清空 | ☐ | ☐ | ☐ | |
-| W-1.8 | 错误态：故意填错 Key → 红色原因文本 + "去设置"按钮可点 | ☐ | ☐ | ☐ | |
-| W-1.9 | 三个复制按钮等宽排列、命名与设计一致、行为不串台 | ☐ | ☐ | ☐ | |
-| W-1.10 | 缓存/耗时徽标只在对应状态下出现 | ☐ | ☐ | ☐ | |
-| W-1.11 | 状态条三态（就绪/未配置/错误）文案正确 | ☐ | ☐ | ☐ | |
-| W-1.12 | 最小尺寸 640×420 下无控件被裁掉 | ☐ | ☐ | ☐ | |
-| W-1.13 | 暗色主题下所有文本与徽标对比度可读 | ☐ | ☐ | ☐ | |
-| W-1.14 | 亮色主题下同 | ☐ | ☐ | ☐ | |
-| W-1.15 | Tab 顺序与视觉顺序一致，主要操作键盘可达 | ☐ | ☐ | ☐ | |
-| W-1.16 | 18,000 字符粘贴后界面不掉帧、能出结果 | ☐ | — | ☐ | 配合 TC-P-2 |
-| W-1.17 | 中文界面文案无错别字、无中英混排破版 | ☐ | ☐ | ☐ | |
+| W-1.1 | 页签四项（文本/图片/历史/设置）齐全且切换保留状态 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.2 | 语言对下拉在顶部居中，源→目标方向箭头清晰 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.3 | 机翻/AI 为分段选择器（非两个独立按钮），当前项高亮 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.4 | 悬浮窗按钮在最右上角，与页签不粘连 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过；**第四轮复核**（2026-10-21）：位置不变，文案由 `⌗ 悬浮` 改为纯文字 `悬浮窗`（缺陷 D-5，装饰字形在真机上显示为豆腐块），点击可切到简洁窗、简洁窗点"全量"可切回 |
+| W-1.5 | 源文区与译文区 50/50 分栏，间距 8px，缩窗后不重叠 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.6 | 空态提示文案"输入后按 Enter 翻译"存在且为灰色 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.7 | 加载态主按钮禁用并显示"翻译中…"，旧译文不被清空 | ✅ | ✅ | ✅ | **第一轮用户报通过，但结论不可采**：那时整条按钮行被裁出面板（缺陷 D-1），用户看不到主按钮，只可能凭译文区的 spinner 判定。D-1 修复后重看：**第四轮走查通过**（2026-10-21，动作条已移进译文框右下角，按钮变灰 + "翻译中…" + 旧译文保留） |
+| W-1.8 | 错误态：故意填错 Key → 红色原因文本 + "去设置"按钮可点 | ✅ | ✅ | ⚠ | **假 Key 分支未在真机复现**：填假 Key 会覆盖用户钥匙串里的真 Key，用户 2026-10-21 选择不走（钥匙串写入/清除本身已验，见 V-012）。**已有的替代证据**：① 错误态渲染路径在真机上被 429 走通——状态条转红 + 可读中文原因"被限流（HTTP 429），请稍后再试"，进程不崩、源文不丢（`/tmp/ice-round4.log` 三条 WARN，V-010 §4）；② `Unauthorized`/`NotConfigured` → `FailureAction::GoSettings` → 状态条出现「去设置」→ 切到设置页签并把焦点送进 Key 输入框，这条链由 `failure_keeps_source_and_maps_action` 与 `failure_action_go_settings_switches_tab_and_focuses_the_key_field` 覆盖。**缺口只有"红字 + 去设置按钮"视觉同框未经真机确认**，P8 回归时用一把废 Key 补上 |
+| W-1.9 | 两个复制按钮（复制译文 / 复制对照）命名与设计一致、行为不串台；译文为空时点击只提示、剪贴板原内容不变 | ✅ | ✅ | ✅ | **第一轮失败 → 缺陷 D-1**：用户"没有找到复制按钮"，整条底部动作行被 `CentralPanel` 裁掉。D-1 修复后用户又提出位置改版（2026-10-21）：按钮改放译文框内右下角的自带外框动作条，**常驻不隐藏**（先做过"碰边框浮出"版，用户看到实物后改为常驻）。**第四轮走查通过**（2026-10-21）：动作条在译文框内右下角可见、不压框、点击行为正确；空译文不碰剪贴板这一支由 `copy_buttons_refuse_to_touch_the_clipboard_without_a_translation` 锁住（只发提示 `没有可复制的译文`，`Effects::copy` 保持 `None`） |
+| W-1.10 | 缓存/耗时徽标只在对应状态下出现 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.11 | 状态条三态（就绪/未配置/错误）文案正确 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.12 | 最小尺寸 640×420 下无控件被裁掉 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.13 | 暗色主题下所有文本与徽标对比度可读 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.14 | 亮色主题下同 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.15 | Tab 顺序与视觉顺序一致，主要操作键盘可达 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.16 | 18,000 字符粘贴后界面不掉帧、能出结果 | ✅ | ✅ | ✅ | 配合 TC-P-2。**第一轮未验成**：样本按加权字符数是英文占多数，触发同语言拦截；样本已重做为 18,000 字符纯简体中文（汉字 15,987 / 拉丁 16 / 繁体样本字 0，置信度 0.9995 → 简体中文），文件 `/tmp/ice-18k-paste.txt`（生成脚本 `/tmp/gen_ice_18k.py`）。**第二轮跑出缺陷 D-4**，用户原话"左边的文本框变形了，贴底了，而且文本框无法下拉，右边翻译后没有变形，但是也没有下拉"：左栏根因是源文编辑器画进"丢弃的子 Ui"，而 `Ui::new_child` 不继承裁剪（只克隆父 painter 的 clip_rect，egui ui.rs:210-235），`TextEdit::multiline` 又按内容全高分配矩形，18k 字符把框撑到窗口外、既裁不掉也没有滚动容器。修复：两栏正文都进定高 `ScrollArea`，源文外框改由定高 `Frame::group` 画（TextEdit 自带框跟着内容高度走，溢出时底边会被裁掉）；新增 2 条回归测试。**第四轮真机复验通过**（2026-10-21）：粘贴后左框不变形、不贴底、四边边框完整，两指/滚轮能一路滚到末尾，字数行显示 18,000；译文栏同样可滚到底——用户报的"右边也没有下拉"随滚动容器一起消失（无头滚轮测试 8 帧偏移增长，与真机一致）。布局耗时本身已由 TC-2.1-c 证明 15.6ms/100ms |
+| W-1.17 | 中文界面文案无错别字、无中英混排破版 | ✅ | ✅ | ✅ | ✅ 2026-10-20 第一轮走查通过 |
+| W-1.18 | 启动时钥匙串授权框不冻住窗口（窗口先建好、读取在后台线程） | ✅ | ✅ | ✅ | 2026-10-20 日志时序：建窗 09:24:49.513 → 钥匙串回值 09:25:07.796，中间 18.3s 窗口持续可交互 |
+| W-1.19 | 第二个实例被单实例锁挡住且不留痕 | ✅ | ✅ | ✅ | 2026-10-20：退出码 1、中文三行提示含持有者 PID；配置/历史/钥匙串均未被触碰，锁未被误删 |
+| W-1.20 | 空闲时不空转 CPU（NFR-2） | ✅ | — | ✅ | 2026-10-20：cputime 30.2s 内零增长 = 0.0000%（阈值 <1%），RSS 93.3MB |
+| W-1.21 | **Cmd+W 收进后台后点 Dock 图标能恢复成可用窗口**（FR-5.2） | ✅ | ✅ | ✅ | **第一、二轮失败 → 缺陷 D-2**：回来的是一张被非等比拉伸的旧画面，边框拖不动、字变窄变扁、按钮输入框点上去毫无反应，用户只能关窗；第二轮"最小化重新叫出来，还是贴图"，根因是判定与心跳写在 `App::ui` 里，而 eframe 在隐藏期间只调 `App::logic`、`ui` 一帧都不跑。**第三轮通过**（2026-10-21，用户原话"可以了，收起叫回后依然能够使用"）：看护挂到 `logic`、判据加宽为几何或焦点、800ms 静默期、补发 `Minimized(false)`。日志取证：收起后 248ms 进入 `revealed=false focused=false`，2084ms 时两者同时回来并触发"窗口恢复可见，重发几何" |
+| W-1.22 | **源文栏与译文栏的底边对齐**（两框等高，视觉上没有一高一矮） | ✅ | ✅ | ✅ | **第二轮走查截图发现（缺陷 D-3，2026-10-21）**：译文框撑满整栏、源文框为字数行让位而矮一截，"两边窗口大小不一样"。已改为两栏共用定高页脚行 + 正文精确占位，由 `both_panes_end_at_the_same_line` / `both_panes_align_even_with_an_empty_translation_footer` 锁住。**第四轮真机复验通过**（2026-10-21）：两栏底边齐平，字数行同一高度 |
+| W-1.23 | **右下角动作条**：常驻译文框内右下角、自带外框、四边不压译文框边框；窄窗口（640px）下四个按钮换行不溢出 | ✅ | ✅ | ✅ | 用户提出的位置改版（2026-10-21，两轮反馈：先要悬浮浮出，看到实物后改常驻＋"边框有点遮挡"修间隙）。**第四轮真机复验通过**（2026-10-21）：动作条在译文框内、不压边框，窗口拖到最窄（640px）不溢出 |
+| W-1.24 | **界面无缺字（豆腐块）**：按钮与提示里的符号都显示得出来 | ✅ | — | ✅ | **第三轮走查发现（缺陷 D-5，2026-10-21）**：用户截图里提示条的关闭按钮是一个方块，原话"不光是这一个按钮"。根因：`⌗ 悬浮`、`▣ 全量`、`⧉ 复制`、`✕` 四个装饰字形既不在 egui 内置字体（Ubuntu-Light / Hack / egui-icons）里，eframe 的 macOS 系统字体回退也匹配不到，只能画豆腐块。改为纯文字（`悬浮窗` / `全量` / `复制`）与 Latin-1 的 `×`；提示条的关闭符同时从"文字下方"移到"文字之后同一行"。**第四轮真机复验通过**（2026-10-21，用户原话"可以了"）：全量界面工具条、简洁窗按钮、提示条均无豆腐块，× 在文字右侧同一行、可点掉、四秒自动消失 |
 
 ## 3. 简洁模式走查与实测（P5）
 
@@ -102,6 +138,10 @@
 | W-2.12 | 关窗不退出 | Cmd+W 后查进程与 Dock | 进程在、CPU < 1%，点 Dock 图标恢复 |
 | W-2.13 | **无边框可拖动**（P1 用户反馈补强） | 置顶开启状态下，分别拖动顶部把手条、图标行空白、译文行尾部空白 | 三种把手位均可拖动窗口到屏幕任意位置；拖输入框/按钮时不触发窗口移动；松手即触发吸附判定 |
 | W-2.14 | **形变动画**（FR-3.9） | 连续切换全量↔简洁 10 次并录屏 | 看得出是同一窗口在伸缩（180~220ms 缓出），无跳窗、无黑屏、无内容闪烁；动画中点击按钮立即响应；两端尺寸与规范一致（±2px） |
+| W-2.15 | **简洁窗内可切换机翻 / AI**（P4 第四轮用户预报） | 简洁窗内切引擎后再译一次 | 有可达的引擎切换控件；切到未配置 Key 的 AI 时给中文提示而不是静默失败；切换后当前源文/译文不丢 |
+| W-2.16 | **简洁窗译文可滚动**（P4 第四轮用户预报） | 在简洁窗里译一段超出一行/一屏的文本 | 译文区能滚动或用等效方式看全（窄条版式可用展开/换行，但不得截断且无法查看）；滚轮与两指手势都生效 |
+
+> **P4 第四轮走查预报的简洁窗问题（2026-10-21，用户原话）**：① "悬浮窗点击后还是和原框一样大，应该是一个很精致的窗口" → 归 W-2.1；② "悬浮窗无法拖动" → 归 W-2.13；③ "悬浮窗内无法更换机翻还是 ai" → 新增 W-2.15；④ "悬浮窗内的译文不能滚动" → 新增 W-2.16。四条都属 CHG-003 规格第 19/25 行明确划给 P5 的"简洁窗内部版式"，本包只保证切换按钮/快捷键存在与切换后内容不丢，故不计入 P4 走查失败项，转为 CHG-004 的入场清单（`07-acceptance.md` §P4 遗留）。
 
 ## 4. 图片翻译用例（P6/P7）
 

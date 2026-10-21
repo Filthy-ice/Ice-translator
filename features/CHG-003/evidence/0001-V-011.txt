@@ -1,0 +1,45 @@
+# V-011 真实端点两条 — 真机界面实测（2026-10-20）
+
+取证方式：用户在自己的 macOS 上跑 debug 构建（`RUST_LOG=info`），通过真实界面操作，不是 live 测试用例。
+ANSI 颜色码已剥除；Key 只以长度与哈希前缀出现，明文全程未落盘、未落日志、未进本证据件。
+
+## 生效的 AI 配置（`config.toml` 的 `[ai]` 段，按设计不含密钥）
+
+```toml
+[ai]
+provider = "deep-seek"
+base_url = "https://api.deepseek.com"
+model = "deepseek-chat"
+key_configured = true
+```
+
+## 启动时序与钥匙串读取
+
+窗口在 `09:24:49` 就建好并取得单实例锁；钥匙串在后台线程上读，等用户在系统授权框点完才于 `09:25:07` 返回（相隔 18s）。
+这就是 P4 修掉"启动卡死"之后的预期时序（见 `07-acceptance.md` 变更登记 2026-10-20 第 4 行）。
+
+```
+2026-10-20T09:24:49.513242Z  INFO ice_translator: 取得单实例锁 pid=21841 path=/Users/filthy-ice/Library/Application Support/IceTranslator/ice-translator.lock
+2026-10-20T09:25:07.796782Z  INFO ice_translator::app: 读到 API Key key_len=35 key_hash8="d5477b63"
+```
+
+## 翻译请求逐条（全部由真实界面触发）
+
+```
+2026-10-20T10:11:10.743196Z  WARN ice_translator::jobs: 翻译失败 request_id=1 error="SameLanguage" status=0
+2026-10-20T10:11:19.783734Z  INFO ice_translator::jobs: 翻译完成 request_id=2 engine=Machine chars=7 elapsed_ms=1512 cache_hit=false segments=1
+2026-10-20T10:15:16.499020Z  INFO ice_translator::jobs: 翻译完成 request_id=3 engine=Ai chars=6 elapsed_ms=988 cache_hit=false segments=1
+2026-10-20T10:15:17.548288Z  INFO ice_translator::jobs: 翻译完成 request_id=4 engine=Machine chars=7 elapsed_ms=1026 cache_hit=false segments=1
+2026-10-20T10:15:18.663080Z  INFO ice_translator::jobs: 翻译完成 request_id=5 engine=Ai chars=6 elapsed_ms=0 cache_hit=true segments=1
+2026-10-20T10:15:30.662948Z  INFO ice_translator::jobs: 翻译完成 request_id=6 engine=Ai chars=27 elapsed_ms=708 cache_hit=false segments=1
+2026-10-20T10:15:48.438643Z  INFO ice_translator::jobs: 翻译完成 request_id=7 engine=Machine chars=28 elapsed_ms=695 cache_hit=false segments=1
+```
+
+## 判读
+
+- **机翻 MyMemory**：`request_id` 2 / 4 / 7，695–1512ms，均 1 段、非缓存。
+- **AI DeepSeek**：`request_id` 3 / 5 / 6，708–988ms（首次 988ms）；其中 `request_id=5` 为 `elapsed_ms=0 cache_hit=true` —— **FR-1.8 缓存命中在真机界面上成立**。
+- `request_id=1` 是本阶段新修的 `SameLanguage` 拦截：`status=0` 表示**根本没发 HTTP 请求**，本地就判掉了（源文与目标同为简体中文）。修复前这里是 `error="Status" status=403`，界面直接显示端点返回的英文 `PLEASE SELECT TWO DISTINCT LANGUAGES`。
+- 引擎在 `Machine` 与 `Ai` 之间来回切换后各自都能出译文，FR-1.3"切换即重译"在真机成立。
+- 两条通道均跑通，V-011 要求的"机翻无需 Key + AI 用用户钥匙串里的 Key"两个条件都满足。
+- 隐私核对（NFR-3）：以上日志不含源文、译文、端点查询串与密钥明文；密钥只有 `key_len=35` 与 `key_hash8=d5477b63`。

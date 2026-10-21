@@ -1,17 +1,18 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::CoreError;
+use crate::config::Config;
 
 /// 一条术语（FR-4.5）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Term {
     pub source: String,
     pub target: String,
-    /// 拉丁文术语默认做大小写不敏感匹配；中文等无需区分
-    #[serde(default)]
+    /// 拉丁文术语默认做大小写不敏感匹配；中文等无需区分。
+    /// 默认值不写进 config.toml，让 `[[term]]` 保持需求 §4.5 的两行形态。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub case_sensitive: bool,
 }
 
@@ -43,42 +44,93 @@ pub struct Glossary {
     pub terms: Vec<Term>,
 }
 
+/// P2 时期术语表单独存 `glossary.toml`（`[[terms]]`）。CHG-003 起术语并入 `config.toml`，
+/// 这里只负责把老文件读进来，绝不改写或删除它——那是用户自己的数据。
+const LEGACY_FILE: &str = "glossary.toml";
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LegacyGlossary {
+    #[serde(default)]
+    pub terms: Vec<Term>,
+}
+
+/// 一次性导入的结果：条数 + 给界面显示的提示（损坏/缺失时为 `None` 或说明文本）
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LegacyImport {
+    pub imported: usize,
+    pub notice: Option<String>,
+}
+
 impl Glossary {
     pub const fn max_prompt_terms() -> usize {
         60
     }
 
-    pub fn path() -> Result<PathBuf, CoreError> {
-        Ok(crate::config::Config::config_dir()?.join("glossary.toml"))
+    pub fn from_config(cfg: &Config) -> Self {
+        Self {
+            terms: cfg.terms.clone(),
+        }
     }
 
-    pub fn load_at(path: &Path) -> Result<Self, CoreError> {
+    /// 写回配置前先去重排序，保证同一份术语表渲染出的 `config.toml` 是稳定的
+    pub fn write_to_config(&self, cfg: &mut Config) {
+        let mut normalized = self.clone();
+        normalized.normalize();
+        cfg.terms = normalized.terms;
+    }
+
+    /// 从旧 `glossary.toml` 只读导入。仅当配置里还没有术语时才导，因此重复启动不会重复导入。
+    pub fn import_legacy(cfg: &mut Config, dir: &Path) -> LegacyImport {
+        if !cfg.terms.is_empty() {
+            return LegacyImport::default();
+        }
+        let path = dir.join(LEGACY_FILE);
         if !path.exists() {
-            return Ok(Self::default());
+            return LegacyImport::default();
         }
-        let raw = fs::read_to_string(path)?;
-        // 术语表损坏时宁可返回空表，也不阻塞启动
-        toml::from_str(&raw).map_err(|e| CoreError::ConfigParse(format!("术语表解析失败：{e}")))
-    }
-
-    pub fn load() -> Result<Self, CoreError> {
-        Self::load_at(&Self::path()?)
-    }
-
-    pub fn save_at(&self, path: &Path) -> Result<(), CoreError> {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
+        let raw = match fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(e) => {
+                return LegacyImport {
+                    imported: 0,
+                    notice: Some(format!("旧术语表读取失败，已按空表启动：{e}")),
+                };
+            }
+        };
+        match toml::from_str::<LegacyGlossary>(&raw) {
+            Ok(legacy) if legacy.terms.is_empty() => LegacyImport::default(),
+            Ok(legacy) => {
+                let mut glossary = Self {
+                    terms: legacy.terms,
+                };
+                glossary.normalize();
+                let imported = glossary.terms.len();
+                cfg.terms = glossary.terms;
+                LegacyImport {
+                    imported,
+                    notice: Some(format!("已从 glossary.toml 导入 {imported} 条术语")),
+                }
+            }
+            // 术语表损坏时宁可空表启动，也不阻塞翻译（与 FR-4.3 同一取向）
+            Err(e) => LegacyImport {
+                imported: 0,
+                notice: Some(format!("旧术语表解析失败，已按空表启动：{e}")),
+            },
         }
-        let rendered =
-            toml::to_string_pretty(self).map_err(|e| CoreError::ConfigParse(e.to_string()))?;
-        fs::write(path, rendered)?;
-        Ok(())
     }
 
-    pub fn save(&self) -> Result<PathBuf, CoreError> {
-        let path = Self::path()?;
-        self.save_at(&path)?;
-        Ok(path)
+    /// 按源词排序并去掉重复项（同一源词保留最后一次写入的译法）
+    pub fn normalize(&mut self) {
+        let mut seen: Vec<Term> = Vec::with_capacity(self.terms.len());
+        for term in self.terms.drain(..) {
+            if let Some(slot) = seen.iter_mut().find(|t| same_source(t, &term)) {
+                *slot = term;
+            } else {
+                seen.push(term);
+            }
+        }
+        seen.sort_by(|a, b| a.source.cmp(&b.source));
+        self.terms = seen;
     }
 
     pub fn upsert(&mut self, term: Term) {
@@ -223,13 +275,105 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_through_toml() {
+    fn terms_render_as_term_tables_inside_config() {
+        let mut cfg = Config::default();
+        Glossary {
+            terms: vec![
+                Term::new("throughput", "吞吐量"),
+                Term {
+                    source: "IO".into(),
+                    target: "输入输出".into(),
+                    case_sensitive: true,
+                },
+            ],
+        }
+        .write_to_config(&mut cfg);
+
+        let rendered = toml::to_string_pretty(&cfg).unwrap();
+        assert!(rendered.contains("[[term]]"), "{rendered}");
+        assert!(!rendered.contains("[[terms]]"), "{rendered}");
+        // 默认值不落盘，`[[term]]` 保持需求 §4.5 的两行形态
+        assert_eq!(rendered.matches("case_sensitive").count(), 1, "{rendered}");
+
+        let back: Config = toml::from_str(&rendered).unwrap();
+        assert_eq!(back, cfg);
+        assert_eq!(Glossary::from_config(&back).terms.len(), 2);
+    }
+
+    #[test]
+    fn write_to_config_dedupes_and_sorts() {
+        let mut cfg = Config::default();
+        Glossary {
+            terms: vec![
+                Term::new("zeta", "泽塔"),
+                Term::new("alpha", "阿尔法"),
+                Term::new("ZETA", "末位"),
+            ],
+        }
+        .write_to_config(&mut cfg);
+
+        let sources: Vec<&str> = cfg.terms.iter().map(|t| t.source.as_str()).collect();
+        // 排序沿用 P2 的字节序（大写在小写前），去重才是大小写不敏感的
+        assert_eq!(sources, ["ZETA", "alpha"]);
+        assert_eq!(cfg.terms[0].target, "末位");
+    }
+
+    #[test]
+    fn import_legacy_reads_old_file_without_touching_it() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("glossary.toml");
-        let mut g = Glossary::default();
-        g.upsert(Term::new("throughput", "吞吐量"));
-        g.save_at(&path).unwrap();
-        assert_eq!(Glossary::load_at(&path).unwrap(), g);
+        let legacy = dir.path().join("glossary.toml");
+        fs::write(
+            &legacy,
+            "[[terms]]\nsource = \"pod\"\ntarget = \"Pod\"\n\n[[terms]]\nsource = \"IO\"\ntarget = \"输入输出\"\ncase_sensitive = true\n",
+        )
+        .unwrap();
+        let before = fs::read(&legacy).unwrap();
+
+        let mut cfg = Config::default();
+        let outcome = Glossary::import_legacy(&mut cfg, dir.path());
+
+        assert_eq!(outcome.imported, 2);
+        assert!(outcome.notice.unwrap().contains("导入 2 条"));
+        assert_eq!(cfg.terms.len(), 2);
+        assert_eq!(
+            Glossary::from_config(&cfg).lookup("POD").unwrap().target,
+            "Pod"
+        );
+        // 用户的旧文件一个字节都不动
+        assert_eq!(fs::read(&legacy).unwrap(), before);
+    }
+
+    #[test]
+    fn import_legacy_is_idempotent_once_config_has_terms() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("glossary.toml"),
+            "[[terms]]\nsource = \"pod\"\ntarget = \"Pod\"\n",
+        )
+        .unwrap();
+
+        let mut cfg = Config::default();
+        assert_eq!(Glossary::import_legacy(&mut cfg, dir.path()).imported, 1);
+        // 第二次启动：config 里已有术语，不再导入、不产生重复
+        let second = Glossary::import_legacy(&mut cfg, dir.path());
+        assert_eq!(second, LegacyImport::default());
+        assert_eq!(cfg.terms.len(), 1);
+    }
+
+    #[test]
+    fn import_legacy_degrades_on_corrupt_or_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        assert_eq!(
+            Glossary::import_legacy(&mut cfg, dir.path()),
+            LegacyImport::default()
+        );
+
+        fs::write(dir.path().join("glossary.toml"), "terms = ][ 不是 toml").unwrap();
+        let outcome = Glossary::import_legacy(&mut cfg, dir.path());
+        assert_eq!(outcome.imported, 0);
+        assert!(outcome.notice.unwrap().contains("解析失败"));
+        assert!(cfg.terms.is_empty());
     }
 
     #[test]

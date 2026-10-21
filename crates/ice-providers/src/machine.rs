@@ -158,6 +158,11 @@ impl TranslationEngine for MachineTranslateEngine {
         }
         let target = req.pair.target.code().to_string();
         let (source, detected) = self.source_language(req);
+        // 端点硬要求两端语言不同。"自动检测"判出与目标同语言时（中文→简体中文最常见），
+        // 发过去必被拒，所以就地拦下：不发这次请求，也不把端点的英文原文抛给用户
+        if source == req.pair.target {
+            return Err(ProviderError::SameLanguage(source.display_name()));
+        }
         let langpair = format!("{}|{}", source.code(), target);
 
         let protected = protect(&req.text);
@@ -372,6 +377,40 @@ mod tests {
         assert!(err.retryable());
         // 首次 + 2 次重试
         assert_eq!(wait_for_requests(&fake, 3).len(), 3);
+    }
+
+    /// 端点要求两端语言不同（实测同语言对返回 HTTP 200 + `responseStatus: 403`
+    /// + `PLEASE SELECT TWO DISTINCT LANGUAGES`）。
+    ///
+    /// 用连不上的地址来证明"根本没发请求"：真发出去了就是 `Http`，被拦下来才是 `SameLanguage`。
+    #[tokio::test]
+    async fn same_source_and_target_is_refused_before_any_request() {
+        let err = engine(&closed_url())
+            .translate(&TranslationRequest::new(
+                "你好世界",
+                LangPair::explicit(Language::ZhHans, Language::ZhHans),
+            ))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::SameLanguage(_)), "{err:?}");
+        let text = err.to_string();
+        assert!(text.contains("相同"), "{text}");
+        assert!(text.contains("简体中文"), "{text}");
+        assert!(!text.contains("你好世界"), "错误里不得带源文: {text}");
+        assert!(!err.retryable(), "得换目标语言，重试没有意义");
+    }
+
+    /// 真实触发路径：源文是中文、目标也是简体中文，源语言留在"自动检测"
+    #[tokio::test]
+    async fn auto_detected_source_matching_target_is_also_refused() {
+        let err = engine(&closed_url())
+            .translate(&TranslationRequest::new(
+                "这是一段应当被检测为中文的文本",
+                LangPair::auto_to(Language::ZhHans),
+            ))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::SameLanguage(_)), "{err:?}");
     }
 
     #[tokio::test]
