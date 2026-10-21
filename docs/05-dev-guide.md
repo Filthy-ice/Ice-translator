@@ -31,8 +31,14 @@ Ice-translator/
 │   ├── ice-core/              # 领域层：语言、图片文档模型、配置、历史、术语表
 │   ├── ice-providers/         # 引擎层：Translator 调度、缓存、机翻/AI 通道
 │   ├── ice-vision/            # 视觉层：OCR、原文擦除、译文回写
-│   └── ice-app/               # 界面层：eframe 应用、双模式窗口、状态机
-│      └── src/main.rs         # 二进制名 ice-translator
+│   └── ice-app/               # 界面层：eframe 应用、双模式窗口、状态机（二进制名 ice-translator）
+│      └── src/
+│         ├── main.rs          # 启动时序 + `prepare()`（可在测试里跑的那一段）
+│         ├── app.rs           # `IceApp`：eframe::App 实现、副作用执行、钥匙串探测回收
+│         ├── state.rs         # `AppState`：唯一一份界面状态
+│         ├── mode.rs theme.rs jobs.rs stub.rs
+│         ├── system/          # clipboard、hotkeys、secrets、single_instance
+│         └── views/           # mod（工具条+状态条）、full、history、settings、image
 ├── docs/                      # 本文档所在目录（顶层 document/ 是它的软链）
 │   ├── adr/                   # 不可逆决策记录
 │   ├── evidence/              # 各阶段验收证据：截图、样图、命令输出
@@ -70,9 +76,10 @@ ice-app  ──►  ice-providers  ──►  ice-core
 
 ```bash
 cargo check --workspace                 # 快速全量类型检查
-cargo test  --workspace                 # 全部单元测试（当前 99 项通过 + 3 项 ignore）
-cargo test  -p ice-core                 # 只测领域层（45 项）
-cargo test  -p ice-providers            # 只测引擎层（51 项，HTTP 走本地假服务，不联网）
+cargo test  --workspace                 # 全部单元测试（P4 后当前 246 项通过 + 3 项 ignore）
+cargo test  -p ice-core                 # 只测领域层（49 项）
+cargo test  -p ice-providers            # 只测引擎层（53 项，HTTP 走本地假服务，不联网）
+cargo test  -p ice-app                  # 只测界面层（131 项，无头跑帧，不碰网络/剪贴板/钥匙串）
 cargo test  --workspace -- --ignored    # 跑需要真实网络/真机的集成测试
 cargo test  -p ice-providers --test live -- --ignored --nocapture machine
                                         # 只验机翻真实端点（MyMemory，无需 Key）
@@ -124,6 +131,12 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
   ```
   测试失败信息会直接提示这条命令；Key 不进仓库、不进日志、不进对话。
 - UI 无法单测的部分走"人工走查表"，见 `06-test-cases.md`，走查结论与截图存进 `docs/evidence/`。
+- **界面层也能单测**，P4 起固定这套写法（`cargo test -p ice-app`，全部不碰网络/剪贴板/钥匙串）：
+  - 用 `egui::Context::default()` + `ctx.run_ui(...)` 无头跑一帧，断言渲染后的状态而不是像素；
+  - 视图函数一律收 `&mut Effects` 而不是直接动手：副作用（发请求、写剪贴板、存 Key、切页签）先在 `Effects` 里排队，测试直接断言这个队列，`app.rs` 才在帧末真执行；
+  - 引擎用 `stub::StubEngine`（可指定回什么译文或抛哪个 `ProviderError` 变体），`StubError::all()` 覆盖全部 11 个变体，加变体时必须同步加进去，`every_error_variant_renders_a_message_and_never_panics` 会自动兜住；
+  - 钥匙串相关测试注入读取函数（`spawn_probe_with(runtime, ctx, read)`）或给一个已关闭的通道模拟"探测未回"，**绝不**碰真条目——真条目会让测试挂在系统授权框上；
+  - 涉及 tokio 的用 `new_current_thread` runtime 即可，被测代码不该依赖多线程调度。
 
 ## 7. 提交规范
 
@@ -141,6 +154,9 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 | OCR | Vision 框架，本地零下载 | v1 不提供，界面明确提示 |
 | 置顶窗口 | `NSWindow.setLevel` / egui `always_on_top` | 各自 API，egui 已封装 |
 | 钥匙串 | Security.framework（`keyring` crate） | Windows 凭据管理器 / Linux Secret Service |
+| 钥匙串授权框 | 条目不是本程序写入的（例如用 `security add-generic-password` 手工加的）且本程序未签名时，`get_password()` 会**阻塞**到用户点完授权框。所以读取必须离开建窗路径、放 `spawn_blocking` | 无此行为，但读取仍按同一异步路径走，省得分平台两套时序 |
+| 窗口隐藏 | eframe 0.37 在 macOS 上**不投递** `Reopen`，`Visible(false)` 之后点 Dock 图标叫不回来；改用 `CancelClose` + `Minimized(true)` | 各自的"最小化到托盘"语义不同，P5 复核 |
+| 时区 | `libc::localtime_r` 拿本地偏移 | 同一份代码可用；`time_t`/`tm_gmtoff` 在 32 位平台是 `i32`，转换要留着（对本平台的 `useless_conversion` 告警放行） |
 | 字体 | 系统 PingFang.ttc 等，Core Text 枚举 | 需自带字体文件，v1 不覆盖 |
 | 应用形态 | 需打包 `.app` 才有 Dock 图标与正常生命周期 | 直接 exe |
 
@@ -152,4 +168,11 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 | 启动后窗口秒退且无日志 | panic 在 init 前 | `RUST_LOG=trace cargo run -p ice-app` 看第一行 |
 | `crates.io 403` | 网络代理拦截 | 检查 `~/.cargo/config.toml` 的 source 替换 |
 | 白屏/黑屏 | GPU 后端与远程桌面/虚拟显卡组合 | 切换 `ice-app` 里 eframe 的后端 feature（glow ↔ wgpu） |
-| 配置改了不生效 | 应用退出时才落盘 | 检查是否有提前 return 跳过 save |
+| 启动后没有窗口，日志停在 `取得单实例锁` | 钥匙串授权框把 `get_password()` 阻塞住了，而读取排在建窗之前 | 已修：读取挪到 `app::spawn_key_probe`（建窗之后、`spawn_blocking` 里）。若复现，先确认 `main.rs` 的时序没被改回去 |
+| 配置改了不生效 | 落盘是脏标记 + 退避 500ms，不是逐帧写 | 等半秒再看 `config.toml`；Cmd+Q 会强制落盘。真不落盘时查 `config_dirty` 有没有被置上 |
+| 机翻报"源语言与目标语言相同" | 源文语种与目标一致（中文源文 + 目标简体中文最常见） | 这不是故障：机翻端点对同语言对必拒，本地提前拦下省一次往返。换目标语言即可（CHG-004 起：源语言为"自动检测"时改为自动翻转目标语言，见 `06-test-cases.md` TC-1.2-c） |
+| 第二次启动直接退出 | 单实例锁被占（这是预期行为） | 若确认没有另一个实例在跑，是上次被 `kill -9` 留下的陈旧锁；重启会自动接管（PID 已死即删），也可手动 `rm ~/Library/Application\ Support/IceTranslator/ice-translator.lock` |
+| 失败日志只有 `error="Status"` | 变体名之外还需要状态码才能定位 | 已补 `status=` 字段（`jobs::status_code`）；状态码不是秘密，响应体已截断、查询串已洗掉 |
+| **应用跑着却一行日志都没有** | `RUST_LOG` 的 target 写错：二进制 crate 名是 **`ice_translator`**，不是目录名 `ice-app`。`RUST_LOG=ice_app=debug` 会把全部日志过滤掉，且进程照常运行、看不出异常 | 用 `RUST_LOG=ice_translator=debug,info ./target/debug/ice-translator > /tmp/ice.log 2>&1`。**真机取证前先看一眼日志有没有行**——P4 第四轮就因为这一条丢了钥匙串写入/清除的日志证据，只能改用用户口述 + 指纹变化间接印证 |
+| **`pbcopy` 灌中文样本，用户粘出来是空的** | 无 locale 的 shell 里 `pbcopy` 遇到非 ASCII 会**静默失败**（exit 0、剪贴板为空），ASCII 内容不受影响 | `LC_ALL=en_US.UTF-8 pbcopy < /tmp/sample.txt`，再用 `LC_ALL=en_US.UTF-8 pbpaste \| wc -m` 回验非零，才交给用户粘贴 |
+| 大文本走 AI 通道报"被限流（HTTP 429）" | 18,000 字符会切成 6 段连发，撞供应商配额；不是缺陷 | 换机翻引擎跑同一份样本（实测 6 段 11.85s 出结果），或减小样本、隔几分钟再试。日志只记 `error="RateLimited" status=429`，不含源文 |

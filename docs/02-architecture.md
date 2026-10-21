@@ -61,17 +61,27 @@
 
 ### ice-app
 
-| 模块 | 关键类型 | 职责 | 需求 |
-|---|---|---|---|
-| `app` | `IceApp` | 实现 `eframe::App`；持有 `AppState`、`Translator`、tokio runtime handle | 全部 |
-| `state` | `AppState` | 源文/译文/语言对/引擎/任务状态/图片工作区/历史查询 | FR-1、FR-2 |
-| `mode` | `ModeController`、`DockState`、`Morph` | 模式切换与形变动画、无边框拖动（`StartDrag`）、置顶、边缘吸附与热区、几何持久化 | FR-3.2~3.9 |
-| `views::full` | `FullView` | 全量布局：页签（文本/图片/历史/设置） | FR-3.1 |
-| `views::compact` | `CompactView` | 窄条布局：输入行 + 译文行 + 动作图标 | FR-3.2 |
-| `views::image` | `ImageView` | 图片工作区：识别结果列表 + 原图/结果对比 + 导出 | FR-2.3、FR-2.6 |
-| `views::settings` | `SettingsView` | 引擎参数、密钥写入钥匙串、语言、主题、快捷键说明 | FR-4.1~4.2 |
-| `jobs` | `JobScheduler`、`JobKind`、`JobMsg` | `spawn` 网络任务、`spawn_blocking` 图像任务，经 `mpsc` 回投 UI 并请求重绘 | FR-2.9、NFR-1 |
-| `system` | `ClipboardWatcher`、`HotKeys`、`Secrets` | arboard 轮询剪贴板、应用内快捷键、钥匙串读写 | FR-3.8、FR-5.1~5.2、FR-4.2 |
+> 二进制 crate（`main.rs` 里 `mod`，非 `lib.rs`）。下表在 P4 实现后按实际代码校正：设计里的 `FullView`/`CompactView`/`ImageView`/`SettingsView` 四个结构体最终落成各视图模块里的自由函数 + `AppState`，因为界面状态只有一份、不需要每页再包一层持有者；`JobScheduler`/`ModeController` 同理落成 `JobRunner` 与 `mode` 模块的函数集。
+
+| 模块 | 关键类型 | 职责 | 需求 | 状态 |
+|---|---|---|---|---|
+| `app` | `IceApp`、`Effects`、`Prepared` | 实现 `eframe::App`；持有 `AppState`、`JobRunner`、tokio runtime、历史存储、配置路径、单实例锁、钥匙串探测回收端；帧末统一执行副作用与退避落盘 | 全部 | ✅ P4 |
+| `main` | `prepare()` | 启动时序：日志 → 单实例锁 → 读配置 → 导入旧术语表 → 装配引擎 → tokio → 建窗 → **后台**读钥匙串 | FR-4.1~4.3、REQ-009 | ✅ P4 |
+| `state` | `AppState`、`Failure`、`FailureAction`、`Job`、`Outcome` | 源文/译文/语言对/引擎/在飞任务/失败态/图片工作区/历史查询/提示条；`request_id` 竞态丢弃 | FR-1、FR-2 | ✅ P4 |
+| `mode` | `hide()`、`quit()`、`apply_topmost()`、`capture_rect()`、`initial_viewport()` | 模式切换的 `ViewportCommand` 编排、置顶、几何捕获与持久化；形变动画与边缘吸附待 P5 | FR-3.2~3.9 | 部分（P4 只到切换与置顶） |
+| `theme` | `apply()` | 三态主题映射到 `ctx.set_theme`，字号缩放乘在 egui 默认值上并限幅 | NFR-4、NFR-8 | ✅ P4 |
+| `views::mod` | `Tab`、`chrome()` | 顶部工具条 + 页签 + 状态条（设计里归在 `views::full`，实现时抽出共用，简洁模式也要用同一条状态条） | FR-3.1 | ✅ P4 |
+| `views::full` | `show()`、`copy()` | 全量布局文本页：源文编辑器、译文区、翻译与两个复制按钮、失败动作按钮 | FR-1.1~1.5、FR-3.1 | ✅ P4 |
+| `views::history` | `show()` | 历史页：搜索、点选回填、时间戳本地化、坏行容错 | FR-4.4 | ✅ P4 |
+| `views::settings` | `show()`、`select_default_engine()` | 供应商预设、密钥写钥匙串、主题三态、字号、额外语言、术语分区 | FR-4.1~4.2、FR-4.5、NFR-4 | ✅ P4 |
+| `views::image` | `show()` | 图片页占位：五个区域已画好，接 OCR 在 P6 | FR-2.3、FR-2.6 | 占位 |
+| `views::compact` | — | 窄条布局：输入行 + 译文行 + 动作图标、无边框拖动（`StartDrag`） | FR-3.2 | 待 P5（P4 暂以 `app.rs` 私有函数代管切换后的窗体编排） |
+| `jobs` | `JobRunner`、`drain()`、`apply()` | `spawn` 网络任务，经 `mpsc` 回投 UI 并请求重绘；`spawn_blocking` 图像任务待 P6 | FR-2.9、NFR-1、REQ-002 | ✅ P4（文本部分） |
+| `system::clipboard` | `CopyKind`、`compose_bilingual()` | 复制译文 / 复制对照；空译文保护。`ClipboardWatcher`（剪贴板即翻）待 P5 | FR-1.5、FR-3.8 | 部分 |
+| `system::hotkeys` | `action_of()` | 应用内快捷键分类：全局 / 窗口 / 需焦点；按住不重复触发 | FR-5.1 | ✅ P4 |
+| `system::secrets` | `read()`、`write()`、`delete()`、`fingerprint()` | 钥匙串读写与指纹（长度 + 哈希前 8 位）；错误文本不回显密钥字节 | FR-4.2、NFR-3 | ✅ P4 |
+| `system::single_instance` | `acquire()`、`InstanceLock`、`AcquireError` | PID 锁：陈旧锁（PID 已死/内容损坏/PID 被回收）接管，释放时只删 PID 与自己相符的那一份 | 需求 §5 第 5 条 | ✅ P4（Q-001 裁定归本阶段） |
+| `stub`（仅测试） | `StubEngine`、`StubError` | 覆盖全部 11 个 `ProviderError` 变体的假引擎，让界面层测试不碰网络 | — | ✅ P4 |
 
 ## 3. 主数据流
 
@@ -156,7 +166,8 @@
 |---|---|---|
 | HTTP 翻译 | tokio `spawn`（多线程 runtime，由 `ice-app` 持有） | 不阻塞渲染 |
 | OCR / 图像合成 / 字体加载 | `spawn_blocking` | Vision 与像素操作是 CPU 阻塞调用 |
-| 结果回投 UI | `mpsc::unbounded` + `ctx.request_repaint()` | eframe 事件驱动，必须主动唤醒 |
+| 结果回投 UI | `mpsc::channel(CHANNEL_CAPACITY)` + `ctx.request_repaint()` | eframe 事件驱动，必须主动唤醒。**有界**而非设计里写的 `unbounded`：无界队列在结果积压时会悄悄吃内存，有界则让背压可见 |
+| 钥匙串读取 | `spawn_blocking` + `mpsc::channel(1)`，建窗**之后**才发起 | macOS 对不由本程序写入的条目会弹授权框，`get_password()` 一直阻塞到用户点完。放在建窗之前窗口根本出不来，表现为"启动卡死"（P4 真机踩到并修掉）。线程内必须用 `blocking_send`：`send` 是 async 的，在 `spawn_blocking` 里只会造出一个没人 await 的 future |
 | 引擎实例共享 | `Arc<dyn TranslationEngine>` | `reqwest::Client` 内部连接池，可复用 |
 | 缓存 | `Mutex<LruCache>` | 临界区极小，不值得无锁结构 |
 | 取消 | `CancellationToken`（块边界） | 强杀阻塞任务会留下半文件 |
@@ -172,6 +183,7 @@
 | | `RateLimited` | "被限流，稍后重试"，不禁用按钮 |
 | | `Timeout(ms, retries)` | "超时（已重试 n 次）"，提供"改用机翻"动作 |
 | | `Empty` | "服务返回空译文"，保留原文 |
+| | `SameLanguage(lang)` | "源语言与目标语言相同（都是简体中文），不需要翻译；请换一个目标语言"，不给动作按钮（换目标语言只能由用户决定）。**P4 新增**：机翻端点对同语言对必拒，实测回 HTTP 200 + `responseStatus: 403` + 英文 `PLEASE SELECT TWO DISTINCT LANGUAGES`，因此在发请求前就地判定。**CHG-004 将改这条的上游行为**（用户 2026-10-21 决定）：源语言为"自动检测"且检测出的语言==目标语言时，不再报错，而是把目标语言自动翻转（英语 ↔ 简体中文）、持久写回、提示条说明并直接出译文；届时本变体只保留给"用户显式选了同一个源与目标"的情形。见 `06-test-cases.md` TC-1.2-c |
 | vision | `UnsupportedPlatform` | 图片页签禁用并说明"当前平台不支持" |
 | | `NoTextFound` | 提示"未发现文字"，不算失败 |
 | | `Font(msg)` | 结果区顶部警示条："缺字形，已回退" |
@@ -182,17 +194,22 @@
 ## 6. 配置生命周期
 
 ```
-main() ──► Config::load() ──► (cfg, Option<reason>)
+main() ──► Config::load_at() ──► (cfg, Option<reason>)
              │ 不存在 → 默认值           │ 损坏 → 默认值 + reason（界面提示）
              ▼
-        cfg.sanitized()  ──►  构建 AppState / ModeController
-             │
-             │ 运行中：任何改变即时更新内存副本
+        cfg.sanitized() ──► 旧 glossary.toml 一次性只读导入为 cfg 的 [[term]]（导入后不删用户文件）
              ▼
-        退出前 / 关窗时 save()（原子替换）
+        构建 AppState / 装配 Translator（术语同帧推给派发器，不等用户改一次才生效）
+             │
+             │ 运行中：任何改变即时更新内存副本并标脏（config_dirty）
+             │ 钥匙串探测回来后按事实对齐 ai.key_configured（钥匙串是事实来源，config 里只是缓存标记）
+             ▼
+        脏标记 + 退避 500ms 落盘；Cmd+Q 时强制落盘，落盘成功后才释放单实例锁（原子替换）
 ```
 
 `recent_targets` 在切换目标语言时更新（`remember_target`），最多 5 条（FR-1.4）。
+
+**与封存设计的两处偏差**：① 设计写"当帧结束就 save"，实现改为退避 500ms——字号滑块这类连续控件每帧都会标脏，逐帧写盘会把原子替换变成每帧一次 rename；② 设计没有"钥匙串探测回来再对齐 `key_configured`"这一步，因为当时假定 Key 在建窗前就读到了（该假定已被 P4 真机推翻，见第 4 节）。两者都不改任何 REQ。
 
 ## 7. 需求 → 模块映射（节选，完整矩阵见 `traceability.md`）
 
@@ -204,7 +221,9 @@ main() ──► Config::load() ──► (cfg, Option<reason>)
 | FR-2.4/2.5 回填与覆盖层 | `vision::composite` | `vision::bg` |
 | FR-3.4 置顶 | `app::mode` | `core::config::UiConfig` |
 | FR-3.5 边缘吸附 | `app::mode::snap`（纯函数） | `core::config::WindowRect` |
-| FR-4.2 钥匙串 | `app::system::Secrets` | `core::config` 常量 |
+| FR-4.2 钥匙串 | `app::system::secrets` | `core::config` 常量、`app::spawn_key_probe` |
+| 需求 §5 第 5 条 单实例 | `app::system::single_instance` | `app::IceApp`（退出时释放）、`main`（建窗前获取） |
+| FR-5.1 快捷键 | `app::system::hotkeys` | `app::state`（动作落地） |
 | NFR-6 分层 | 全 workspace | `cargo tree` 校验 |
 
 ## 8. 设计自检（P2 验收）
@@ -220,6 +239,8 @@ main() ──► Config::load() ──► (cfg, Option<reason>)
 | 7 | 模块表与实际代码一致 | ✅ 逐 crate 核对 `pub mod` 清单，发现并补登记 `ice-providers::request`；其余计划模块按阶段落地（见下） |
 
 **验收结论（P2）**：**签发**。骨架编译通过、53 项单测通过、clippy 无警告，依赖方向由 `cargo tree` 核实（`ice-core` 依赖树内无 egui/eframe/reqwest/image），ADR-001 的单窗口双形态已在 macOS 真机按预期改变窗口形态（`evidence/P1-03-window-geometry.txt`）。
+
+**P4 实现后的校正（2026-10-20）**：本节表格是 P2 当时的结论，保留不改。P4 落地后按其校正了三处，均已回写正文：① 第 2 节 `ice-app` 模块表按实际代码重列，补 `system::single_instance`（Q-001 裁定归 P4）、`theme`、`views::{mod,history}`、`stub`，并说明设计里的四个 `*View` 结构体最终落成自由函数 + 单一 `AppState`；② 第 4 节结果回投是有界通道，并新增"钥匙串读取必须在建窗之后、在 `spawn_blocking` 里"一行；③ 第 5 节错误映射补 `SameLanguage` 变体（11 个变体仍穷举，自检项 4 继续成立）。第 6 节补记两处与封存设计的偏差（退避落盘、探测后对齐 `key_configured`）。以上均不改动任何 REQ，完整偏差清单见 `07-acceptance.md` §5。
 
 落地进度与本文的对应关系（本文描述 v1.0 全貌，不要求 P1 就全部存在）：
 

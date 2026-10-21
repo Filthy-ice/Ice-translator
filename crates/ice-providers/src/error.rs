@@ -31,6 +31,12 @@ pub enum ProviderError {
 
     #[error("输入为空")]
     EmptyInput,
+
+    /// 机翻端点要求两端语言不同：同语言对必然被拒（实测 HTTP 200，体内 `responseStatus: 403`，
+    /// 详情是英文的 `PLEASE SELECT TWO DISTINCT LANGUAGES`）。与其把那句英文抛给用户，
+    /// 不如在发请求前就地判定——结果一样，但省一次往返且说人话。
+    #[error("源语言与目标语言相同（都是{0}），不需要翻译；请换一个目标语言")]
+    SameLanguage(&'static str),
 }
 
 pub type ProviderResult<T> = Result<T, ProviderError>;

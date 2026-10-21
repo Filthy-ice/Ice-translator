@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
+use crate::glossary::Term;
 use crate::language::{EngineKind, LangPair, Language};
 
 pub const APP_ID: &str = "IceTranslator";
@@ -317,6 +318,10 @@ pub struct Config {
     pub ui: UiConfig,
     pub translation: TranslationConfig,
     pub ai: AiConfig,
+    /// 术语表（FR-4.5），渲染成 `[[term]] source=… target=…`。
+    /// 必须是最后一个字段：TOML 的 array-of-tables 之后的键都会归属到它，放在中间会把配置写坏。
+    #[serde(rename = "term")]
+    pub terms: Vec<Term>,
 }
 
 impl Config {

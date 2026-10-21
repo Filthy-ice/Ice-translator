@@ -1,0 +1,107 @@
+# V-010 真机运行证据（2026-10-20 首采，2026-10-21 补齐后覆盖，macOS，debug 构建）
+
+五件事：启动时序、单实例双开、空闲 CPU 占用、18,000 字符粘贴、Cmd+W 隐藏后从 Dock 恢复。
+全部在用户真机上取，ANSI 码已剥除；前两项 `RUST_LOG=info`，后两项 `RUST_LOG=ice_translator=debug,info`。
+隐私核对：不含源文、译文、端点查询串、密钥明文；Key 只以 `key_len` 与 `key_hash8` 出现。
+
+## 1. 启动时序：窗口先建好，钥匙串在后台线程读（REQ-005 / TC-4.2-b / W-1.18）
+
+`09:24:49` 取得单实例锁并建窗，`09:25:07` 钥匙串才返回——中间 18 秒是用户在 macOS 系统授权框上点"始终允许"的时间。
+这期间窗口一直在渲染。修复前读取排在建窗之前，同样的授权框会让窗口根本出不来（表现为"启动卡死"，12s 后被 timeout 杀掉、`config.toml` 一次未写）。
+
+```
+2026-10-20T09:24:49.513242Z  INFO ice_translator: 取得单实例锁 pid=21841 path=…/IceTranslator/ice-translator.lock
+2026-10-20T09:25:07.796782Z  INFO ice_translator::app: 读到 API Key key_len=35 key_hash8="d5477b63"
+```
+
+## 2. 单实例双开（REQ-009 / TC-9.1-a / W-1.19）
+
+第一个实例（pid 21841）在跑，再启动一次：
+
+```
+$ RUST_LOG=info timeout 15 ./target/debug/ice-translator
+2026-10-20T10:22:23.583224Z ERROR ice_translator: 无法启动：单实例锁被占用或不可写 pid=21841
+Ice Translator 已在运行（PID 21841）。
+如果确实没有窗口，说明上次异常退出留下了锁文件，
+可在配置目录删除 ice-translator.lock 后重试。
+$ echo $?
+1
+```
+
+核对结果：
+
+| 检查 | 结果 |
+|---|---|
+| 第二个实例退出码非零 | ✅ `1` |
+| 提示可读、说出持锁者 PID、并给出自愈办法 | ✅ 中文三行，含 `PID 21841` 与"删除 ice-translator.lock 后重试" |
+| 不泄露 `config.toml` / `history` 路径细节 | ✅ 只说"配置目录"（单测 `second_acquire_in_same_dir_is_rejected_while_holder_lives` 同样断言） |
+| `config.toml` 未被触碰 | ✅ mtime+size 前后一致（`1792491287 598`） |
+| `history.jsonl` 未被触碰 | ✅ mtime+size 前后一致（`1792491348 746`） |
+| 第一个实例仍活着 | ✅ `pgrep` 仍返回 21841 |
+| 锁文件仍是第一个实例的 PID（没被第二个删掉） | ✅ 内容为 `21841`，对应单测 `release_does_not_remove_someone_elses_lock` |
+
+陈旧锁接管也在真机复现过：先前 `kill` 掉旧实例后重启，锁被自动清除并接管（`/tmp/ice-live2.log`），对应 TC-9.1-b。
+
+## 3. 空闲 CPU 占用（NFR-2 / FR-5.2 / TC-N-1 / W-1.20）
+
+窗口开着、无提示条、无在飞请求，静置 30 秒，用 `ps -o cputime` 取前后差值（`ps -o %cpu` 是进程生命周期均值，测不出空闲段）：
+
+```
+起始 CPU 时间 0:15.62 → 结束 0:15.62
+采样窗口 30.2s，期间消耗 CPU 0.000s → 占用 0.0000%
+NFR-2 / FR-5.2 要求空闲 < 1%： ✅ 通过
+ps 生命周期均值 %cpu=0.0 · RSS=93.3 MB
+```
+
+**30 秒内消耗 CPU 恰好为 0**，不是"低于阈值"而是"一次都没醒"。这印证了 `app.rs::ui` 的实现：只有提示条到期与结果到达才请求重绘，空闲帧不主动唤醒（对应 TC-N-1 的代码审查项）。
+累计的 15.62s 是启动 + 渲染 + 7 次真实翻译（见 V-011 证据件）的总开销。
+
+## 4. 18,000 字符粘贴（W-1.16 / TC-P-2 / 缺陷 D-4 复验）
+
+样本：18,000 字符纯简体中文（`/tmp/ice-18k-paste.txt`，汉字 15,987 / 拉丁 16，语言检测置信度 0.9995 → 简体中文）。
+
+**第二轮（D-4 修复前，2026-10-21 12:02 本地）**：用户重复粘贴了约四次，实际入框 **71,211 字符**，AI 通道切 6 段、53.4s 后真的出了译文，进程没崩：
+
+```
+2026-10-21T04:02:09.036763Z  INFO ice_translator::jobs: 翻译完成 request_id=6 engine=Ai chars=71211 elapsed_ms=53414 cache_hit=false segments=6
+```
+
+但同一轮用户报出缺陷 D-4："左边的文本框变形了，贴底了，而且文本框无法下拉，右边翻译后没有变形，但是也没有下拉"。根因与修法见 `07-acceptance.md` 偏差清单 D-4 行（`Ui::new_child` 不继承裁剪 + `TextEdit::multiline` 按内容全高分配矩形；两栏正文改进定高 `ScrollArea`，源文外框改由定高 `Frame::group` 画）。
+
+**第四轮（D-4 修复后，2026-10-21 16:26 本地 / 08:26 UTC）**：用户粘贴 18,000 字符样本后逐项确认——左框不变形、不贴底、四边边框完整、两指/滚轮能滚到末尾、字数行显示 18,000，译文栏同样能滚到底；用户原话"都可以了"。同一轮 AI 通道被供应商限流，界面给出可读中文原因，进程照常活着、源文不丢：
+
+```
+2026-10-21T08:26:06.475244Z  WARN ice_translator::jobs: 翻译失败 request_id=1 error="RateLimited" status=429
+2026-10-21T08:27:04.891844Z  WARN ice_translator::jobs: 翻译失败 request_id=2 error="Timeout" status=0
+2026-10-21T08:27:24.491364Z  WARN ice_translator::jobs: 翻译失败 request_id=3 error="RateLimited" status=429
+```
+
+界面上对应"被限流（HTTP 429），请稍后再试"。三条失败日志只记 `error` 与 `status`，**不含源文、译文、查询串或 Key**（NFR-3）；限流来自 18k 字符切 6 段连发，属供应商配额，不是本应用的缺陷。
+
+用户随后切到机翻引擎重跑同一份 18,000 字符样本，**在修复后的构建上完整出结果**（`chars` 记的是译文长度：18,000 中文字符 → 9,181 字符英文，6 段，11.85s）：
+
+```
+2026-10-21T09:58:26.097366Z  INFO ice_translator::jobs: 翻译完成 request_id=4 engine=Machine chars=9181 elapsed_ms=11851 cache_hit=false segments=6
+2026-10-21T12:05:29.415124Z  INFO ice_translator::jobs: 翻译完成 request_id=5 engine=Machine chars=35 elapsed_ms=1980 cache_hit=false segments=1
+```
+
+`request_id=4` 是"18k 粘贴后能出结果"在**修复后构建**上的直接证据：6 段全部回来、译文 9,181 字符全部落进译文栏，用户确认译文栏能滚到底（修复前这一段文字会把源文框撑出窗口）。`request_id=5` 是短文本回归（35 字符 / 1,980ms）。
+
+"能出结果"这一支有两份证据：修复后的 `request_id=4`（18,000 字符 → 6 段 → 11.85s，机翻）与修复前的 `request_id=6`（71,211 字符 → 6 段 → 53.4s，AI），后者是用户重复粘贴约四次的量级，说明这条路径在四倍样本下也没崩。AI 通道在第四轮被限流后未再重跑同量级请求，避免继续消耗用户账号额度。
+
+布局预算另有无头断言：TC-2.1-c 20k 字符单帧 **15.6ms**（预算 100ms）；D-4 的回归锁是 `a_huge_paste_keeps_the_source_editor_inside_its_pane`（滚动容器可视高度不超过栏高、内容远高于一屏）与 `both_panes_scroll_when_the_content_does_not_fit`（8 帧滚轮位移后两栏偏移都增长）。
+
+## 5. Cmd+W 隐藏后点 Dock 图标恢复（W-1.21 / FR-5.2 / 缺陷 D-2 第三轮）
+
+用户按 Cmd+W 收进后台，再点 Dock 图标叫回来，窗口可正常交互（边框能拖、字不变形、按钮与输入框都响应）。用户原话"可以了，收起叫回后依然能够使用"。日志取证（`/tmp/ice-retest.log`，隐藏期间由 `App::logic` 钩子看护）：
+
+```
+2026-10-21T03:46:18.500572Z DEBUG ice_translator::mode: 隐藏期间的窗口状态变了 revealed=true focused=true elapsed_ms=1
+2026-10-21T03:46:18.748448Z DEBUG ice_translator::mode: 隐藏期间的窗口状态变了 revealed=false focused=false elapsed_ms=248
+2026-10-21T03:46:20.583523Z DEBUG ice_translator::mode: 隐藏期间的窗口状态变了 revealed=true focused=true elapsed_ms=2084
+2026-10-21T03:46:20.583584Z DEBUG ice_translator::mode: 窗口恢复可见，重发几何 mode=Full
+```
+
+`elapsed_ms=248` 是 Cmd+W 之后进入 `revealed=false focused=false` 的时刻，`elapsed_ms=2084` 是几何与焦点同时回来的时刻，紧接着触发"重发几何"。这条链正是 D-2 第二轮修复的判据（看护挂到 `logic`、判据加宽为几何或焦点、800ms `REVEAL_GRACE` 静默期、补发 `Minimized(false)`）。
+
+**结论：`hide()` 从 `Visible(false)` 改成 `CancelClose`+`Minimized(true)` 这条偏差在真机上满足 FR-5.2。**

@@ -119,7 +119,90 @@
 
 ---
 
-## P4 全量界面 — 待记录
+## P4 全量界面 — 2026-10-20 实现完成，2026-10-21 验收通过
+
+变更包：`features/CHG-003`（`CHG-003@v0.1`，Spec SHA-256 `84a04e7d9c990d045a19e52310be07f856a31b043669a7bf05862269ee111dc7`，用户 2026-10-20 批准，含 Q-001/Q-002/Q-003 三项决定）。
+
+| 项 | 内容 |
+|---|---|
+| 目标 | 全量界面可用：四页签 + 工具条 + 状态条；翻译闭环含加载态与 `request_id` 竞态丢弃；译文两个复制按钮含空译文保护；错误可读且带动作按钮；设置页持久化与密钥边界；历史页与术语分区；快捷键与关窗常驻；单实例互斥 |
+| 验收方法 | ① 界面层用无头 `ctx.run_ui` + `Effects` 队列断言，引擎用 `StubEngine`，**不碰网络/剪贴板/钥匙串**；② `cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`；③ `tools/check_traceability.py` 保证编号集合仍一致；④ `./sdd scan` + `tools/check_staged.py` 敏感信息门禁；⑤ 真机走查 W-1~W-6 与 `./sdd record` 导入运行时证据 |
+| 代码态结果 | **全绿**：`cargo test --workspace` 246 passed / 0 failed / 3 ignored（ice-app 144 · ice-core 49 · ice-providers 53）；clippy exit 0；fmt 无差异。20k 字符单帧布局实测 **15.6ms**（预算 100ms，CHG-003 的 HYPOTHESIS 消解） |
+| 结论 | **通过（签发）** — 12 项验证全部有证据：V-001~V-008 由 `./sdd check` 在最终代码态重跑（246 passed / 0 failed / 3 ignored，clippy exit 0，fmt 无差异，追踪 44↔44，`./sdd scan` 通过，`sk-` 形态 grep 0 命中）；V-009 四轮真人走查（23/24 项通过，5 个缺陷 D-1~D-5 全部修复并复验）；V-010 五个真机子项全齐；V-011 两条真实通道；V-012 钥匙串三件套（写入/清除为用户口述 + 指纹变化印证，读取有两份直接日志）。**唯一的证据缺口**是 W-1.8 的"红字 + 去设置按钮"视觉同框（假 Key 会覆盖用户真 Key，用户选择不走），已由 429 真机走通同一渲染路径 + 两条无头测试覆盖动作链，转 P8 用废 Key 补 |
+| 遗留 | ① **简洁窗四条转 CHG-004**（P4 第四轮用户预报）：切过去尺寸没变小（→ W-2.1）、不能拖动（→ W-2.13）、窗内不能切机翻/AI（→ 新增 W-2.15）、窗内译文不能滚动（→ 新增 W-2.16）；CHG-003 规格第 19/25 行已把"简洁窗内部版式、吸附、半透明、剪贴板即翻、形变动画"划给 P5，本包只保证切换按钮/快捷键存在与切换后内容不丢。② **自动检测撞到目标语言的"自动反向"转 CHG-004**（用户 2026-10-21 决定）：现状是本地拦下给中文可读错误 `SameLanguage`，用户要的是目标语言自动翻转（英语 ↔ 简体中文）并持久写回、提示条说明、本次直接出译文；这是对 FR-1.2/FR-1.4 行为的改动，已登记为 TC-1.2-c，本包不改。③ **W-1.8 假 Key 分支**未在真机复现，转 P8。④ AI 五家预设里只有 DeepSeek 经本机联调（其余四家本机 TLS 建连被重置），设置页切换后需各跑一次 live。⑤ NFR-1 的 P50<800ms 只有单次样本，判定转 P8 的 20 次采样脚本 |
+
+### P4 验收项
+
+| # | 检查 | 方法 | 结果 |
+|---|---|---|---|
+| 1 | 规格先于代码 | `./sdd status CHG-003` | ✅ APPROVED，批准哈希与当前 spec 一致；实施期的偏差全部登记在下方 §P4 偏差清单，未改任何 REQ |
+| 2 | 全量单测 | `cargo test --workspace` | ✅ 246 passed / 0 failed / 3 ignored（V-001，第四轮走查后重跑，日志 `/tmp/ice-test-full.log`） |
+| 3 | 领域层回归 | `cargo test -p ice-core` | ✅ 49 项（V-002）：术语入 `config.toml` 的 TOML 往返、旧 `glossary.toml` 导入的四种输入、历史裁剪与搜索 |
+| 4 | 界面层无头断言 | `cargo test -p ice-app` | ✅ 144 项（V-003）：页签状态保留、竞态丢弃、错误映射与动作按钮、快捷键分类、`ViewportCommand` 编排、PID 锁与陈旧锁接管、20k 字符布局预算；D-4 后新增两栏滚动容器的实测断言（内容高于视口、视口不超栏高、两栏滚轮偏移真的增长） |
+| 5 | Lint | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ exit 0（V-004） |
+| 6 | 格式 | `cargo fmt --all -- --check` | ✅ 无差异（V-005） |
+| 7 | 需求编号一致 | `python3 -B tools/check_traceability.py` | ✅ 44 ↔ 44（V-006），文档回写后重跑仍成立 |
+| 8 | 敏感信息门禁 | `./sdd scan` + `python3 -B tools/check_staged.py` + `grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates` | ✅ `./sdd scan` 通过、Key 形态 grep 0 命中（V-007/V-008）；`check_staged.py` 在 `git add` 之后、提交之前再跑一次 |
+| 9 | 真人走查 W-1~W-6 | 用户按 `06-test-cases.md` 走查表逐项验证并截图（裁剪到仅含本应用窗口） | ✅ **四轮走查完成**（V-009，`BUSINESS_CONFIRMED`，证据件 `*-V-009.txt` 含走查表快照）：W-1.1~W-1.7、W-1.9~W-1.24 共 23 项通过（第四轮用户原话"都可以了"）。四轮共跑出 5 个缺陷并全部修复+复验：D-1 动作行被裁出面板、D-2 Dock 恢复回来一张拉伸贴图（修了三轮）、D-3 两栏底边不齐、D-4 18k 粘贴把源文框撑出窗口且滚不动、D-5 装饰字形显示为豆腐块。**W-1.8 的假 Key 分支未真机复现**（会覆盖用户真 Key，用户选择不走）：错误态渲染路径已由真机 429 走通（状态条转红 + 可读中文原因），`Unauthorized`→「去设置」→切设置页并聚焦 Key 输入框由 `failure_keeps_source_and_maps_action`、`failure_action_go_settings_switches_tab_and_focuses_the_key_field` 覆盖，缺口只有"红字 + 按钮"视觉同框，转 P8 |
+| 10 | 真机运行时证据 | 计划里这一项含五个子项：18k 字符粘贴手感、单帧耗时、Cmd+W 隐藏后 30s CPU 取样、Dock 恢复、双开被拒且 config 不变 | ✅ **五个子项全齐**（V-010，证据件 `*-V-010.txt`，首采于 2026-10-20、其后覆盖补齐）：① 窗口 `09:24:49` 建好，钥匙串在后台线程 `09:25:07` 才返回（用户在系统授权框上花了 18s），期间窗口持续渲染；② 双开时第二个实例退出码 **1**、中文提示含持锁者 PID、`config.toml` 与 `history.jsonl` 的 mtime+size 前后一致、锁文件未被第二个实例删掉；③ 空闲 **30.2s 消耗 CPU 恰好 0.000s（0.0000%）**，RSS 93.3MB；④ **18,000 字符粘贴**（2026-10-21 第四轮）：D-4 修复后的构建上机翻 6 段 11.85s 完整出结果（`chars=9181` 为译文长度），左框不变形不贴底、边框完整、能滚到末尾、字数行 18,000，译文栏同样可滚；修复前另有 71,211 字符 / 6 段 / 53.4s 的成功记录；同轮 AI 通道被供应商限流（429×2、Timeout×1），界面给可读中文原因、进程不崩、源文不丢，失败日志只记 `error`+`status`；单帧布局 15.6ms（TC-2.1-c）；⑤ **Cmd+W 隐藏后点 Dock 恢复**（2026-10-21 第三轮）：用户原话"可以了，收起叫回后依然能够使用"，日志取证收起后 248ms 进入 `revealed=false focused=false`、2084ms 两者同时回来并触发"窗口恢复可见，重发几何"——`CancelClose`+`Minimized` 这条偏差真机成立，FR-5.2 成立 |
+| 11 | 真实端点两条 | 机翻 MyMemory（无需 Key）；AI 用用户钥匙串里的 Key | ✅（V-011，证据件 `*-V-011.txt`）：**由用户在真实界面上操作**，机翻 3 次 695–1512ms、AI DeepSeek 3 次 708–988ms，其中一次 `cache_hit=true elapsed_ms=0`（FR-1.8 真机成立）；引擎来回切换均出译文（FR-1.3）。同语言对由新增的 `SameLanguage` 本地拦下（`status=0`，未发请求） |
+| 12 | 钥匙串三件套 | 写入 / 读取 / 清除，敏感值只留长度与哈希前缀 | ✅（V-012，证据件 `*-V-012.txt`）：**读取**有两份直接日志（`key_len=35 key_hash8="d5477b63"` 与 `"4b507e46"`，含一次授权框阻塞 18s 的情形）；**写入与清除**由用户在界面上自行完成（2026-10-21，原话"钥匙串我已经试过了"），证据等级为**用户口述 + 指纹变化间接印证**——两次启动指纹不同只能来自条目被重写（指纹是 SipHash 摘要前 8 位，单测断言不含 Key 任何片段）。没有当刻日志行的原因已写明：那次实例用 `RUST_LOG=ice_app=debug` 启动而 crate 名是 `ice_translator`，日志被全过滤；清除会真删用户凭据，代理不得代跑。边界四项核对通过：`Config` 结构无 Key 字段、`env::var` 取 Key 0 处、设置页只显示"已配置（35 位，存在系统钥匙串）"连指纹都不显示、`describe_error` 对 `BadEncoding`/`BadDataFormat` 不转 Display |
+
+### P4 证据清单（已全部取到，2026-10-21 收口）
+
+证据件都在 `features/CHG-003/evidence/`，命名 `NNNN-V-0NN.txt`，**每次 `./sdd check` / `./sdd record` 都追加一个新编号**，
+所以本文只写验证号、不写死编号：取同号里编号最大的那份即最后一次覆盖。写死编号会立刻过期——`./sdd` 的"证据过期"判定
+比的是整棵树的哈希（`tools/sdd.py:181-188` 只排除 `features/`、`.sdd/` 等账本路径，`docs/` 在树里），
+改一个数字就会让全部证据失效、陷入"改文档→证据过期→重记→编号变→再改文档"的循环。
+
+| 验证 | 方式 | 证据件 |
+|---|---|---|
+| V-001~V-008 | `./sdd check CHG-003 V-00N` 在最终代码态重跑（全量单测 246 / ice-core 49 / ice-app 144 / clippy / fmt / 追踪 44↔44 / `./sdd scan` / 暂存区门禁） | `*-V-001.txt` ~ `*-V-008.txt` |
+| V-009 真人走查 | 用户本人四轮操作 + 截图 + 口述，代理不参与判定 | `*-V-009.txt`（含 `06-test-cases.md` §2 走查表快照） |
+| V-010 真机运行时 | 五个子项：启动时序、双开、空闲 CPU、18k 粘贴、Dock 恢复 | `*-V-010.txt`（首采于 2026-10-20，其后覆盖补齐） |
+| V-011 真实端点 | 机翻 MyMemory + AI DeepSeek，用户在真实界面上操作 | `*-V-011.txt` |
+| V-012 钥匙串 | 读取有直接日志；写入/清除为用户口述 + 指纹变化印证 | `*-V-012.txt` |
+
+**唯一的证据缺口**：W-1.8 的"红色原因 + 「去设置」按钮"视觉同框未在真机复现（填假 Key 会覆盖用户真 Key，用户选择不走）。
+替代证据是同一路径上的真机 429（状态条转红 + 可读中文原因）与两条覆盖 `GoSettings` 动作链的无头测试，缺口转 P8 用一把废 Key 补。
+
+截图规则仍然有效：裁剪到**仅含本应用窗口**（仓库公开，规则见 `03-ui-design.md` §5）。
+
+### P4 过程中确定/修正的事实
+
+- **macOS 钥匙串授权框会阻塞 `get_password()`，而建窗在它之后 → 表现为"启动卡死"**。真机日志：进程停在 `keyring_core: get password from entry …`，12s 后被 `timeout` 杀掉（exit 124），`config.toml` 一次都没写出来。根因是条目由 `/usr/bin/security add-generic-password` 写入、其 ACL 不信任未签名的本程序，于是系统弹授权框并同步等待。修法：读取挪到建窗**之后**的 `runtime.spawn_blocking`，结果经容量 1 的 `mpsc` 回投帧循环，并在那里 `ctx.request_repaint()`。修好后日志时序自证：`winit::create_window` 在 `08:58:56.638`（其后约 5400 行渲染活动），`get password` 在 `08:58:56.657` 才开始、且阻塞期间窗口照常渲染。
+- **`mpsc::Sender::send` 是 async 的**，在 `spawn_blocking` 里 `let _ = tx.send(…)` 只会造出一个没人 await 的 future——探测结果**永远到不了**帧循环，且编译不报错。clippy 的 `let_underscore_future` 抓到了它，改用 `blocking_send`，并补 `the_probe_result_actually_arrives_over_the_channel` 作为回归锁。
+- **`config.toml` 里的术语从未进过引擎**：`build_translator` 不装术语，`IceApp::new` 也没调 `runner.set_glossary`，于是要等用户在设置页改一次术语才生效（违背 FR-4.5 的"即时生效"）。更隐蔽的是 `replace_translator` 每次重建都会把术语一起丢掉。修法：启动即推一次，并把重建收进 `install_translator()`（换引擎后立刻重灌），由 `glossary_from_config_reaches_the_engine_on_the_first_job` 与 `rebuilding_the_translator_keeps_the_glossary` 双向锁住。
+- **`capture_rect` 曾把标题栏高度算进窗口位置**：外框矩形还没到位时退回用内框原点，于是每启动一次窗口就往下挪一截。改为"位置取外框原点、尺寸取内框"，任一缺失（第一帧）就返回 `None`、不覆盖已保存的配置。
+- **egui/eframe 0.37 没有 `ctx.style(closure)`**：设计文档里写的这个 API 不存在，真实入口是 `ctx.style_of(egui::Theme) -> Arc<Style>` 与 `ctx.all_styles_mut`。后者亮暗两套都改，所以断言任一套即可。同理设计写的 `ctx.set_theme_preference(...)` 实为 `ctx.set_theme(...)`。
+- **`Visible(false)` 在 macOS 上叫不回来**：eframe 0.37 不投递 `Reopen`，隐藏后点 Dock 图标没有反应，FR-5.2 的"再次点击图标恢复窗口"落空。改用 `CancelClose` + `Minimized(true)`：进程不退、内容原样、Dock 里有图标可点。这是对封存设计的偏差，不改 REQ，见下方清单。
+- **同语言对会被机翻端点硬拒，且错误是英文**：真机复现——中文源文 + 目标简体中文，"自动检测"解析出 `zh-CN|zh-CN`，端点回 HTTP 200 但体内 `responseStatus: 403`、`responseDetails: PLEASE SELECT TWO DISTINCT LANGUAGES`，界面直接显示这句英文。用 curl 逐一试出触发条件后，改为在 `machine.rs` 发请求**之前**就地判定，新增 `ProviderError::SameLanguage(lang)` 给中文文案。判定放在引擎层而不是 UI 层，是因为"发过去必然失败"，本地拦下结果完全一样、还省一次往返；AI 通道不加这道闸，LLM 对同语言输入不会失败。
+- **失败日志只记变体名不足以排障**：上面那个 403 在日志里只有 `error="Status"`，看不出是 400 还是 503，只能靠 curl 反推。补 `status=` 字段（`jobs::status_code`）。状态码不是秘密：响应体已在 `from_status` 里截断到 200 字符，查询串已在 `from_reqwest` 里洗掉，源文与译文仍然一律不进日志（NFR-3）。补上后一次就定位到 403。
+- **单实例锁的"认得自己 PID"分支无法在同进程内测**：`acquire` 会把记着自己 PID 的锁当成"PID 被回收过的陈旧锁"接管（这是正确行为，`kill -9` 后 PID 复用是真实场景）。原测试在同进程里写锁再取，前提本身不成立。改为 `spawn /bin/sleep 30` 拿一个活的外来 PID 做拒绝测试，另用一条测试锁住"自己的 PID 也算陈旧"的接管行为。真机也复现了接管：`kill` 掉旧实例后重启，陈旧锁被自动清除。
+- **`HistoryStore::read_all()` 静默跳过损坏行**（P3 已封存的行为：`Err(e) => tracing::debug!(…)`），只有 I/O 级失败才返回 `Err`。原界面层测试按"一行坏 → 整页报错"写，前提与领域层相反。拆成两条诚实的测试：坏行跳过、整页仍可用；用目录冒充历史文件制造"能打开但读不出"，此时才给可读原因。两种情况下翻译都不受影响。
+- **跨平台的 `time_t` 宽度差异**：`libc::time_t` 与 `tm_gmtoff` 在 64 位平台是 `i64`、32 位平台是 `i32`。历史页的本地时区格式化保留 `try_into`/`from` 转换（按 32 位写），并对本平台的 `clippy::useless_conversion` 就地放行——去掉转换在 32 位目标上编译不过，而 NFR-7 要求跨平台。
+
+### P4 与封存设计的偏差清单（均不改任何 REQ）
+
+| # | 偏差 | 原因 |
+|---|---|---|
+| 1 | `failure_of` 多收一个 `current: EngineKind` 参数 | 机翻通道上给"改用机翻"按钮没有意义，需要知道当前引擎 |
+| 2 | `hide()` 用 `CancelClose` + `Minimized(true)`，设计写 `Visible(false)` | eframe 0.37 在 macOS 上不投递 `Reopen`，隐藏后 Dock 叫不回来 |
+| 3 | 工具条与状态条落在 `views/mod.rs`，REQ-001 把四个区域都归给 `views::full` | 简洁模式要复用同一条状态条 |
+| 4 | 按钮行多出一个"翻译"按钮 | 封存的 F-01..F-11 控件清单里没有它，但键盘之外必须有一条鼠标路径。已回写 `03-ui-design.md` 为 **F-12**，同时补 **F-13**（失败动作按钮）与 **F-14**（术语分区） |
+| 5 | F-09 由三个按钮改为两个 | Q-002 用户决定，已回写 `01-requirements.md` FR-1.5、`03-ui-design.md`、`06-test-cases.md` |
+| 6 | `MockEngine` / `HistoryStore` 的若干 FACT 更正 | 实现第一步实测后写回 `design.md` |
+| 7 | `ctx.set_theme_preference(...)` → `ctx.set_theme(...)`；`ctx.style(closure)` → `ctx.style_of` / `all_styles_mut` | 0.37 的真实 API |
+| 8 | `Effects` 增 `sync_glossary`、去 `probe_key` | 术语要同帧推给派发器；Key 探测改为启动时后台一次，不是界面动作 |
+| 9 | 设置页多一个"窗口置顶"复选框 | NFR-4 同源决定：跟随系统之外必须留手动项，置顶同理 |
+| 10 | 配置落盘是脏标记 + 退避 500ms，不是"当帧结束" | 字号滑块每帧标脏，逐帧写盘等于每帧一次原子 rename |
+| 11 | P4 的简洁窗体编排是 `app.rs` 里的私有函数，不是第五个视图文件 | `views::compact` 留到 P5 与拖动/吸附/形变一起做 |
+| 12 | `views/history.rs` 内含一个小的本地时间格式化（unix 走 `localtime_r`，其他平台退 UTC） | 不想为一个时间戳引入 `chrono`/`time` 依赖 |
+| 13 | `main.rs` 长出可测的 `prepare()`，并用钥匙串事实对齐 `key_configured` | 启动逻辑原先全在 `main()` 里，无法测；config 里的标记只是缓存，钥匙串才是事实来源 |
+| 14 | **启动时读钥匙串挪到建窗之后的后台线程**（`app::spawn_key_probe` / `apply_key_probe`），更正 `design.md` 的启动时序 | macOS 授权框会同步阻塞 `get_password()`，放在建窗前表现为"启动卡死"（真机踩到） |
+| 15 | **术语在启动时推给派发器，且每次引擎重建后重灌**（`install_translator`） | 否则 `config.toml` 里的术语要等用户改一次术语才生效，违背 FR-4.5 |
+| 16 | **新增 `ProviderError::SameLanguage`，机翻在发请求前拦下同语言对**；失败日志补记 HTTP 状态码 | 真机踩到：端点回英文 `PLEASE SELECT TWO DISTINCT LANGUAGES` 直接显示给用户，且日志里只有 `error="Status"` 无从定位。这是 `ice-providers` 的对外错误枚举多了一个变体，属 P3 封存面的扩张，故在此显式登记 |
+
 ## P5 简洁悬浮模式 — 待记录
 ## P6 OCR — 待记录
 ## P7 译文回填 — 待记录
@@ -142,3 +225,24 @@
 | 2026-10-19 | 联网测试命名规范由 `net_` 前缀改为 `tests/live.rs` + `<通道>_live_<场景>`；`05-dev-guide.md` §4/§6 补真实端点命令与钥匙串配置一行；测试计数 53 → 99（+3 项 `--ignored`） | 一条通道往往要验多个场景（短文本/超长切块/真实模型），通道名在前才能用一条过滤命令选中整组。属文档规范对齐实现，不改需求 |
 | 2026-10-19 | ADR-004 落档；`traceability.md` 的 FR-1.2/1.3/1.6/1.7/1.9 与 NFR-1/2/3 回填实现列与结果列；`02-architecture.md` §2 模块表补 `error` 行、更正 `machine`/`ai`/`protect` 的关键类型与 §8 落地表 | P3 实测完成，"待 P3"的三处引用按 CHG-002 REQ-007 回写。⚠ NFR-1 的机翻 P50<800ms 本阶段只有单次样本（731–1422ms），**未确认达标**，判定推给 P8 的 20 次采样脚本 |
 | 2026-10-19 | `CHG-002` 走 `replan` 重新封存计划（spec 哈希不变，用户批准仍然有效）：超时与 AI 分段上限改读 `config.translation.{timeout_ms, ai_chunk_chars}`，设计期两个切块函数合并为 `chunk_chars` + `choose_cut`，`restore` 返回 `Restored{lost}`，`AiConfig` 取值规则改名 `effective_*`，机翻引擎新增错误文本剔除查询串 | 都是实施中浮现的实现选择变化（可配置性、避免重复实现、错误语义要能表达"丢了哪个占位符"、源文不得进错误文本），未改动已批准的业务行为，按流程不重开规格评审 |
+| 2026-10-20 | **需求基线变更（Q-002，用户决定"合并成两个按钮"）**：FR-1.5 由"复制译文 / 复制对照 / 一键替换剪贴板"三个按钮改为**两个**——「复制译文」（其效果即整体替换剪贴板）与「复制对照」；空译文时两者都不触碰剪贴板，只提示。同步回写 `01-requirements.md` FR-1.5、`03-ui-design.md` F-09、`06-test-cases.md` TC-1.5-*、W-1.9 | "复制译文"与"替换剪贴板"在实现上是同一次 `set_text`，两个按钮做同一件事只会让用户怀疑区别在哪 |
+| 2026-10-20 | **存储位置变更（Q-003，用户决定"改成写进 config.toml"）**：术语表由独立的 `glossary.toml`（`[[terms]]`）迁到 `config.toml` 的 `[[term]]`，`Glossary` 的持久化职责移入 `ice-core::config`；启动时若 config 内无术语而存在旧文件，做**一次性只读导入**并在设置页提示条数，**绝不删除或改写用户的 `glossary.toml`**；损坏时以空表降级、不阻塞翻译 | 需求 §4.5 原文就写的是 config 内 `[[term]]`，是实现走偏了；按需求原文改回，需求文字无需修改。不删用户文件是硬约束（用户自己的东西不由程序处置） |
+| 2026-10-20 | **阶段归属变更（Q-001，用户答复"哪个更符合产品规范就用哪个"）**：需求 §5 第 5 条"单实例运行"由无归属改为**归 P4**（`CHG-003` REQ-009），实现为 `ice-app::system::single_instance`；`02-architecture.md` §2 的 `ice-app` 模块表补该行，`traceability.md` 单列一行追踪 | 判定依据是产品规范本身：P4 起 `history.jsonl` 与 `config.toml` 第一次被真实界面写入，两个实例并发写会损坏用户数据，等不到 P8 打包阶段 |
+| 2026-10-20 | **启动时序更正**：读钥匙串从"建窗之前、同步"改为"建窗之后、`runtime.spawn_blocking` 后台"，结果经容量 1 的 `mpsc` 回投帧循环并 `request_repaint`；`main::prepare()` 接受 `Err(KeyState::Unknown)` 表示"探测未回"，此时不动 config 里的缓存标记，等 `apply_key_probe` 拿到真值再对齐。`02-architecture.md` §4/§6、`05-dev-guide.md` §8/§9 同步回写 | 真机踩到：macOS 对不由本程序写入的钥匙串条目会弹授权框，`get_password()` 同步阻塞，窗口根本建不出来，表现为"启动卡死"（日志停在 `get password from entry`，12s 后被杀、`config.toml` 一次未写）。不改任何 REQ |
+| 2026-10-20 | **缺陷修复**：`config.toml` 里的术语从未推给派发器（要等用户改一次术语才生效），且 `replace_translator` 每次重建都会丢掉术语。改为启动即推一次，并把重建收进 `install_translator()`（换引擎后立刻重灌） | 违背 FR-4.5"即时生效"。由 `glossary_from_config_reaches_the_engine_on_the_first_job`、`rebuilding_the_translator_keeps_the_glossary` 双向锁住 |
+| 2026-10-20 | **缺陷修复**：`capture_rect` 在外框矩形缺失时退回用内框原点，把标题栏高度算进保存的位置，每启动一次窗口往下挪一截。改为位置取外框原点、尺寸取内框，任一缺失（第一帧）返回 `None` 不覆盖配置 | 真机可见的窗口漂移。由 `capture_takes_position_from_outer_and_size_from_inner`、`capture_ignores_the_first_frame_where_geometry_is_unknown` 锁住 |
+| 2026-10-20 | **`ice-providers` 对外错误枚举新增一个变体 `SameLanguage(&'static str)`**（10 → 11 个），机翻在发请求前拦下源/目标同语言的请求；失败日志在变体名之外补记 `status=` HTTP 状态码。`02-architecture.md` §5、`05-dev-guide.md` §6/§9 同步回写，`StubError::all()` 与 `variant_name`/`variant_label` 一并扩到 11 | 真机踩到：中文源文 + 目标简体中文时端点回 HTTP 200 但体内 `responseStatus: 403` + 英文 `PLEASE SELECT TWO DISTINCT LANGUAGES`，界面直接显示这句英文（违背 NFR-4 中文界面），且日志里只有 `error="Status"` 无从定位——补上状态码后一次就查到 403。状态码不是秘密（响应体已截断、查询串已洗掉），源文与译文仍不进日志。**这是对 P3 封存面的扩张，故显式登记** |
+| 2026-10-20 | **控件清单补三项**：`03-ui-design.md` 新增 **F-12** 翻译按钮（在飞时禁用 + "翻译中…" + spinner）、**F-13** 失败动作按钮（401/未配置 → "去设置页填 Key"；AI 超时 → "改用机翻"）、**F-14** 设置页术语分区（即时生效并写进 `config.toml` 的 `[[term]]`）；ASCII 布局图同步 | 封存的 F-01..F-11 清单里没有"翻译"按钮，但键盘之外必须有一条鼠标路径；F-13/F-14 是实现中已落地却漏登记的控件。属文档补齐实现，不改 REQ |
+| 2026-10-20 | **恢复判定改用 `inner_rect.is_some()`**，原实现看 `viewport().minimized` | macOS 上该字段运行时永不刷新（egui-winit 为避开 emilk/egui#3494 死锁只在 `is_init` 时填），原判据恒不成立 |
+| 2026-10-20 | **`hide()` 改用 `CancelClose` + `Minimized(true)`**，设计原文写的是 `Visible(false)` | eframe 0.37 在 macOS 上不投递 `Reopen`，`Visible(false)` 之后点 Dock 图标叫不回窗口，FR-5.2 的"再次点击图标恢复"落空。Dock 恢复待真机走查确认 |
+| 2026-10-20 | **设置页 AI 服务分区文案修正 + 控件清单补 F-15**：供应商下拉旁的提示补上"选完即生效，这一栏没有保存按钮"，未配置提示由"填好地址与模型、保存 Key"改为"选好供应商、保存 Key"；`03-ui-design.md` 新增 **F-15**（AI 服务分区）并写明"只有 Key 需要显式提交" | 真机走查时用户反馈："虽然配置好了，但是你说的保存按钮我没有找到。" 根因是我的指引与界面文案都暗示存在一个整体"保存"按钮，而 `select_provider()` 实际是选中即写缓冲、失焦即落盘，只有 Key 需要按钮（它要写钥匙串）。界面不说清楚，用户就会去找一个不存在的按钮——属可用性问题，不是代码缺陷，不改 REQ |
+| 2026-10-20 | **缺陷 D-1（V-009 走查发现）**：文本页底部整条动作行被裁出 `CentralPanel`，翻译、复制译文、复制对照、失败动作四个按钮**既看不见也点不到**，用户只能用 Enter 触发翻译。根因是 `ui.columns` 用 `top_down_justified` 布局、两栏把可用高度整个撑满，排在其后的 `button_row` 落到了面板外。改为先用 `allocate_ui` 把两栏关进扣掉按钮行的高度里（`BUTTON_ROW_HEIGHT = 54`，按行间距 8 + 上间距 8 + 按钮实高 38 实测算出） | 用户走查反馈"W-1.9 我没有找到复制按钮"。**所有断言 `Effects` 的测试都照样通过**——无头测试只看"做了什么"，从不看"画到哪"，这是界面层测试方法的盲区。补 2 条布局测试（`the_action_row_stays_inside_the_space_it_is_given`、`the_action_row_fits_even_with_a_failure_button`），按最小窗口 640×420 扣掉工具条 56、状态条 28、面板内边距 16 之后的 320px 断言 `ui.min_rect()` 不溢出；修复前实测溢出到 y=374，修复后正好 320。另查 settings/history/image 三页都在 `ScrollArea` 里，不受此影响 |
+| 2026-10-20 | **缺陷 D-2（V-009 走查发现）**：Cmd+W 收进后台之后点 Dock 图标恢复，窗口回来的是**一张被非等比拉伸的旧画面**——边框拖不动、字变窄变扁、按钮和输入框点上去毫无反应，用户只能关窗。两处根因：① `app.rs` 用 `viewport().minimized == Some(false)` 判恢复，而 `egui_winit::update_viewport_info` 在 macOS 上**只在 `is_init` 时填这个字段**（运行时问 `window.is_minimized()` 会死锁，emilk/egui#3494），我们自己发的 `Minimized(true)` 之后它永远停在 `Some(true)`，`reveal()` 一次都不会执行，`state.hidden` 也永远清不掉；② 最小化期间 `inner_rect`/`outer_rect` 是 `None`，恢复时若那次 `Resized` 没被处理，GL surface 会停在旧尺寸上。改为按"有没有真实几何"判恢复（同一个函数正是按 `is_minimized()` 决定要不要填 `inner_rect`，且该字段运行时刷新），`reveal()` 里把当前形态的几何命令整套重发一遍逼 winit 同步 surface，并在隐藏期间加 250ms 重绘心跳（eframe 在无待重绘窗口时把事件循环停在 `ControlFlow::Wait`，macOS 取消最小化不保证再给 `RedrawRequested`） | 用户走查反馈第三步。①是从 egui-winit 源码确证的（`if is_init \|\| !cfg!(target_os = "macos")` 那段带 #3494 注释），补 2 条测试锁住判据与"恢复必重发几何"；②与心跳属**针对性修复，尚待真机复验**——若仍冻结，需按 `RUST_LOG=eframe=trace` 的日志判断是主线程阻塞还是 surface 尺寸未同步。**FR-5.2 在复验通过前不成立**（本轮修复不足：真机第二轮仍是贴图，根因与最终解法见下方 2026-10-21 的「D-2 第二轮修复」行，第三轮复验通过后 FR-5.2 成立） |
+| 2026-10-20 | 测试计数 233 → **237**（ice-app 131 → 135：2 条布局溢出测试 + 2 条窗口恢复测试） | 走查缺陷 D-1/D-2 的回归锁 |
+| 2026-10-21 | **缺陷 D-3 + 动作条右下角化（用户第二轮走查提出）**：① 截图里"两边窗口大小不一样"——译文栏的 `ScrollArea(auto_shrink=false)` 吃光整栏可用高度、源文栏却为字数行让位矮一截，两栏底边差约 30px；改为两栏共用**定高页脚行**（`PANE_FOOTER_HEIGHT`）+ 正文/页脚都画进丢弃的子 Ui 并按给定矩形精确推进光标（`TextEdit` 外框、徽标内边距、空页脚的实际高度都不可控，行高定死底边才对齐）。② 用户要求底部按钮行改到**译文框内右下角的自带外框动作条**：第一版按原话做成"默认隐藏、鼠标碰译文框右下边框 0.15s 浮出"，用户看到实物后改为"**干脆不要收起了，就放在右下角不动**"，并指出 popup 外框的阴影"有点遮挡"译文框边框——最终版常驻右下角、外框改填充＋描边**无阴影**、四边离译文框边框 6px。按钮经丢弃子 Ui 放置（`Ui::put` 会推进光标并把矩形并进父 Ui，把译文框撑高） | 用户截图 + 两轮原话。新增 4 条测试（两栏对齐 ×2、动作条角落不压边 ×1、窄栏换行 ×1），删除被取代的 2 条按钮行溢出测试与 3 条悬浮隐藏/浮出测试 |
+| 2026-10-21 | 测试计数 237 → **244**（ice-app 135 → 142） | D-3、右下角动作条与 D-2 第二轮恢复判据的回归锁（含 1 条走 `logic` 钩子的接线测试） |
+| 2026-10-21 | **缺陷 D-2 第二轮修复**：第一轮（按 `inner_rect` 判恢复 + 重发几何 + `ui()` 里 250ms 心跳）真机复验仍失败，用户报"最小化重新叫出来，还是贴图"。读 eframe 0.37 源码定位到真正的根因：**隐藏期间 eframe 走 `update_logic_only`，只调 `App::logic`，`App::ui` 一帧都不执行**（`wgpu_integration.rs:716-767`、`epi_integration.rs:384`），而恢复判定与心跳全写在 `ui()` 里，窗口一收起来就双双断掉——没人再续 `request_repaint_after`，事件循环停在 `ControlFlow::Wait`，从 Dock 叫回来时没有任何一帧去发现"回来了"。改为把看护挂到 `App::logic`（`Context::run_logic` 会刷新 `raw.viewports`/`raw.focused`、会把 `logic` 里发的 viewport 命令带出去，`begin_pass_repaint_logic` 还专门保证这里发的重绘请求能到集成层）；判据加宽为"几何回来 **或** 窗口拿到焦点"（`focused` 每帧被 `update_viewport_info` 无条件刷新，`inner_rect` 却可能卡在 `None`），并加 800ms 静默期 `REVEAL_GRACE` 防 Cmd+W 那一帧把自己"恢复"回来；`reveal()` 补发 `Minimized(false)` | 用户第二轮反馈"还是贴图"。上一轮的日志只能证明 `reveal` 没执行、证明不了"没有帧"，这一轮从 eframe 源码确证隐藏期间 `ui` 根本不跑。新增 5 条测试（4 条 `RevealGuard` 判据：静默期内不判、焦点单独成立、几何单独成立、可见时不成立；1 条 `restoring_from_the_dock_is_noticed_by_the_logic_hook` 锁住"判定挂在 `logic` 上"这条接线——第二轮就是代码写对了却挂错了钩子），并在隐藏期间按状态变化打 debug 日志供复验取证。**第三轮真机复验通过**（2026-10-21，用户原话"可以了，收起叫回后依然能够使用"）：`/tmp/ice-retest.log` 记录收起 248ms 后进入 `revealed=false focused=false`、2084ms 时几何与焦点同时回来并触发"窗口恢复可见，重发几何"。FR-5.2 成立 |
+| 2026-10-20 | 测试计数 99 → **233**（ice-app 3 → 131、ice-core 45 → 49、ice-providers 51 → 53；`--ignored` 仍 3 项）；`05-dev-guide.md` §4 计数、§2 目录结构、§6 界面层测试写法、§8 平台差异三行、§9 常见故障五行同步更新 | P4 落地。界面层测试固定为无头 `ctx.run_ui` + `Effects` 队列断言 + `StubEngine`，不碰网络/剪贴板/钥匙串 |
+| 2026-10-21 | **缺陷 D-4（W-1.16 走查发现）**：粘贴 18,000 字符后源文框"变形、贴底、无法下拉"，译文栏"没有下拉"。左栏根因是 D-3 的布局手法留下的坑：两栏正文画进丢弃的子 Ui 再手工推进光标，而 `Ui::new_child` **不继承裁剪**（只克隆父 painter 的 clip_rect，egui ui.rs:210-235），`TextEdit::multiline` 又按内容全高分配矩形——18k 字符把源文框撑到窗口外，既裁不掉也没有滚动容器；译文栏有 `ScrollArea` 所以不变形。修复：两栏正文都进定高 `ScrollArea::vertical().auto_shrink([false,false])`；源文外框从 TextEdit 自带框改到定高 `Frame::group`（自带框跟着内容高度走，溢出时底边会被裁掉，两栏边框从此同源），焦点态用上一帧的 `focus_in_source` 决定描边颜色 | 用户原话 + egui 源码。新增 2 条测试：`a_huge_paste_keeps_the_source_editor_inside_its_pane`（滚动容器可视高度不超过栏目、内容远高于一屏）、`both_panes_scroll_when_the_content_does_not_fit`（8 帧滚轮位移后两栏偏移都增长）。**旧测试为何放走它**：栏目的 `min_rect` 只反映手工推进的光标，丢弃子 Ui 里溢出多少都看不见——D-1/D-3 那批布局断言因此全部通过。译文栏真机"不能下拉"无头复现不了（滚轮测试通过）；**第四轮真机复验通过**（2026-10-21，用户原话"都可以了"）：左框不变形、不贴底、四边边框完整、两指/滚轮能滚到末尾、字数行 18,000，译文栏同样能滚到底——D-4 关闭 |
+| 2026-10-21 | 测试计数 244 → **246**（ice-app 142 → 144） | D-4 的回归锁 |
+| 2026-10-21 | **缺陷 D-5（走查发现）**：提示条的关闭按钮、工具条的"⌗ 悬浮"、简洁窗的"▣ 全量 / ⧉ 复制"在真机上显示成豆腐块。根因：这四个装饰字形（U+2317 / U+2715 / U+25A3 / U+29C9）既不在 egui 内置字体里，eframe 0.37 的 macOS 系统字体回退（`egui_system_font_provider`，只在内置字体缺字时按 locale 匹配系统字体）也找不到它们。改为纯文字标签与 Latin-1 的 `×`（`悬浮窗` / `全量` / `复制` / `×`），不引入字体依赖——Windows/Linux 的系统回退更不可控，纯文字跨平台最稳。同一轮用户又指出提示条的关闭符排在文字**下方**（竖排布局所致），改为与文字同一行、跟在文字后面 | 用户截图 + 原话"点击后有奇怪的符号，不光是这一个按钮""叉号怎么在文字下面"。无新增测试：无头环境没有系统字体回退，断言不了真机的字形覆盖。**第四轮真机复验通过**（2026-10-21，用户原话"可以了"）：工具条「悬浮窗」、简洁窗「全量 / 复制」、提示条均无豆腐块，× 排在文字右侧同一行、可点掉、四秒自动消失——D-5 关闭 |
