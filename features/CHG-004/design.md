@@ -4,7 +4,7 @@ Spec-Hash: 235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c
 
 # CHG-004 · Design
 
-- Change: CHG-004 · v0.1 · `spec_hash 0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2`
+- Change: CHG-004 · v0.3 · `spec_hash 235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c`
 - Repo: `ice-translator`（分支 `main`）
 - 前置：CHG-003 已 ACCEPTED（`f123a8b`），代码态 246 passed / 0 failed / 3 ignored
 
@@ -78,26 +78,27 @@ P4 的确证结论继续适用：窗口隐藏期间 eframe 走 `update_logic_onl
 
 ## REQ-001 实现与验证
 
-`commands_for_mode` 的 Compact 分支改为：
+`commands_for_mode` 的 Compact 分支相对 P4 改三处（完整函数体见 REQ-004 一节，两节共用同一份实现）：
 
 ```rust
 UiMode::Compact => vec![
     ViewportCommand::Decorations(false),
-    ViewportCommand::MinInnerSize(Vec2::ZERO),      // == set_min_inner_size(None)，解掉全量留下的 640×420
-    ViewportCommand::MaxInnerSize(Vec2::INFINITY),  // == set_max_inner_size(None)
-    ViewportCommand::Resizable(true),               // 用户 2026-10-22 决定：简洁窗要能鼠标缩放
-    ViewportCommand::InnerSize(clamped.w/h),        // 约束解除之后才设尺寸
+    ViewportCommand::Resizable(true),                // 用户 2026-10-22 决定：简洁窗要能鼠标缩放（P4 是 false）
+    ViewportCommand::MinInnerSize(MIN_COMPACT_SIZE), // 按形态取下限，解掉全量留下的 640×420
+    ViewportCommand::InnerSize(clamped.w/h),         // 约束改过之后才设尺寸
     ViewportCommand::OuterPosition(rect.x/y),
 ]
 ```
 
-顺序是正确性的一部分：`InnerSize` 走 `window.request_inner_size`，平台不允许时直接返回当前尺寸并忽略请求（`egui-winit-0.37.0/src/lib.rs:1969-1985`），所以"解除约束"必须排在"设尺寸"之前。Full 分支保持 `MinInnerSize(640×420)`，恢复约束。
+顺序是正确性的一部分：`InnerSize` 走 `window.request_inner_size`，平台不允许时直接返回当前尺寸并忽略请求（`egui-winit-0.37.0/src/lib.rs:1969-1985`），所以"改约束"必须排在"设尺寸"之前——W-2.1 的根因就是 P4 切简洁时从没改过那条 640×420 的约束。Full 分支同理下发 `MinInnerSize(MIN_FULL_SIZE)`：两个形态各自带自己的下限，谁也不把值留给对方。
 
-`MIN_COMPACT_SIZE = Vec2::new(320.0, 96.0)`；`clamp_compact_rect(WindowRect) -> WindowRect` 把小于下限的宽高抬到下限（配置被手改坏也不拒绝启动）。`ice-core::config::sanitize()` 同步夹这两个下限（REQ-001 边界），单测覆盖"手改配置成 100×40"。
+不用 `MinInnerSize(Vec2::ZERO)`：它等价于 `set_min_inner_size(None)`，确实能解开 W-2.1，但同时把下限一起解掉了，320×96 就只剩 `sanitize()` 在加载时夹一次——用户把窗口拖到 200×60 时没有任何东西拦着，得等写回配置、下次启动才被夹回来。按形态取下限则由 AppKit 的原生约束逐帧执行，根本拖不下去（spec v0.3 REQ-001 的澄清）。`MaxInnerSize` 本包不下发：需求是"不设上限"，而 egui/winit 的默认就是无上限，再发一条 `Vec2::INFINITY` 是多余命令。
+
+`MIN_COMPACT_SIZE = Vec2::new(320.0, 96.0)`；`clamp_compact_rect(WindowRect) -> WindowRect` 把小于下限的宽高抬到下限（配置被手改坏也不拒绝启动）。`ice-core::config::sanitize()` 同步夹这两个下限（REQ-001 边界）：现有实现夹的是 `compact_rect.w.max(320.0)` / `h.max(64.0)`，**高度下限要从 64 改成 96** 与 `MIN_COMPACT_SIZE` 对齐，否则配置里能存下 320×70 这种原生约束不允许的值。单测覆盖"手改配置成 100×40"。
 
 版式：`views/compact.rs` 用 `Panel::top`(输入行 34px) + `Panel::bottom`(动作行 28px) + `CentralPanel`(译文区)，译文区吃剩余高度——窗口被拉大时多出来的高度全给译文区（REQ-001 的"缩放到任意合法尺寸三块都不被裁"）。
 
-**验证**：`commands_for_mode` 的命令集合与顺序（`MinInnerSize(ZERO)` 的位置必须在 `InnerSize` 之前，用 `.position()` 断言，沿用 P4 `switching_to_compact_queues_a_borderless_small_window` 的手法）；`clamp_compact_rect` 三例（正常/过窄/过矮）；`sanitize` 往返一例；真机 W-2.1 + 新增 W-2.17（拉边缘缩放）。
+**验证**：`commands_for_mode` 的命令集合与顺序（`MinInnerSize(MIN_COMPACT_SIZE)` 与 `Resizable(true)` 都必须排在 `InnerSize` 之前，用 `.position()` 断言，沿用 P4 `switching_to_compact_queues_a_borderless_small_window` 的手法；那条测试里断言的 `Resizable(false)` 要跟着改成 `true`）；两个形态各自的下限不串台（切到简洁后命令里不得出现 `MIN_FULL_SIZE`，反之亦然）；`clamp_compact_rect` 三例（正常/过窄/过矮）；`sanitize` 往返一例（100×40 → 320×96）；真机 W-2.1 + 新增 W-2.17（拉边缘缩放）。
 
 ## REQ-002 实现与验证
 
@@ -288,7 +289,7 @@ FR-5.3：休眠唤醒/插拔后第一帧若 `outer_rect` 已失效（`None` 或�
 - `docs/01-requirements.md`：FR-3.2（460×96 起、可缩放、下限 320×96、控件清单含引擎分段）、FR-1.2/FR-1.4（自动反向）；FR-3.9（改瞬时切换）**已在 2026-10-22 需求变更时改完**，实现后只需核对文字与代码一致；
 - `docs/02-architecture.md`：§2 的 `mode` 行补 `snap`/`dim_alpha`/`DragSettler` 并把状态从"部分"改为完成（**不补 `Morph`**，FR-3.9 已于 2026-10-22 改为瞬时切换，§3.3 的那条已在本轮改完）、`views::compact` 从"—"变实体、`system::clipboard` 补 `Watcher`、新增 `system::screen` 一行；§8 落地表补 P5；错误表 `SameLanguage` 行兑现 CHG-004 说明；
 - `docs/03-ui-design.md` §3：ASCII 图重画（把手条 + 可缩放 + 引擎分段 + 停靠/置顶指示）、控件清单加 K-10（引擎分段）与 K-11（缩放手柄/下限）、K-06 补"未聚焦先取焦点"；§4 的形态切换段落**已在 2026-10-22 改成瞬时版**；
-- `docs/05-dev-guide.md`：测试计数、目录结构（`views/compact.rs`、`system/screen.rs`）、§8 平台差异补 AppKit 探针三行、§9 常见故障补"egui 没有 work area API"与"`MinInnerSize(ZERO)` 才是清约束"两条；
+- `docs/05-dev-guide.md`：测试计数、目录结构（`views/compact.rs`、`system/screen.rs`）、§8 平台差异补 AppKit 探针三行、§9 常见故障补"egui 没有 work area API"与"改窗口尺寸前必须先改 `MinInnerSize`（`InnerSize` 是异步请求，被旧约束夹住时会静默忽略）"两条——后一条要写清本包按形态取下限、不用 `MinInnerSize(ZERO)` 那个"完全无约束"的逃生口（见 REQ-001）；
 - `docs/06-test-cases.md`：TC-3.5-a~e 与 TC-1.2-c 状态列、§3 走查表扩到 20 行（W-2.14 的判据**已在 2026-10-22 改成瞬时版**）；
 - `docs/07-acceptance.md`：P5 段落填走查结论与证据指针，变更登记至少四行（FR-3.2 可缩放与控件清单、FR-1.2/1.4 自动反向、**FR-3.9 改瞬时切换——2026-10-22 已登记**、FR-3.7 若降级为内容级 dim），P4 遗留①②两行标记为已闭环；
 - `docs/traceability.md`：FR-1.2/1.3/1.4、FR-3.2/3.3/3.5/3.6/3.7/3.8/3.9、FR-5.3、NFR-2/5 的实现列与结果列，清掉所有"待 P5"。

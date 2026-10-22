@@ -30,8 +30,11 @@
         "REQ-001"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/mode.rs",
+        "crates/ice-core/src/config.rs"
+      ]
     },
     {
       "id": "T-003",
@@ -40,8 +43,11 @@
         "REQ-003"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/screen.rs",
+        "crates/ice-app/Cargo.toml"
+      ]
     },
     {
       "id": "T-004",
@@ -51,8 +57,12 @@
         "REQ-005"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/views/compact.rs",
+        "crates/ice-app/src/views/mod.rs",
+        "crates/ice-app/src/app.rs"
+      ]
     },
     {
       "id": "T-005",
@@ -61,8 +71,11 @@
         "REQ-003"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/mode.rs",
+        "crates/ice-app/src/app.rs"
+      ]
     },
     {
       "id": "T-006",

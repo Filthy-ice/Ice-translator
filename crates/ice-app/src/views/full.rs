@@ -34,8 +34,8 @@ fn bar_id() -> egui::Id {
 ///
 /// 正文（源文编辑器 / 译文标签）都按内容自然高度布局，装不下的部分靠滚动看——
 /// 不套滚动容器的话，18k 字符的粘贴会把源文框一路撑到窗口外（W-1.16 的"变形、贴底"），
-/// 而且既裁不掉也滚不动。
-fn scroll_area(pane: &'static str) -> egui::ScrollArea {
+/// 而且既裁不掉也滚不动。简洁窗的译文区复用同一个构造（REQ-005 要求同一手法）。
+pub(crate) fn scroll_area(pane: &'static str) -> egui::ScrollArea {
     egui::ScrollArea::vertical()
         .id_salt(pane)
         // 撑满给定的正文矩形，不随内容收缩，两栏的框才有确定的高度
@@ -46,7 +46,7 @@ fn scroll_area(pane: &'static str) -> egui::ScrollArea {
 ///
 /// 无头测试看不见像素，只能靠这三个数断言"内容确实比可视区高"和"滚轮给下去偏移真的动了"
 /// ——W-1.16 的回归锁（源文框曾经既不裁剪也不能滚）。
-fn record_scroll<R>(
+pub(crate) fn record_scroll<R>(
     ctx: &egui::Context,
     pane: &'static str,
     output: &egui::containers::scroll_area::ScrollAreaOutput<R>,
@@ -63,7 +63,7 @@ fn record_scroll<R>(
     });
 }
 
-fn scroll_id(pane: &'static str) -> egui::Id {
+pub(crate) fn scroll_id(pane: &'static str) -> egui::Id {
     egui::Id::NULL.with("ice-translator.scroll").with(pane)
 }
 

@@ -34,6 +34,14 @@ libc = "0.2"
 [dev-dependencies]
 tempfile = "3"
 
-# P5 若 egui 的 WindowLevel 不足以实现置顶，再引入 AppKit 绑定：
-# [target.'cfg(target_os = "macos")'.dependencies]
-# objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSApplication"] }
+[target.'cfg(target_os = "macos")'.dependencies]
+# 屏幕可用区（去掉菜单栏与 Dock 的那块）只能问 AppKit：egui 的 `ViewportInfo` 只有
+# `monitor_size`（整块屏幕），winit 的 `MonitorHandle` 也没有 work area（CHG-004 REQ-003）。
+# 三个 crate 都已由 arboard/eframe/winit 传递引入并锁在 Cargo.lock 里。
+#
+# `default-features = false` 是必须的：objc2-app-kit 的 default 会打开 ~283 个模块，
+# 连带把 objc2-cloud-kit / core-video / core-text / metal 等六个 Apple 绑定 crate 拖进
+# 编译图（实测：不设它，`cargo build` 会多出这六个 rlib）。这里只需要读 `NSScreen`。
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSScreen"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry"] }

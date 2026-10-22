@@ -19,6 +19,8 @@ pub enum Action {
     Quit,
     /// Shift+Enter：不提交，换行由 `TextEdit` 自己插入
     Newline,
+    /// Esc：清空输入行。只在简洁模式生效，判定在 `app.rs::run`（REQ-005）
+    ClearInput,
 }
 
 /// 单个按键的分类
@@ -52,6 +54,9 @@ pub fn classify(key: Key, modifiers: Modifiers, focus_in_source: bool) -> Option
         Key::Enter if modifiers.shift => Some(Action::Newline),
         // 只有焦点在源文框时裸 Enter 才是"翻译"，否则在设置页填字段按 Enter 会误触发
         Key::Enter if focus_in_source => Some(Action::Translate),
+        // Esc 不看焦点：简洁窗里焦点可能在译文上（选中复制过），清空照样要生效。
+        // 是否真的执行由 `app.rs::run` 按形态决定——全量模式 Esc 仍不绑定任何动作。
+        Key::Escape => Some(Action::ClearInput),
         _ => None,
     }
 }
@@ -129,10 +134,16 @@ mod tests {
     }
 
     #[test]
+    fn escape_clears_the_input_regardless_of_focus() {
+        assert_eq!(classify(Key::Escape, NONE, true), Some(Action::ClearInput));
+        assert_eq!(classify(Key::Escape, NONE, false), Some(Action::ClearInput));
+        // 带 Ctrl/Alt/Cmd 的 Esc 属系统或输入法，不抢
+        assert_eq!(classify(Key::Escape, Modifiers::ALT, true), None);
+    }
+
+    #[test]
     fn unbound_keys_pass_through() {
         assert_eq!(classify(Key::A, NONE, true), None);
-        // Esc 在全量模式下无绑定（简洁模式的"清空输入"属 P5）
-        assert_eq!(classify(Key::Escape, NONE, true), None);
         assert_eq!(classify(Key::M, Modifiers::ALT, true), None);
     }
 

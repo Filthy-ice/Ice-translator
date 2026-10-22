@@ -2,6 +2,7 @@
 //!
 //! REQ-001 的四区里，工具条（A）与状态条（D）在这里，源文（B）/译文（C）两栏在 `full.rs`；
 //! 其余三个页签各自一个文件，签名统一为 `show(ui, &mut AppState, &mut Effects)`。
+//! 简洁悬浮窗是另一套骨架，在 `compact.rs`。
 
 use egui::{self, Align, Align2, Layout, Order, RichText};
 use ice_core::history::HistoryStore;
@@ -10,6 +11,7 @@ use ice_core::language::EngineKind;
 use crate::state::{AppState, Confirm, FailureAction, Job, Tab};
 use crate::theme;
 
+pub mod compact;
 pub mod full;
 pub mod history;
 pub mod image;
@@ -18,6 +20,9 @@ pub mod settings;
 /// 工具条与状态条的高度（`03-ui-design.md` §1）
 pub const TOOLBAR_HEIGHT: f32 = 56.0;
 pub const STATUS_HEIGHT: f32 = 28.0;
+
+/// 全量模式提示条离窗口顶部的距离（简洁窗自己算，见 `compact::TOAST_OFFSET`）
+pub const TOAST_OFFSET: f32 = 12.0;
 
 /// 一帧里 view 想让外部世界做的事。
 ///
@@ -41,6 +46,14 @@ pub struct Effects {
     pub toggle_mode: bool,
     /// 二次确认后清空历史
     pub clear_history: bool,
+    /// 简洁窗把手被按下：交原生窗口拖拽（`ViewportCommand::StartDrag`，REQ-002）
+    pub start_drag: bool,
+    /// 简洁窗的"设置"：切回全量并打开设置页（REQ-005）
+    pub open_settings: bool,
+    /// 点了停靠指示：停靠边循环到下一条并立刻把窗口移过去（K-07、REQ-003）
+    pub cycle_dock: bool,
+    /// 切换置顶（K-09）。快捷键那条路径直接在 `app.rs::run` 里做，这里给界面按钮用
+    pub toggle_topmost: bool,
 }
 
 impl Effects {
@@ -71,7 +84,7 @@ pub fn show(
     });
 
     let ctx = ui.ctx().clone();
-    toasts(&ctx, state);
+    toasts(&ctx, state, TOAST_OFFSET);
     confirm(&ctx, state, effects);
 }
 
@@ -154,7 +167,9 @@ fn target_language(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effect
         });
 }
 
-fn engine_picker(
+/// 引擎分段（F-04）。全量工具条与简洁窗动作行共用同一套：`Button::selectable` 的选中态、
+/// AI 未配置时禁用并给说明，简洁窗不再新造一份（REQ-005）。
+pub(crate) fn engine_picker(
     ui: &mut egui::Ui,
     state: &mut AppState,
     effects: &mut Effects,
@@ -199,14 +214,17 @@ fn status_bar(ui: &mut egui::Ui, state: &mut AppState, ai_available: bool) {
         });
 }
 
-/// 提示条：顶部居中，最多三条，四秒自动消失，也可以点掉
-fn toasts(ctx: &egui::Context, state: &mut AppState) {
+/// 提示条：顶部居中，最多三条，四秒自动消失，也可以点掉。
+///
+/// `offset_y` 是离窗口顶部的距离：全量窗给 `TOAST_OFFSET`，简洁窗要越过把手条与输入行
+/// （REQ-005 的"位置不遮住输入行文字"）。
+pub(crate) fn toasts(ctx: &egui::Context, state: &mut AppState, offset_y: f32) {
     if state.toasts.is_empty() {
         return;
     }
     let mut dismissed = None;
     egui::Area::new(egui::Id::unique("toasts"))
-        .anchor(Align2::CENTER_TOP, [0.0, 12.0])
+        .anchor(Align2::CENTER_TOP, [0.0, offset_y])
         .order(Order::Foreground)
         .interactable(true)
         .show(ctx, |ui| {
@@ -339,6 +357,10 @@ mod tests {
         assert!(effects.save_key.is_none());
         assert!(!effects.delete_key);
         assert!(!effects.toggle_mode);
+        assert!(!effects.start_drag);
+        assert!(!effects.open_settings);
+        assert!(!effects.cycle_dock);
+        assert!(!effects.toggle_topmost);
     }
 
     #[test]
