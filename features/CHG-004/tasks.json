@@ -1,25 +1,31 @@
 {
   "baseline": {
     "change": "CHG-004",
-    "version": "v0.1",
-    "spec_hash": "0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2"
+    "version": "v0.3",
+    "spec_hash": "235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c"
   },
   "tasks": [
     {
       "id": "T-001",
-      "title": "三条 HYPOTHESIS 最小实测：无边框边缘缩放、逐帧 InnerSize 补间、with_transparent 副作用",
+      "title": "三条 HYPOTHESIS 最小实测：无边框边缘缩放、逐帧 InnerSize 补间、with_transparent 副作用（已跑完三轮：H1/H3 成立；H2 不成立；窗内补间只能单向、双向必撞 ~1s 停摆；单发几何命令 20ms 落定 → 用户决定取消动画，FR-3.9 改为瞬时切换）",
       "requirements": [
         "REQ-001",
         "REQ-004",
         "REQ-007"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/examples/viewport_probe.rs",
+        "features/CHG-004/evidence/T-001-hypothesis-verdicts.md",
+        "features/CHG-004/evidence/T-001-probe.log",
+        "features/CHG-004/evidence/T-001-probe-v2.log",
+        "features/CHG-004/evidence/T-001-probe-v3.log"
+      ]
     },
     {
       "id": "T-002",
-      "title": "尺寸命令修正：清 MinInnerSize、允许缩放、MIN_COMPACT_SIZE 与 sanitize 下限",
+      "title": "尺寸命令修正：MinInnerSize 按形态取值（不再清成 ZERO）、两种形态都允许缩放、MIN_COMPACT_SIZE 与 sanitize 下限",
       "requirements": [
         "REQ-001"
       ],
@@ -60,7 +66,7 @@
     },
     {
       "id": "T-006",
-      "title": "形变动画：Morph 补间、35% 那帧切装饰、反向插值、末帧校正与落盘",
+      "title": "形态切换瞬时化：commands_for_mode 重写（Decorations 排在 InnerSize 之前、两种形态都可缩放、全量也下发 OuterPosition）、切换后回读真实几何并立即落盘、隐藏态只改配置；无头断言命令条数与顺序",
       "requirements": [
         "REQ-004"
       ],

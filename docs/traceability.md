@@ -38,13 +38,13 @@
 |---|---|---|---|---|---|
 | FR-3.1 全量模式布局 | M | 03 §2 | `ice-app::views::{mod,full,history,settings,image}` | 走查表 W-1、TC-3.1-a/b | ✅ P4：四页签 + 顶部工具条 + 状态条，最小尺寸下逐页渲染不 panic（`every_tab_renders_without_panicking_at_the_minimum_size`）；控件清单较封存版多出 F-12 翻译按钮、F-13 失败动作按钮、F-14 术语分区，已回写 `03-ui-design.md` |
 | FR-3.2 简洁模式窄条（含无边框可拖动） | M | 03 §3 K-06 | `ice-app::views::compact`（`StartDrag`） | 走查表 W-2、W-2.13 | 待 P5（P4 只做了切换时的 `ViewportCommand` 编排：`switching_to_compact_queues_a_borderless_small_window`） |
-| FR-3.3 切换保留内容 | M | 03 §4、ADR-001 | `ice-app::mode` | TC-3.3-a | 部分 ✅ P4：内容与源/目标语言在切换中不动且不触发请求（`toggling_mode_keeps_content_and_marks_config_dirty`、`mode_toggle_preserves_content_and_does_not_request`）；形变动画见 FR-3.9，待 P5 |
+| FR-3.3 切换保留内容 | M | 03 §4、ADR-001 | `ice-app::mode` | TC-3.3-a | 部分 ✅ P4：内容与源/目标语言在切换中不动且不触发请求（`toggling_mode_keeps_content_and_marks_config_dirty`、`mode_toggle_preserves_content_and_does_not_request`）；切换几何见 FR-3.9，待 P5 |
 | FR-3.4 置顶 | M | 03 §3 K-09、ADR-001 | `ice-app::mode`（`WindowLevel`） | TC-3.4-a | ✅ P4：`topmost_maps_to_window_level_and_is_persisted`，并在设置页留了手动开关（NFR-4 同源决定：跟随系统之外必须有手动项） |
 | FR-3.5 边缘吸附与脱离 | M | 03 §3 吸附几何 | `ice-app::mode::snap`（纯函数） | TC-3.5-a..d | 待 P5 |
 | FR-3.6 记忆位置尺寸与越界回正 | M | 02 §3.3、§6 | `ice-core::config` + `ice-app::mode` | TC-3.6-a/b | 部分 ✅ P4：`window_off_screen_detection` + 几何捕获三测（`capture_takes_position_from_outer_and_size_from_inner`、`capture_ignores_the_first_frame_where_geometry_is_unknown`、`initial_viewport_follows_the_saved_mode`）。**其中修掉一个真实缺陷**：外框缺失时曾退回用内框原点，会把标题栏高度算进保存的位置，每启动一次窗口下移一截 |
 | FR-3.7 失焦半透明 | S | 03 §3 K-08 | `ice-app::mode` | 走查 W-3 | 待 P5 |
 | FR-3.8 剪贴板即翻 | S | 03 §4 | `ice-app::system::ClipboardWatcher` | TC-3.8-a | 待 P5 |
-| FR-3.9 切换形变动画 | M | 03 §4 过渡 | `ice-app::mode::Morph`（逐帧补间） | 走查 W-2.14 | 待 P5 |
+| FR-3.9 切换瞬时几何 | M | 03 §4 过渡 | `ice-app::mode`（同帧一次性下发 `Decorations`/`InnerSize`/`OuterPosition`） | 走查 W-2.14 | 待 P5。**2026-10-22 需求变更**：由"180~220ms 形变动画"改为瞬时切换，`mode::Morph` 不实现（原因见本节末条与 `features/CHG-004/evidence/T-001-hypothesis-verdicts.md`） |
 
 ## 配置、历史与术语
 
@@ -81,3 +81,4 @@
 - **P4（CHG-003）闭环**：FR-1.1、FR-1.2、FR-1.3、FR-1.5、FR-1.7、FR-3.1、FR-3.4、FR-4.1、FR-4.2、FR-4.4、FR-4.5、FR-5.1、FR-5.2、NFR-4、需求 §5 第 5 条，共 15 条转为 ✅；FR-3.3、FR-3.6、NFR-2、NFR-8 由"待 P4"转为部分闭环（剩余部分属 P5 或真机走查）。仍未闭环的 Must：FR-2.1~FR-2.6（P6/P7）、FR-3.2、FR-3.5、FR-3.9（P5）。
 - 2026-10-20 P4 实测新发现并修掉的两个真实缺陷：① 启动路径上同步读钥匙串，被 macOS 授权框阻塞时窗口建不出来（表现为"启动卡死"）；② `config.toml` 里的术语从未推给派发器，且每次引擎重建都会丢掉。另有一个由用户真机操作暴露的第三个缺陷：源语言与目标语言相同时机翻端点返回英文 `PLEASE SELECT TWO DISTINCT LANGUAGES`，现改为发请求前就地拦下并给中文可读文案（新增 `ProviderError::SameLanguage`）。三者详见 `07-acceptance.md` 变更行。
 - **2026-10-21 P4 走查四轮收口（CHG-003 → VERIFIED）**：真人走查跑出并修掉五个界面缺陷 D-1（底部动作行被裁出面板）、D-2（Cmd+W 后 Dock 恢复回来一张拉伸贴图，修了三轮）、D-3（两栏底边不齐）、D-4（18,000 字符粘贴把源文框撑出窗口且滚不动）、D-5（装饰字形在真机上显示为豆腐块）；W-1.1~W-1.7、W-1.9~W-1.24 共 23 项通过，V-001~V-012 十二项验证全部有证据。**三组转出项**：① 简洁窗尺寸/拖动/引擎切换/译文滚动四条属规格明划给 P5 的内部版式，转 CHG-004（新增走查项 W-2.15/W-2.16）；② 用户决定 FR-1.2/FR-1.4 增加"自动检测撞到目标语言时自动反向并改目标语言"，转 CHG-004（新增 TC-1.2-c，本包不改行为）；③ W-1.8 的假 Key 分支未在真机复现（会覆盖用户真 Key），转 P8 用废 Key 补。**这五条界面缺陷都不改任何 REQ 编号**，但 D-4/D-5 说明了一件事：界面层测试只看"做了什么"（`Effects` 断言）与"光标推进到哪"（`min_rect`），看不见丢弃子 Ui 里的溢出，也看不见真机字形覆盖——前者已用滚动容器实测数据补上断言，后者无头环境无法验证，只能靠真人走查。
+- **2026-10-22 FR-3.9 需求变更（CHG-004 实测后用户决定）**：形态切换由"180~220ms 形变动画"改为**瞬时切换**，Must 级别与编号不变（需求总数仍 44 · Must 30）。经过：CHG-004 T-001 用一次性探针 `crates/ice-app/examples/viewport_probe.rs` 实测三条假设 —— 逐帧 `InnerSize` 补间**不成立**（200ms 内只有 4~5 次请求落到窗口，三次复现 ~1.0s 事件循环停摆，用户判定"一卡一卡的，ppt 了"），设计里写的第一级降级（30fps）同样不成立；替代方案"窗内补间"（窗口先变成两端外接矩形、只插值画在窗口内的内容矩形）**实测成立**（204ms / 14 帧真 60fps，端点误差 0px，用户判定"很丝滑"），但用户看过效果后决定"算了不要动画了，都做成瞬间的"。连带改动：`01-requirements.md` FR-3.9、`03-ui-design.md` §4、`02-architecture.md` §3.3、`06-test-cases.md` W-2.14；`ice-app::mode::Morph` 不再实现。证据：`features/CHG-004/evidence/T-001-hypothesis-verdicts.md` 与探针日志 `T-001-probe{,-v2,-v3}.log`。

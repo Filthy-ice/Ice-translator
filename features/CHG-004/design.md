@@ -1,6 +1,6 @@
 Change: CHG-004
-Version: v0.1
-Spec-Hash: 0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2
+Version: v0.3
+Spec-Hash: 235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c
 
 # CHG-004 · Design
 
@@ -14,14 +14,14 @@ Spec-Hash: 0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2
 
 | 文件 | 动作 | 内容 |
 |---|---|---|
-| `crates/ice-app/src/mode.rs` | 扩 | `MIN_COMPACT_SIZE`、`commands_for_mode` 改（清最小尺寸 + 允许缩放）、`snap`/`cycle_edge`/`fit_into_area`/`dim_alpha` 四个纯函数、`Morph` 补间、`DragSettler` 拖动/缩放静止判定 |
+| `crates/ice-app/src/mode.rs` | 扩 | `MIN_COMPACT_SIZE`、`commands_for_mode` 改（按形态给最小尺寸 + 两种形态都允许缩放 + 全量也下发 `OuterPosition`，即 REQ-004 的瞬时切换）、`snap`/`cycle_edge`/`fit_into_area`/`dim_alpha` 四个纯函数、`DragSettler` 拖动/缩放静止判定 |
 | `crates/ice-app/src/views/compact.rs` | **新** | 简洁窗版式：把手条、输入行、译文定高 `ScrollArea`、动作行（全量 / 复制 / 设置 / 机翻\|AI / 停靠指示 / 置顶）。P4 暂由 `app.rs::compact` 私有函数代管，本包迁出（`docs/02-architecture.md` §2 的 `views::compact` 从"—"变实体） |
 | `crates/ice-app/src/views/mod.rs` | 改 | `engine_picker` 提为 `pub(crate)` 供简洁窗复用；`Effects` 加 `start_drag`、`open_settings` 两个字段 |
 | `crates/ice-app/src/system/screen.rs` | **新** | 屏幕可用区探针：macOS 走 `NSScreen.visibleFrame`（`cfg(target_os = "macos")` + unsafe），其余平台回退 `viewport().monitor_size`；坐标翻转是纯函数，可无头单测 |
 | `crates/ice-app/src/system/clipboard.rs` | 扩 | `Watcher`：纯判定（新内容 / 自己写的 / 焦点占用 / 空文本 → 该不该填）+ 一个薄 `poll()`（impure，只调 `arboard::get_text`） |
 | `crates/ice-app/src/system/hotkeys.rs` | 扩 | `Key::Escape → Action::ClearInput`（只在简洁模式生效，全量模式 Esc 仍不绑定任何动作，与 P4 一致） |
-| `crates/ice-app/src/state.rs` | 扩 | `submit()` 里插自动反向钩子；`auto_reverse_target` 纯函数；`clear_input()`；`morphing` 标志（形变期间挂起几何回写） |
-| `crates/ice-app/src/app.rs` | 改 | 删掉私有 `compact()`、接 `views::compact`；形变驱动与末帧校正；拖动/缩放静止后的吸附与落盘；剪贴板轮询挂点；失焦 alpha；`initial_viewport` 加 `with_transparent(true)` |
+| `crates/ice-app/src/state.rs` | 扩 | `submit()` 里插自动反向钩子；`auto_reverse_target` 纯函数；`clear_input()` |
+| `crates/ice-app/src/app.rs` | 改 | 删掉私有 `compact()`、接 `views::compact`；切换后回读几何并立即落盘（REQ-004）；拖动/缩放静止后的吸附与落盘；剪贴板轮询挂点；失焦 alpha；`initial_viewport` 加 `with_transparent(true)` |
 
 ### 依赖变更
 
@@ -49,15 +49,20 @@ REQ-003 写的是"屏幕可用区 SHALL 取去掉菜单栏与 Dock 的那一个�
 
 选哪块屏：把每块屏的 `frame` 与 `visibleFrame` 都换算到同一坐标系，取**包含窗口中心**的那一块的 `visibleFrame`；一块都不含（窗口被拖到屏幕外）则退回 `mainScreen`。这段选择逻辑是纯函数，输入是 `Vec<(frame, visible)>` + 窗口 rect，输出是可用区 rect。
 
-### 三条 HYPOTHESIS 的最小实测（实现第一步，都在写正式代码之前）
+### 三条 HYPOTHESIS 的最小实测（已完成，2026-10-22）
 
-| # | 实测 | 判据 | 不成立的处置 |
+探针 `crates/ice-app/examples/viewport_probe.rs`（一次性 example，不进正式产物；v1 测三条假设，v2 加测"30fps 降频"与"窗内补间"两条替代路径，v3 把窗内补间做成双向对称并加一个"瞬移"对照）。判定书：`features/CHG-004/evidence/T-001-hypothesis-verdicts.md`，原始日志 `T-001-probe.log` / `T-001-probe-v2.log` / `T-001-probe-v3.log`。
+
+| # | 实测 | 结果 | 处置 |
 |---|---|---|---|
-| H1 | 无边框 + `Resizable(true)` 能否边缘缩放 | 在 `commands_for_mode` 里改完命令后启动，切到简洁窗，鼠标移到下边缘拉 100px：几何日志里 `inner_rect.h` 从 96 变到 ~196 | 停止条件 1：记 `SPEC_DEVIATION` 退回评审（加回装饰 vs 自绘手柄由用户定） |
-| H2 | 逐帧 `InnerSize` 补间是否平滑 | 用 200ms/60fps 跑一次全量→简洁，日志记每帧的 rect；肉眼看无跳变、无黑屏，末帧与目标 rect 差 ≤2px | 先降补间频率（30fps）或只补间尺寸不补间位置；仍不行走停止条件 3 |
-| H3 | `with_transparent(true)` 是否有副作用 | 全量与简洁两模式各失焦一次，看是否黑底/花屏/圆角异常；两模式下聚焦态是否与 P4 完全一致 | 停止条件 2：降级为内容级 `Ui::set_opacity`，记偏差并请用户确认观感 |
+| H1 | 无边框 + `Resizable(true)` 能否边缘缩放 | **成立**：拖角时 inner 以 ~16ms 间隔连续变化 20+ 台阶（651×437 → 831×549），用户驱动的缩放本身是 60fps | 按 REQ-001 原方案：走 AppKit 原生边缘缩放，不自绘手柄 |
+| H2 | 逐帧 `InnerSize` 补间是否平滑 | **不成立**：60fps 与 30fps 各三次，每 200ms 只有 4~5 次请求落到窗口上，且三次复现整个事件循环停摆 ~1.0s（1006/1026/1086ms）。用户判定"一卡一卡的，ppt 了"。设计里写的第一级降级（降到 30fps）同样不成立 | 停止条件 3 触发 → 已记 `SPEC_DEVIATION`，Spec v0.2 曾把机制换成"窗内补间" |
+| H3 | `with_transparent(true)` 是否有副作用 | **成立**：无黑底/花屏/圆角异常，失焦后画面无变化。用户判定"第三项通过" | 按 REQ-007 原方案：窗口级半透明，不降级成内容级 `Ui::set_opacity` |
+| C（单向） | 窗内补间：动画期窗口几何不动、只插值内容矩形、收尾一条 `InnerSize` | **成立**：204ms / 14 帧 / 节奏 16.5ms±1ms（真 60fps），面板尺寸单调无回跳，端点误差 0px。用户判定"补间现在很丝滑" | v0.2 曾采纳；但成立前提是**动画全程窗口不 resize**，只能做"大 → 小"单向 |
+| C（双向，v3） | 起点把窗口撑成两端 rect 的外接矩形（1160×636）再插值 | **不成立**：三次跑分别 1027 / 1028 / 1042ms，内容只画出 3~4 帧；同一次运行里"外接矩形恰好等于当前 rect"（窗口尺寸没变）的那次 13 帧满速跑完 203ms → 停摆真因是 **surface resize 本身**，与命令频率无关 | 用户要求双向对称，而双向做不到 → 停止条件 8 触发 |
+| JUMP（v3 对照） | 单发 `InnerSize` + `OuterPosition` | **成立**：发命令到几何落定 **20ms**（09:24:51.289 → 51.309），无停摆无中间态 | 用户决定"算了不要动画了，都做成瞬间的" → FR-3.9 改需求为瞬时切换（Spec v0.3、REQ-004 重写） |
 
-三次实测都写成 `#[ignore]` 的手工验证步骤 + 几何日志，日志进 `features/CHG-004/evidence/`；不成立就地停下，不带着不确定性往下写。
+第四条 HYPOTHESIS（剪贴板轮询的空闲开销）不在这次探针范围内，留到 REQ-008 实现后用 `ps -o time` 30 秒采样验证（同 CHG-003 V-010 的手法）。
 
 ### 并发与心跳策略（谁挂 `ui`、谁挂 `logic`）
 
@@ -65,7 +70,7 @@ P4 的确证结论继续适用：窗口隐藏期间 eframe 走 `update_logic_onl
 
 | 机制 | 挂点 | 理由 |
 |---|---|---|
-| 形变补间 | `App::ui` + `ctx.request_repaint()` | 只在可见期发生；隐藏期不启动动画（REQ-004 边界），`reveal()` 时按目标形态一次性设好几何 |
+| 形态切换（瞬时） | `App::ui`（一次性排命令，不续重绘） | 只在可见期发生；隐藏期只改配置里的目标形态（REQ-004 边界），`reveal()` 时按目标形态一次性设好几何 |
 | 拖动/缩放静止判定与吸附 | `App::ui` | 依赖 `viewport().outer_rect` 的逐帧比较，隐藏期没有拖动 |
 | 剪贴板轮询 | `App::logic`（读剪贴板）+ `App::ui` 里续 `request_repaint_after(700ms)` | Q-005 定为"只在可见时即翻"，所以实际续期发生在 `ui`；挂 `logic` 是为了在恢复可见的那一帧就能立刻读到最新剪贴板，不必等下一次重绘 |
 | 恢复看护（`RevealGuard`） | `App::logic`（P4 已有） | 不动 |
@@ -138,23 +143,41 @@ d_bottom = area.max.y - window.max.y
 
 ## REQ-004 实现与验证
 
-`mode::Morph`：
+机制是**瞬时切换**（2026-10-22 需求变更定案）。逐帧 `InnerSize` 补间与"双向窗内补间"都已被真机实测否掉，单发几何命令实测 **20ms 落定**（见"三条 HYPOTHESIS 的最小实测"与 `evidence/T-001-probe-v3.log`）。因此：**没有 `Morph`、没有插值、没有逐帧重绘**，切换就是在同一帧里把目标形态的命令一次性排进 `Effects`。
+
+落点是 `mode.rs` 已有的 `commands_for_mode`（P4 就在用，本包改它的内容而不是新增状态机）：
 
 ```rust
-pub struct Morph { from: WindowRect, to: WindowRect, to_mode: UiMode, started: Instant, duration: Duration }
-pub const MORPH_DURATION: Duration = Duration::from_millis(200);   // 180~220ms 区间取中
-pub struct MorphFrame { pub rect: WindowRect, pub content_alpha: f32, pub flip_decorations: bool, pub done: bool }
-pub fn frame(&self, now: Instant) -> MorphFrame;      // t' = 1-(1-t)²
-pub fn reverse(&mut self, now: Instant);              // 从当前插值位置反向，不重启时钟
+pub fn commands_for_mode(cfg: &UiConfig, mode: UiMode) -> Vec<ViewportCommand> {
+    let rect = rect_for(cfg, mode);
+    let (decorations, min_size) = match mode {
+        UiMode::Full => (true, MIN_FULL_SIZE),
+        UiMode::Compact => (false, MIN_COMPACT_SIZE),   // REQ-001：简洁窗也要能缩放，下限 320×96
+    };
+    vec![
+        ViewportCommand::Decorations(decorations),   // 原生属性，必须排在改尺寸之前
+        ViewportCommand::Resizable(true),            // 两种形态都允许边缘缩放（REQ-001）
+        ViewportCommand::MinInnerSize(min_size),
+        ViewportCommand::InnerSize(Vec2::new(rect.w, rect.h)),
+        ViewportCommand::OuterPosition(Pos2::new(rect.x, rect.y)),
+    ]
+}
 ```
 
-时间轴按 `03-ui-design.md` §4：`t < 0.35` 只补间 rect（`content_alpha = 1.0`）；`0.35 ≤ t < 0.60` rect 已到目标、`content_alpha` 从 1 线性降到 0，**`t` 首次跨过 0.35 的那一帧** `flip_decorations = true`（`Decorations` 是原生属性，逐帧设会闪）；`t ≥ 0.60` `content_alpha` 从 0 升到 1；`t ≥ 1.0` `done = true`，末帧发一次精确的目标 rect（±2px 由此保证）。
+与 P4 版本的两处差别，都是有意的：
 
-驱动在 `app.rs`：`state.morph` 存在时每帧 `frame(now)` → 发 `InnerSize`/`OuterPosition`（+ 那一帧的 `Decorations`）→ `ui.multiply_opacity(content_alpha)` → `ctx.request_repaint()`；`done` 时清 `morph`、跑一次 `mode::capture` + `flush_config(true)`、并停止逐帧重绘（回到空闲不唤醒，NFR-2）。
+1. **`Resizable(true)` 与 `MinInnerSize` 对简洁形态也下发**（P4 给的是 `Resizable(false)`），这是 REQ-001；`MinInnerSize` 从"清成 0"改成按形态取值，否则切回全量后简洁窗的 320×96 下限会跟着带过去。
+2. **全量形态也下发 `OuterPosition`**（P4 只给简洁形态下发）。不下发时，从贴边停靠的悬浮条切回全量，窗口会留在屏幕边缘那条位置上，与 FR-3.6"记住位置尺寸"矛盾。`full_rect` 存的是外框矩形（P4 已修掉"把标题栏高度算进位置"那个缺陷），所以这里直接用它的 `x/y` 就是对的原点。
 
-形变期间：`state.morphing = true` → `mode::capture` 直接返回（否则中间帧的几何会写进配置，切回来就跳到动画中途的位置）；`submit()` 不受影响（动画只读 UI 状态、不发请求，输入不阻塞，REQ-004）；`WindowLevel` 全程不发（置顶层级恒定）；再次触发切换调 `reverse()` 而不是新建 `Morph`。
+顺序有意义：`Decorations` 先于 `InnerSize`。反过来会有一帧按错误的可用高度绘制（装饰回来后内容区矮一截），观感就是"内容闪一下"，正是 REQ-004 禁止的。
 
-**验证**：`frame()` 端点精度（`t=0` 等于 from、`t=1` 等于 to、误差 ≤2px）、ease-out 单调性（`t=0.5` 时进度 > 0.5）、35% 那一帧才 `flip_decorations`（其余帧为 false）、`content_alpha` 三段取值、`reverse()` 从当前位置反向且不重启时钟（喂同一个 `started`）、"动画期间 `state.in_flight` 不被置位且 `Effects::job` 为空"；真机 W-2.14（连续切 10 次录屏 + 每帧几何日志）。
+驱动在 `app.rs`：切换时 `Effects` 里排这 5 条命令 + `config.mode = 目标形态` + `config_dirty = true`，**不调用 `ctx.request_repaint()`**（切换本身就在一次重绘里发生，之后回到"只有提示条到期与结果到达才重绘"的空闲策略，NFR-2）。下一帧 `mode::capture` 回读真实几何写回 `full_rect`/`compact_rect`，再 `flush_config(true)` 立即落盘——因为命令是**异步请求**（`InnerSize` 走 winit `request_inner_size`），不能把目标值当已生效值写盘；也因为 SIGTERM/强杀不走 `on_exit`。
+
+隐藏态（`state.hidden`，eframe 只跑 `logic` 不跑 `ui`）：切换只改配置里的目标形态，不下发命令、不把窗口叫回来；`reveal()` 时按目标形态一次性设好几何（沿用 P4 的路径）。
+
+不再需要的东西（v0.2 设计里写过，随需求取消一并删掉）：`Morph`/`MorphFrame`/`GeometryCmd`/`union()`/`reverse()`/`MORPH_DURATION`、`state.morphing` 标志、内容矩形插值与 `Ui::new_child(max_rect = …)` 的透明余量画法、`ui.multiply_opacity` 的淡入淡出、objc2 `setHasShadow(false)` 的备用手段（那是为了压外接矩形的阴影），以及 Q-008 记的两条代价（透明区吞点击、阴影跟随大矩形）——瞬时切换下窗口矩形恒等于可见矩形，两条都不存在。
+
+**验证**（全部无头断言，`ctx.viewport(|vp| vp.commands.clone())` 取命令队列）：一次切换里 `InnerSize` 与 `OuterPosition` **各恰好 1 条**、`Decorations` 1 条且排在 `InnerSize` 之前（防止实现悄悄退回逐帧补间）；切换后 `Effects::job` 为空且 `state.in_flight` 未置位（不重发请求）；内容与源/目标语言、引擎选择原样保留（P4 那两条测试必须仍绿）；隐藏态触发切换时命令队列为空、只有配置变化；`capture` 回读的 rect 与目标 rect 一致（±2px）；切换到全量时 `full_rect` 的位置不被标题栏高度污染。真机 W-2.14：连续切 10 次，盯"一步到位、Dock 图标不闪、无黑屏白屏、切完立刻能点"。
 
 ## REQ-005 实现与验证
 
@@ -172,7 +195,7 @@ pub fn reverse(&mut self, now: Instant);              // 从当前插值位置�
 - **引擎分段**：直接复用 `views::mod::engine_picker`（提为 `pub(crate)`），它就是 `Button::selectable` 的分段样式，AI 未配置时禁用并带说明——简洁窗不新造一套。
 - **译文滚动**：定高 `ScrollArea`（`id_salt("compact_translation")` + `auto_shrink([false,false])`），沿用 P4 缺陷 D-4 的手法；`Ui::new_child` 不继承裁剪，所以正文一律进滚动容器，不手工推进光标。
 - **Esc**：`hotkeys::classify` 加 `Key::Escape → Action::ClearInput`；`app.rs::run` 里仅在 `state.mode() == Compact` 时执行 `state.clear_input()`（清源文 + 译文 + failure，不发请求、不退出、不收窗）。
-- **设置按钮**：`Effects::open_settings = true` → `app.rs` 执行"切回全量（走 REQ-004 的形变）+ `state.tab = Tab::Settings`"。
+- **设置按钮**：`Effects::open_settings = true` → `app.rs` 执行"切回全量（走 REQ-004 的瞬时切换）+ `state.tab = Tab::Settings`"。
 - **提示条**：复用 P4 的 `toasts(&ctx, state)`（`egui::Area` 浮层），简洁窗里定位到窗口顶部以下 12px，不遮输入行文字。
 - **窄宽不溢出**：动作行用 `ui.available_width()` 判断，宽度 < 380px 时停靠指示退化为单字、置顶退化为"顶"；按钮本身不缩（可点性优先）。这是 P4 缺陷 D-1 的同类回归，必须有断言。
 
@@ -247,7 +270,7 @@ pub fn observe(&mut self, text: Option<String>, input_focused: bool) -> Option<S
 
 ## REQ-009 实现与验证
 
-落盘触发点：`mode::capture` 已经把"几何变了"转成 `config_dirty`，但 `flush_config(false)` 只在有帧跑的时候被调用，而拖动/缩放结束后没有任何东西再请求重绘 → 脏标记可能一直挂着，强杀就丢。补一条：`capture()` 里几何发生变化时 `ctx.request_repaint_after(CONFIG_SAVE_INTERVAL)`，让 500ms 后必有一帧把盘落了；`DragSettler` 返回最终 rect 时（吸附完成）与形变 `done` 时走 `flush_config(true)` 立即落盘。节流不变（拖动过程中不会每帧写文件）。
+落盘触发点：`mode::capture` 已经把"几何变了"转成 `config_dirty`，但 `flush_config(false)` 只在有帧跑的时候被调用，而拖动/缩放结束后没有任何东西再请求重绘 → 脏标记可能一直挂着，强杀就丢。补一条：`capture()` 里几何发生变化时 `ctx.request_repaint_after(CONFIG_SAVE_INTERVAL)`，让 500ms 后必有一帧把盘落了；`DragSettler` 返回最终 rect 时（吸附完成）与形态切换完成后回读到真实几何的那一帧走 `flush_config(true)` 立即落盘。节流不变（拖动过程中不会每帧写文件）。
 
 离屏夹回：`fit_into_area(rect: Rect, area: Rect) -> Rect`（纯函数）——宽高超过可用区时先夹到可用区大小，再把位置夹进 `[area.min, area.max - size]`，保证不产生负偏移、不把窗口推到屏幕外。启动路径（`main.rs` 读配置后）与 `system::screen::work_area` 拿到真实可用区后各跑一次；P1 已有的 `WindowRect::{within, centered_in}` 继续负责"整块都在屏外 → 回中心"。
 
@@ -262,12 +285,12 @@ FR-5.3：休眠唤醒/插拔后第一帧若 `outer_rect` 已失效（`None` 或�
 走查表：`docs/06-test-cases.md` §3 现有 W-2.1~W-2.14（14 行）保留，W-2.15/2.16 由"未实现"转"本包验"，新增 W-2.17（边缘缩放）、W-2.18（停靠指示循环）、W-2.19（简洁窗 320px 窄宽不溢出）、W-2.20（插拔屏幕）；P4 预报四条的引言块改成"已在 CHG-004 闭环"。
 
 文档回写清单（REQ-010 的 SHALL 逐条落地）：
-- `docs/01-requirements.md`：FR-3.2（460×96 起、可缩放、下限 320×96、控件清单含引擎分段）、FR-1.2/FR-1.4（自动反向）；
-- `docs/02-architecture.md`：§2 的 `mode` 行补 `Morph`/`snap`/`dim_alpha`/`DragSettler` 并把状态从"部分"改为完成、`views::compact` 从"—"变实体、`system::clipboard` 补 `Watcher`、新增 `system::screen` 一行；§8 落地表补 P5；错误表 `SameLanguage` 行兑现 CHG-004 说明；
-- `docs/03-ui-design.md` §3：ASCII 图重画（把手条 + 可缩放 + 引擎分段 + 停靠/置顶指示）、控件清单加 K-10（引擎分段）与 K-11（缩放手柄/下限）、K-06 补"未聚焦先取焦点"；
+- `docs/01-requirements.md`：FR-3.2（460×96 起、可缩放、下限 320×96、控件清单含引擎分段）、FR-1.2/FR-1.4（自动反向）；FR-3.9（改瞬时切换）**已在 2026-10-22 需求变更时改完**，实现后只需核对文字与代码一致；
+- `docs/02-architecture.md`：§2 的 `mode` 行补 `snap`/`dim_alpha`/`DragSettler` 并把状态从"部分"改为完成（**不补 `Morph`**，FR-3.9 已于 2026-10-22 改为瞬时切换，§3.3 的那条已在本轮改完）、`views::compact` 从"—"变实体、`system::clipboard` 补 `Watcher`、新增 `system::screen` 一行；§8 落地表补 P5；错误表 `SameLanguage` 行兑现 CHG-004 说明；
+- `docs/03-ui-design.md` §3：ASCII 图重画（把手条 + 可缩放 + 引擎分段 + 停靠/置顶指示）、控件清单加 K-10（引擎分段）与 K-11（缩放手柄/下限）、K-06 补"未聚焦先取焦点"；§4 的形态切换段落**已在 2026-10-22 改成瞬时版**；
 - `docs/05-dev-guide.md`：测试计数、目录结构（`views/compact.rs`、`system/screen.rs`）、§8 平台差异补 AppKit 探针三行、§9 常见故障补"egui 没有 work area API"与"`MinInnerSize(ZERO)` 才是清约束"两条；
-- `docs/06-test-cases.md`：TC-3.5-a~e 与 TC-1.2-c 状态列、§3 走查表扩到 20 行；
-- `docs/07-acceptance.md`：P5 段落填走查结论与证据指针，变更登记至少三行（FR-3.2 可缩放与控件清单、FR-1.2/1.4 自动反向、FR-3.7 若降级为内容级 dim），P4 遗留①②两行标记为已闭环；
+- `docs/06-test-cases.md`：TC-3.5-a~e 与 TC-1.2-c 状态列、§3 走查表扩到 20 行（W-2.14 的判据**已在 2026-10-22 改成瞬时版**）；
+- `docs/07-acceptance.md`：P5 段落填走查结论与证据指针，变更登记至少四行（FR-3.2 可缩放与控件清单、FR-1.2/1.4 自动反向、**FR-3.9 改瞬时切换——2026-10-22 已登记**、FR-3.7 若降级为内容级 dim），P4 遗留①②两行标记为已闭环；
 - `docs/traceability.md`：FR-1.2/1.3/1.4、FR-3.2/3.3/3.5/3.6/3.7/3.8/3.9、FR-5.3、NFR-2/5 的实现列与结果列，清掉所有"待 P5"。
 
 证据规范沿用 P4 的四条硬规则（`RUST_LOG=ice_translator=debug,info`、`LC_ALL=en_US.UTF-8 pbcopy` + 回验、截图裁到只含应用窗口、引用写 `*-V-0NN.txt` 取编号最大者），另加一条本包特有的：**剪贴板即翻的证据只记长度与哈希前 8 位**，不出现剪贴板原文。
