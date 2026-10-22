@@ -68,7 +68,7 @@
 | `app` | `IceApp`、`Effects`、`Prepared` | 实现 `eframe::App`；持有 `AppState`、`JobRunner`、tokio runtime、历史存储、配置路径、单实例锁、钥匙串探测回收端；帧末统一执行副作用与退避落盘 | 全部 | ✅ P4 |
 | `main` | `prepare()` | 启动时序：日志 → 单实例锁 → 读配置 → 导入旧术语表 → 装配引擎 → tokio → 建窗 → **后台**读钥匙串 | FR-4.1~4.3、REQ-009 | ✅ P4 |
 | `state` | `AppState`、`Failure`、`FailureAction`、`Job`、`Outcome` | 源文/译文/语言对/引擎/在飞任务/失败态/图片工作区/历史查询/提示条；`request_id` 竞态丢弃 | FR-1、FR-2 | ✅ P4 |
-| `mode` | `hide()`、`quit()`、`apply_topmost()`、`capture_rect()`、`initial_viewport()` | 模式切换的 `ViewportCommand` 编排、置顶、几何捕获与持久化；形变动画与边缘吸附待 P5 | FR-3.2~3.9 | 部分（P4 只到切换与置顶） |
+| `mode` | `hide()`、`quit()`、`apply_topmost()`、`capture_rect()`、`initial_viewport()` | 模式切换的 `ViewportCommand` 编排、置顶、几何捕获与持久化；边缘吸附待 P5（FR-3.9 已于 2026-10-22 改为瞬时切换，无形变动画） | FR-3.2~3.9 | 部分（P4 只到切换与置顶） |
 | `theme` | `apply()` | 三态主题映射到 `ctx.set_theme`，字号缩放乘在 egui 默认值上并限幅 | NFR-4、NFR-8 | ✅ P4 |
 | `views::mod` | `Tab`、`chrome()` | 顶部工具条 + 页签 + 状态条（设计里归在 `views::full`，实现时抽出共用，简洁模式也要用同一条状态条） | FR-3.1 | ✅ P4 |
 | `views::full` | `show()`、`copy()` | 全量布局文本页：源文编辑器、译文区、翻译与两个复制按钮、失败动作按钮 | FR-1.1~1.5、FR-3.1 | ✅ P4 |
@@ -157,8 +157,8 @@
 - 吸附计算是 `ice-core`/`ModeController` 的纯函数：输入（窗口矩形、监视器可用区、阈值、热区）→ 输出（目标矩形 + 边）。因此可以被单测覆盖，不需要真的拖动窗口。
 - 启动时若 `Config` 记录的窗口位置不在任何监视器内（拔屏场景），用 `WindowRect::centered_in` 回到主屏中心（FR-3.6）。
 - **无边框窗口的拖动**（FR-3.2）：简洁模式没有系统标题栏，把手区按下时下发 `ViewportCommand::StartDrag`，由窗口管理器接管移动。好处是不用在应用内自算鼠标增量、不会和吸附判定抢事件；代价是拿不到"拖动中"的连续回调，因此吸附判定放在拖完后的首个 `Moved`/`Focused` 帧上做一次。
-- **形变动画**（FR-3.9）：`ModeController` 持有一个 `Morph` 状态（起止矩形、已用时长、ease-out 曲线），每帧 `request_repaint()` 并下发一次 `InnerSize`/`OuterPosition`；`Decorations` 与 `WindowLevel` 属于原生属性，只在时间轴 35% 处各下发一次。动画不改变任何业务状态，中途再次切换则把当前插值位置作为新起点反向播放。
-- **几何持久化时机**（P1 实测：SIGTERM/强杀不走 `on_exit`，只靠退出保存会丢位置）：在①拖动结束（吸附判定完成时）②形态切换动画结束时③关窗/退出时 三处写盘，均为小文件（<1KB）原子替换，代价可忽略。
+- **形态切换的几何下发**（FR-3.9，2026-10-22 由"形变动画"改为瞬时）：切换时在同一帧内一次性下发 `Decorations(目标形态)` → `InnerSize(目标尺寸)` → `OuterPosition(目标位置)`，没有 `Morph` 状态、没有逐帧补间、切换后不再 `request_repaint()`。`Decorations` 与 `WindowLevel` 是原生属性，本来就只能整段设一次（逐帧设会闪烁）。下发的是**请求**而非同步生效（`InnerSize` 走 `request_inner_size`，异步），因此切换完的下一帧必须用 `mode::capture` 回读真实几何再落盘，不能拿目标值当已生效值。
+- **几何持久化时机**（P1 实测：SIGTERM/强杀不走 `on_exit`，只靠退出保存会丢位置）：在①拖动结束（吸附判定完成时）②形态切换完成时③关窗/退出时 三处写盘，均为小文件（<1KB）原子替换，代价可忽略。
 
 ## 4. 并发模型
 

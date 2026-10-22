@@ -1,0 +1,188 @@
+[2m2026-10-22T06:47:50.551993Z[0m [32m INFO[0m geom frame=0 inner=640x420 outer=(200,160) focused=false
+[2m2026-10-22T07:07:02.669852Z[0m [32m INFO[0m geom frame=6 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:07:09.921484Z[0m [32m INFO[0m geom frame=145 inner=640x420 outer=(200,160) focused=false
+[2m2026-10-22T07:07:21.929474Z[0m [32m INFO[0m geom frame=235 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:07:22.920845Z[0m [32m INFO[0m --- start A2 from 640x420
+[2m2026-10-22T07:07:22.937285Z[0m [32m INFO[0m A2 t=0.083 → InnerSize(637x414)
+[2m2026-10-22T07:07:22.960885Z[0m [32m INFO[0m geom frame=276 inner=637x414 outer=(200,160) focused=true
+[2m2026-10-22T07:07:22.978483Z[0m [32m INFO[0m A2 t=0.288 → InnerSize(604x355)
+[2m2026-10-22T07:07:22.993527Z[0m [32m INFO[0m geom frame=278 inner=604x355 outer=(200,160) focused=true
+[2m2026-10-22T07:07:23.044080Z[0m [32m INFO[0m A2 t=0.617 → InnerSize(519x202)
+[2m2026-10-22T07:07:23.053067Z[0m [32m INFO[0m geom frame=281 inner=519x202 outer=(200,160) focused=true
+[2m2026-10-22T07:07:23.094050Z[0m [32m INFO[0m A2 t=0.866 → InnerSize(469x112)
+[2m2026-10-22T07:07:23.104092Z[0m [32m INFO[0m geom frame=284 inner=469x112 outer=(200,160) focused=true
+[2m2026-10-22T07:07:23.143134Z[0m [32m INFO[0m A2 t=1.112 → InnerSize(460x96)
+[2m2026-10-22T07:07:23.143167Z[0m [32m INFO[0m A2 tween done after 222ms
+[2m2026-10-22T07:07:23.150200Z[0m [32m INFO[0m geom frame=287 inner=460x96 outer=(200,160) focused=true
+[2m2026-10-22T07:07:24.019838Z[0m [32m INFO[0m --- start A2 from 460x96
+[2m2026-10-22T07:07:24.020400Z[0m [32m INFO[0m A2 t=0.003 → InnerSize(460x96)
+[2m2026-10-22T07:07:24.086505Z[0m [32m INFO[0m A2 t=0.334 → InnerSize(460x96)
+[2m2026-10-22T07:07:24.137215Z[0m [32m INFO[0m A2 t=0.587 → InnerSize(460x96)
+[2m2026-10-22T07:07:24.186537Z[0m [32m INFO[0m A2 t=0.834 → InnerSize(460x96)
+[2m2026-10-22T07:07:24.235719Z[0m [32m INFO[0m A2 t=1.080 → InnerSize(460x96)
+[2m2026-10-22T07:07:24.235743Z[0m [32m INFO[0m A2 tween done after 216ms
+[2m2026-10-22T07:07:25.360830Z[0m [32m INFO[0m geom frame=368 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:07:27.506571Z[0m [32m INFO[0m --- start A2 from 640x420
+[2m2026-10-22T07:07:27.507302Z[0m [32m INFO[0m A2 t=0.004 → InnerSize(640x420)
+[2m2026-10-22T07:07:27.570172Z[0m [32m INFO[0m A2 t=0.318 → InnerSize(597x343)
+[2m2026-10-22T07:07:27.583357Z[0m [32m INFO[0m geom frame=443 inner=597x343 outer=(200,160) focused=true
+[2m2026-10-22T07:07:27.624343Z[0m [32m INFO[0m A2 t=0.589 → InnerSize(526x215)
+[2m2026-10-22T07:07:27.633303Z[0m [32m INFO[0m geom frame=446 inner=526x215 outer=(200,160) focused=true
+[2m2026-10-22T07:07:27.675290Z[0m [32m INFO[0m A2 t=0.844 → InnerSize(472x117)
+[2m2026-10-22T07:07:27.683446Z[0m [32m INFO[0m geom frame=449 inner=472x117 outer=(200,160) focused=true
+[2m2026-10-22T07:07:27.723745Z[0m [32m INFO[0m A2 t=1.086 → InnerSize(460x96)
+[2m2026-10-22T07:07:27.723768Z[0m [32m INFO[0m A2 tween done after 217ms
+[2m2026-10-22T07:07:27.730483Z[0m [32m INFO[0m geom frame=452 inner=460x96 outer=(200,160) focused=true
+[2m2026-10-22T07:07:29.511798Z[0m [32m INFO[0m geom frame=518 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:07:30.386835Z[0m [32m INFO[0m --- start A2 from 640x420
+[2m2026-10-22T07:07:30.403319Z[0m [32m INFO[0m A2 t=0.083 → InnerSize(637x414)
+[2m2026-10-22T07:07:30.428251Z[0m [32m INFO[0m geom frame=552 inner=637x414 outer=(200,160) focused=true
+[2m2026-10-22T07:07:30.443613Z[0m [32m INFO[0m A2 t=0.284 → InnerSize(605x356)
+[2m2026-10-22T07:07:30.461336Z[0m [32m INFO[0m geom frame=554 inner=605x356 outer=(200,160) focused=true
+[2m2026-10-22T07:07:30.477041Z[0m [32m INFO[0m A2 t=0.451 → InnerSize(563x282)
+[2m2026-10-22T07:07:30.492139Z[0m [32m INFO[0m geom frame=556 inner=563x282 outer=(200,160) focused=true
+[2m2026-10-22T07:07:30.543118Z[0m [32m INFO[0m A2 t=0.782 → InnerSize(482x136)
+[2m2026-10-22T07:07:30.549891Z[0m [32m INFO[0m geom frame=559 inner=482x136 outer=(200,160) focused=true
+[2m2026-10-22T07:07:30.590821Z[0m [32m INFO[0m A2 t=1.020 → InnerSize(460x96)
+[2m2026-10-22T07:07:30.590843Z[0m [32m INFO[0m A2 tween done after 204ms
+[2m2026-10-22T07:07:30.600803Z[0m [32m INFO[0m geom frame=562 inner=460x96 outer=(200,160) focused=true
+[2m2026-10-22T07:07:31.795538Z[0m [32m INFO[0m geom frame=593 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:07:33.902453Z[0m [32m INFO[0m --- start A2 from 640x420
+[2m2026-10-22T07:07:33.918536Z[0m [32m INFO[0m A2 t=0.081 → InnerSize(637x414)
+[2m2026-10-22T07:07:33.942913Z[0m [32m INFO[0m geom frame=633 inner=637x414 outer=(200,160) focused=true
+[2m2026-10-22T07:07:33.958302Z[0m [32m INFO[0m A2 t=0.280 → InnerSize(606x358)
+[2m2026-10-22T07:07:33.976060Z[0m [32m INFO[0m geom frame=635 inner=606x358 outer=(200,160) focused=true
+[2m2026-10-22T07:07:33.991335Z[0m [32m INFO[0m A2 t=0.445 → InnerSize(565x285)
+[2m2026-10-22T07:07:34.010080Z[0m [32m INFO[0m geom frame=637 inner=565x285 outer=(200,160) focused=true
+[2m2026-10-22T07:07:34.024766Z[0m [32m INFO[0m A2 t=0.612 → InnerSize(520x205)
+[2m2026-10-22T07:07:34.042014Z[0m [32m INFO[0m geom frame=639 inner=520x205 outer=(200,160) focused=true
+[2m2026-10-22T07:07:34.090507Z[0m [32m INFO[0m A2 t=0.940 → InnerSize(462x99)
+[2m2026-10-22T07:07:34.100668Z[0m [32m INFO[0m geom frame=642 inner=462x99 outer=(200,160) focused=true
+[2m2026-10-22T07:07:34.106829Z[0m [32m INFO[0m A2 tween done after 204ms
+[2m2026-10-22T07:07:35.224568Z[0m [32m INFO[0m geom frame=678 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:07:36.534563Z[0m [32m INFO[0m geom frame=684 inner=640x420 outer=(200,160) focused=false
+[2m2026-10-22T07:08:42.234511Z[0m [32m INFO[0m geom frame=761 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:08:44.151000Z[0m [32m INFO[0m geom frame=834 inner=640x420 outer=(200,160) focused=false
+[2m2026-10-22T07:08:47.615847Z[0m [32m INFO[0m geom frame=862 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:08:58.472867Z[0m [32m INFO[0m geom frame=1051 inner=640x420 outer=(200,160) focused=false
+[2m2026-10-22T07:10:00.861824Z[0m [32m INFO[0m geom frame=1118 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:10:31.673088Z[0m [32m INFO[0m geom frame=1246 inner=640x420 outer=(200,160) focused=false
+[2m2026-10-22T07:14:10.733400Z[0m [32m INFO[0m geom frame=1348 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:14:13.434805Z[0m [32m INFO[0m --- start A2 from 640x420
+[2m2026-10-22T07:14:13.435938Z[0m [32m INFO[0m A2 t=0.006 → InnerSize(640x420)
+[2m2026-10-22T07:14:13.469637Z[0m [32m INFO[0m A2 t=0.174 → InnerSize(625x394)
+[2m2026-10-22T07:14:13.494013Z[0m [32m INFO[0m geom frame=1462 inner=625x394 outer=(200,160) focused=true
+[2m2026-10-22T07:14:13.512571Z[0m [32m INFO[0m A2 t=0.389 → InnerSize(579x311)
+[2m2026-10-22T07:14:13.528785Z[0m [32m INFO[0m geom frame=1464 inner=579x311 outer=(200,160) focused=true
+[2m2026-10-22T07:14:13.575688Z[0m [32m INFO[0m A2 t=0.705 → InnerSize(498x164)
+[2m2026-10-22T07:14:13.582592Z[0m [32m INFO[0m geom frame=1467 inner=498x164 outer=(200,160) focused=true
+[2m2026-10-22T07:14:13.629264Z[0m [32m INFO[0m A2 t=0.972 → InnerSize(460x97)
+[2m2026-10-22T07:14:13.630833Z[0m [32m INFO[0m geom frame=1470 inner=460x97 outer=(200,160) focused=true
+[2m2026-10-22T07:14:13.646088Z[0m [32m INFO[0m A2 tween done after 211ms
+[2m2026-10-22T07:14:16.059973Z[0m [32m INFO[0m --- start A2 from 460x97
+[2m2026-10-22T07:14:16.060586Z[0m [32m INFO[0m A2 t=0.003 → InnerSize(460x97)
+[2m2026-10-22T07:14:16.120155Z[0m [32m INFO[0m A2 t=0.301 → InnerSize(460x97)
+[2m2026-10-22T07:14:16.170121Z[0m [32m INFO[0m A2 t=0.551 → InnerSize(460x96)
+[2m2026-10-22T07:14:16.182028Z[0m [32m INFO[0m geom frame=1553 inner=460x96 outer=(200,160) focused=true
+[2m2026-10-22T07:14:16.225577Z[0m [32m INFO[0m A2 t=0.828 → InnerSize(460x96)
+[2m2026-10-22T07:14:16.270734Z[0m [32m INFO[0m A2 t=1.054 → InnerSize(460x96)
+[2m2026-10-22T07:14:16.270775Z[0m [32m INFO[0m A2 tween done after 211ms
+[2m2026-10-22T07:14:17.327265Z[0m [32m INFO[0m --- start C from 460x96
+[2m2026-10-22T07:14:17.328341Z[0m [32m INFO[0m C t=0.006 frame=1599 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.335793Z[0m [32m INFO[0m C t=0.043 frame=1600 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.352558Z[0m [32m INFO[0m C t=0.127 frame=1601 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.368893Z[0m [32m INFO[0m C t=0.209 frame=1602 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.385167Z[0m [32m INFO[0m C t=0.290 frame=1603 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.402271Z[0m [32m INFO[0m C t=0.376 frame=1604 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.418945Z[0m [32m INFO[0m C t=0.459 frame=1605 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.435678Z[0m [32m INFO[0m C t=0.543 frame=1606 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.452400Z[0m [32m INFO[0m C t=0.626 frame=1607 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.469038Z[0m [32m INFO[0m C t=0.710 frame=1608 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.485045Z[0m [32m INFO[0m C t=0.790 frame=1609 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.502593Z[0m [32m INFO[0m C t=0.877 frame=1610 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.519368Z[0m [32m INFO[0m C t=0.961 frame=1611 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.535652Z[0m [32m INFO[0m C t=1.042 frame=1612 panel=460x96 window=460x96
+[2m2026-10-22T07:14:17.535667Z[0m [32m INFO[0m C tween done after 208ms
+[2m2026-10-22T07:14:19.143397Z[0m [32m INFO[0m --- start C from 460x96
+[2m2026-10-22T07:14:19.144357Z[0m [32m INFO[0m C t=0.005 frame=1661 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.152910Z[0m [32m INFO[0m C t=0.048 frame=1662 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.169445Z[0m [32m INFO[0m C t=0.131 frame=1663 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.185931Z[0m [32m INFO[0m C t=0.213 frame=1664 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.202673Z[0m [32m INFO[0m C t=0.297 frame=1665 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.219274Z[0m [32m INFO[0m C t=0.380 frame=1666 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.235922Z[0m [32m INFO[0m C t=0.463 frame=1667 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.252272Z[0m [32m INFO[0m C t=0.545 frame=1668 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.268924Z[0m [32m INFO[0m C t=0.628 frame=1669 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.286083Z[0m [32m INFO[0m C t=0.714 frame=1670 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.302637Z[0m [32m INFO[0m C t=0.797 frame=1671 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.319355Z[0m [32m INFO[0m C t=0.880 frame=1672 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.335532Z[0m [32m INFO[0m C t=0.961 frame=1673 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.352676Z[0m [32m INFO[0m C t=1.047 frame=1674 panel=460x96 window=460x96
+[2m2026-10-22T07:14:19.352711Z[0m [32m INFO[0m C tween done after 209ms
+[2m2026-10-22T07:14:22.169494Z[0m [32m INFO[0m geom frame=1792 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:14:25.395862Z[0m [32m INFO[0m --- start A2 from 640x420
+[2m2026-10-22T07:14:25.396639Z[0m [32m INFO[0m A2 t=0.004 → InnerSize(640x420)
+[2m2026-10-22T07:14:25.453285Z[0m [32m INFO[0m A2 t=0.287 → InnerSize(604x355)
+[2m2026-10-22T07:14:25.463467Z[0m [32m INFO[0m geom frame=1870 inner=604x355 outer=(200,160) focused=true
+[2m2026-10-22T07:14:25.511329Z[0m [32m INFO[0m A2 t=0.578 → InnerSize(529x221)
+[2m2026-10-22T07:14:25.520195Z[0m [32m INFO[0m geom frame=1873 inner=529x221 outer=(200,160) focused=true
+[2m2026-10-22T07:14:25.559010Z[0m [32m INFO[0m A2 t=0.816 → InnerSize(476x125)
+[2m2026-10-22T07:14:25.564827Z[0m [32m INFO[0m geom frame=1876 inner=476x125 outer=(200,160) focused=true
+[2m2026-10-22T07:14:25.611055Z[0m [32m INFO[0m A2 t=1.076 → InnerSize(460x96)
+[2m2026-10-22T07:14:25.611076Z[0m [32m INFO[0m A2 tween done after 215ms
+[2m2026-10-22T07:14:25.616698Z[0m [32m INFO[0m geom frame=1879 inner=460x96 outer=(200,160) focused=true
+[2m2026-10-22T07:14:27.128352Z[0m [32m INFO[0m geom frame=1921 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:14:27.783165Z[0m [32m INFO[0m --- start A2 from 640x420
+[2m2026-10-22T07:14:27.784229Z[0m [32m INFO[0m A2 t=0.006 → InnerSize(640x420)
+[2m2026-10-22T07:14:27.836837Z[0m [32m INFO[0m A2 t=0.269 → InnerSize(608x362)
+[2m2026-10-22T07:14:27.847515Z[0m [32m INFO[0m geom frame=1958 inner=608x362 outer=(200,160) focused=true
+[2m2026-10-22T07:14:27.893984Z[0m [32m INFO[0m A2 t=0.555 → InnerSize(535x232)
+[2m2026-10-22T07:14:27.910090Z[0m [32m INFO[0m geom frame=1961 inner=535x232 outer=(200,160) focused=true
+[2m2026-10-22T07:14:27.951224Z[0m [32m INFO[0m A2 t=0.841 → InnerSize(472x118)
+[2m2026-10-22T07:14:27.959459Z[0m [32m INFO[0m geom frame=1964 inner=472x118 outer=(200,160) focused=true
+[2m2026-10-22T07:14:28.012098Z[0m [32m INFO[0m A2 t=1.145 → InnerSize(460x96)
+[2m2026-10-22T07:14:28.012128Z[0m [32m INFO[0m A2 tween done after 229ms
+[2m2026-10-22T07:14:28.013807Z[0m [32m INFO[0m geom frame=1967 inner=460x96 outer=(200,160) focused=true
+[2m2026-10-22T07:14:29.159832Z[0m [32m INFO[0m geom frame=1977 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:14:32.185737Z[0m [32m INFO[0m geom frame=2021 inner=640x420 outer=(200,160) focused=false
+[2m2026-10-22T07:27:13.056694Z[0m [32m INFO[0m geom frame=2169 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:27:13.116257Z[0m [32m INFO[0m --- start A2 from 640x420
+[2m2026-10-22T07:27:13.117856Z[0m [32m INFO[0m A2 t=0.008 → InnerSize(640x420)
+[2m2026-10-22T07:27:13.171407Z[0m [32m INFO[0m A2 t=0.276 → InnerSize(606x360)
+[2m2026-10-22T07:27:13.172717Z[0m [32m INFO[0m geom frame=2177 inner=606x360 outer=(200,160) focused=true
+[2m2026-10-22T07:27:14.202360Z[0m [32m INFO[0m A2 t=5.431 → InnerSize(460x96)
+[2m2026-10-22T07:27:14.202389Z[0m [32m INFO[0m A2 tween done after 1086ms
+[2m2026-10-22T07:27:14.204536Z[0m [32m INFO[0m geom frame=2181 inner=460x96 outer=(200,160) focused=true
+[2m2026-10-22T07:27:17.180592Z[0m [32m INFO[0m geom frame=2241 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:27:19.418992Z[0m [32m INFO[0m --- start A2 from 640x420
+[2m2026-10-22T07:27:19.421430Z[0m [32m INFO[0m A2 t=0.013 → InnerSize(640x420)
+[2m2026-10-22T07:27:19.455014Z[0m [32m INFO[0m A2 t=0.180 → InnerSize(625x392)
+[2m2026-10-22T07:27:19.477753Z[0m [32m INFO[0m geom frame=2303 inner=625x392 outer=(200,160) focused=true
+[2m2026-10-22T07:27:19.496169Z[0m [32m INFO[0m A2 t=0.387 → InnerSize(580x312)
+[2m2026-10-22T07:27:19.509177Z[0m [32m INFO[0m geom frame=2305 inner=580x312 outer=(200,160) focused=true
+[2m2026-10-22T07:27:19.530212Z[0m [32m INFO[0m A2 t=0.557 → InnerSize(535x231)
+[2m2026-10-22T07:27:19.544324Z[0m [32m INFO[0m geom frame=2307 inner=535x231 outer=(200,160) focused=true
+[2m2026-10-22T07:27:19.563395Z[0m [32m INFO[0m A2 t=0.723 → InnerSize(494x157)
+[2m2026-10-22T07:27:19.576715Z[0m [32m INFO[0m geom frame=2309 inner=494x157 outer=(200,160) focused=true
+[2m2026-10-22T07:27:19.627426Z[0m [32m INFO[0m A2 t=1.043 → InnerSize(460x96)
+[2m2026-10-22T07:27:19.627446Z[0m [32m INFO[0m A2 tween done after 209ms
+[2m2026-10-22T07:27:19.631732Z[0m [32m INFO[0m geom frame=2312 inner=460x96 outer=(200,160) focused=true
+[2m2026-10-22T07:27:20.471272Z[0m [32m INFO[0m geom frame=2356 inner=640x420 outer=(200,160) focused=true
+[2m2026-10-22T07:27:22.700853Z[0m [32m INFO[0m --- start C from 640x420
+[2m2026-10-22T07:27:22.701931Z[0m [32m INFO[0m C t=0.006 frame=2417 panel=640x420 window=640x420
+[2m2026-10-22T07:27:22.703900Z[0m [32m INFO[0m C t=0.016 frame=2418 panel=640x420 window=640x420
+[2m2026-10-22T07:27:22.721411Z[0m [32m INFO[0m C t=0.103 frame=2419 panel=635x410 window=640x420
+[2m2026-10-22T07:27:22.738420Z[0m [32m INFO[0m C t=0.188 frame=2420 panel=623x390 window=640x420
+[2m2026-10-22T07:27:22.754956Z[0m [32m INFO[0m C t=0.271 frame=2421 panel=608x362 window=640x420
+[2m2026-10-22T07:27:22.771607Z[0m [32m INFO[0m C t=0.354 frame=2422 panel=588x327 window=640x420
+[2m2026-10-22T07:27:22.787552Z[0m [32m INFO[0m C t=0.434 frame=2423 panel=568x290 window=640x420
+[2m2026-10-22T07:27:22.804430Z[0m [32m INFO[0m C t=0.518 frame=2424 panel=545x249 window=640x420
+[2m2026-10-22T07:27:22.820763Z[0m [32m INFO[0m C t=0.600 frame=2425 panel=523x210 window=640x420
+[2m2026-10-22T07:27:22.837822Z[0m [32m INFO[0m C t=0.685 frame=2426 panel=502x172 window=640x420
+[2m2026-10-22T07:27:22.853943Z[0m [32m INFO[0m C t=0.766 frame=2427 panel=485x141 window=640x420
+[2m2026-10-22T07:27:22.871505Z[0m [32m INFO[0m C t=0.854 frame=2428 panel=470x115 window=640x420
+[2m2026-10-22T07:27:22.888094Z[0m [32m INFO[0m C t=0.936 frame=2429 panel=462x100 window=640x420
+[2m2026-10-22T07:27:22.904503Z[0m [32m INFO[0m C t=1.018 frame=2430 panel=460x96 window=640x420
+[2m2026-10-22T07:27:22.904532Z[0m [32m INFO[0m C tween done after 204ms
+[2m2026-10-22T07:27:22.930782Z[0m [32m INFO[0m geom frame=2430 inner=460x96 outer=(200,160) focused=true
+[2m2026-10-22T07:27:25.500229Z[0m [32m INFO[0m geom frame=2439 inner=460x96 outer=(200,160) focused=false

@@ -1,0 +1,46 @@
+   Compiling ice-app v0.1.0 (/Users/filthy-ice/Desktop/my-translator/Ice-translator/crates/ice-app)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 2.02s
+     Running `target/debug/examples/viewport_probe`
+[2m2026-10-22T09:24:35.771472Z[0m [32m INFO[0m geom frame=0 inner=640x420 outer=(200,160) focused=false cmds=0
+[2m2026-10-22T09:24:41.877974Z[0m [32m INFO[0m geom frame=5 inner=640x420 outer=(200,160) focused=true cmds=0
+[2m2026-10-22T09:24:43.748316Z[0m [32m INFO[0m --- C cmd① frame=82 from 640x420@(200,160) → to 460x96@(900,700) union 1160x636@(200,160)
+[2m2026-10-22T09:24:43.749674Z[0m [32m INFO[0m geom frame=82 inner=1160x636 outer=(200,160) focused=true cmds=1
+[2m2026-10-22T09:24:43.749685Z[0m [32m INFO[0m C t=0.007 frame=83 content=640x420@(200,160) window=1160x636@(200,160) cmds=1
+[2m2026-10-22T09:24:43.751635Z[0m [32m INFO[0m C t=0.017 frame=84 content=640x420@(201,160) window=1160x636@(200,160) cmds=1
+[2m2026-10-22T09:24:43.772034Z[0m [32m INFO[0m C t=0.119 frame=85 content=633x407@(227,181) window=1160x636@(200,160) cmds=1
+[2m2026-10-22T09:24:44.775134Z[0m [32m INFO[0m C t=5.134 frame=86 content=460x96@(900,700) window=1160x636@(200,160) cmds=1
+[2m2026-10-22T09:24:44.775161Z[0m [32m INFO[0m C cmd② frame=86 union=1160x636 → InnerSize(460x96) OuterPosition(900,700) 用时 1027ms
+[2m2026-10-22T09:24:44.806772Z[0m [32m INFO[0m geom frame=86 inner=460x96 outer=(900,700) focused=true cmds=2
+[2m2026-10-22T09:24:47.141418Z[0m [32m INFO[0m --- C cmd① frame=234 from 460x96@(900,700) → to 640x420@(200,160) union 1160x636@(200,160)
+[2m2026-10-22T09:24:47.143202Z[0m [32m INFO[0m geom frame=234 inner=1160x636 outer=(200,160) focused=true cmds=3
+[2m2026-10-22T09:24:47.143218Z[0m [32m INFO[0m C t=0.010 frame=235 content=460x96@(900,700) window=1160x636@(200,160) cmds=3
+[2m2026-10-22T09:24:47.153511Z[0m [32m INFO[0m C t=0.061 frame=236 content=462x99@(892,694) window=1160x636@(200,160) cmds=3
+[2m2026-10-22T09:24:48.168928Z[0m [32m INFO[0m C t=5.138 frame=237 content=640x420@(200,160) window=1160x636@(200,160) cmds=3
+[2m2026-10-22T09:24:48.168949Z[0m [32m INFO[0m C cmd② frame=237 union=1160x636 → InnerSize(640x420) OuterPosition(200,160) 用时 1028ms
+[2m2026-10-22T09:24:48.175523Z[0m [32m INFO[0m geom frame=237 inner=640x420 outer=(200,160) focused=true cmds=4
+[2m2026-10-22T09:24:51.289146Z[0m [32m INFO[0m JUMP frame=390 → 460x96@(900,700)
+[2m2026-10-22T09:24:51.309536Z[0m [32m INFO[0m geom frame=390 inner=460x96 outer=(900,700) focused=true cmds=5
+[2m2026-10-22T09:24:54.177955Z[0m [32m INFO[0m --- C cmd① frame=523 from 460x96@(900,700) → to 460x96@(900,700) union 460x96@(900,700)
+[2m2026-10-22T09:24:54.178716Z[0m [32m INFO[0m C t=0.004 frame=524 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.196467Z[0m [32m INFO[0m C t=0.093 frame=525 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.213461Z[0m [32m INFO[0m C t=0.178 frame=526 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.229689Z[0m [32m INFO[0m C t=0.259 frame=527 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.246783Z[0m [32m INFO[0m C t=0.344 frame=528 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.263114Z[0m [32m INFO[0m C t=0.426 frame=529 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.280922Z[0m [32m INFO[0m C t=0.515 frame=530 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.296100Z[0m [32m INFO[0m C t=0.591 frame=531 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.313033Z[0m [32m INFO[0m C t=0.675 frame=532 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.330751Z[0m [32m INFO[0m C t=0.764 frame=533 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.347775Z[0m [32m INFO[0m C t=0.849 frame=534 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.363020Z[0m [32m INFO[0m C t=0.925 frame=535 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.380775Z[0m [32m INFO[0m C t=1.014 frame=536 content=460x96@(900,700) window=460x96@(900,700) cmds=6
+[2m2026-10-22T09:24:54.380805Z[0m [32m INFO[0m C cmd② frame=536 union=460x96 → InnerSize(460x96) OuterPosition(900,700) 用时 203ms
+[2m2026-10-22T09:24:56.479049Z[0m [32m INFO[0m --- C cmd① frame=579 from 460x96@(900,700) → to 640x420@(200,160) union 1160x636@(200,160)
+[2m2026-10-22T09:24:56.480921Z[0m [32m INFO[0m geom frame=579 inner=1160x636 outer=(200,160) focused=true cmds=8
+[2m2026-10-22T09:24:56.480939Z[0m [32m INFO[0m C t=0.010 frame=580 content=460x96@(900,700) window=1160x636@(200,160) cmds=8
+[2m2026-10-22T09:24:56.482240Z[0m [32m INFO[0m C t=0.016 frame=581 content=460x96@(899,700) window=1160x636@(200,160) cmds=8
+[2m2026-10-22T09:24:56.511707Z[0m [32m INFO[0m C t=0.164 frame=582 content=473x119@(850,661) window=1160x636@(200,160) cmds=8
+[2m2026-10-22T09:24:57.520978Z[0m [32m INFO[0m C t=5.210 frame=583 content=640x420@(200,160) window=1160x636@(200,160) cmds=8
+[2m2026-10-22T09:24:57.520993Z[0m [32m INFO[0m C cmd② frame=583 union=1160x636 → InnerSize(640x420) OuterPosition(200,160) 用时 1042ms
+[2m2026-10-22T09:24:57.522405Z[0m [32m INFO[0m geom frame=583 inner=640x420 outer=(200,160) focused=true cmds=9
+[2m2026-10-22T09:24:59.991213Z[0m [32m INFO[0m geom frame=663 inner=640x420 outer=(200,160) focused=false cmds=9

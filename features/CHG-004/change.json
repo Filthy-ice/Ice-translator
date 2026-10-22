@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "id": "CHG-004",
-  "title": "简洁悬浮窗：可缩放无边框窗体、拖动与吸附、形变动画、窗内引擎切换、自动反向",
-  "version": "v0.1",
+  "title": "简洁悬浮窗：可缩放无边框窗体、拖动与吸附、瞬时形态切换、窗内引擎切换、自动反向",
+  "version": "v0.3",
   "status": "IMPLEMENTING",
   "kind": "feature",
   "repos": [
@@ -110,20 +110,76 @@
       "at": "2026-10-22T03:45:13+00:00",
       "action": "transition",
       "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-10-22T07:39:52+00:00",
+      "action": "SPEC_DEVIATION",
+      "detail": "停止条件 3 触发：H2「逐帧 InnerSize 补间」真机实测不成立。证据 features/CHG-004/evidence/T-001-hypothesis-verdicts.md + T-001-probe{,-v2}.log —— 60fps 与 30fps 两种频率各跑三次，每 200ms 只有 4~5 次 InnerSize 请求真正落到窗口上，且三次复现整个事件循环停摆 ~1.0s（1006/1026/1086ms）；设计里写的第一级降级（降到 30fps）同样不成立，「只补间尺寸不补间位置」本来就是探针做法。用户肉眼判定「一卡一卡的，ppt 了」。替代方案 C（动画期间窗口几何不动、补间画在窗口里的内容矩形、收尾只发一条 InnerSize）实测 204ms/14 帧、节奏 16.5ms±1ms 的真 60fps、端点误差 0px，用户判定「补间现在很丝滑」。H1 无边框边缘缩放与 H3 窗口级半透明均成立（H1：拖角时 inner 以 16ms 间隔连续变化 20+ 台阶；H3：无黑底/花屏/圆角异常，失焦无变化）。需改的是 REQ-004 的实现机制文字，FR-3.9 的行为要求（180~220ms、同一窗口、无跳变黑屏闪烁、端点 ±2px、动画期间可点击、可反向插值）全部保留，Must 未降级。"
+    },
+    {
+      "at": "2026-10-22T07:44:33+00:00",
+      "action": "revise",
+      "detail": "停止条件 3 触发后的规格修订：REQ-004 的补间机制由「逐帧 InnerSize」改为「窗内补间」（动画期间只插值画在窗口里的内容矩形，窗口几何整段最多改三次：起始外接矩形 / 反向时重设 / 末帧收到目标 rect），并把 H1、H3 两条 HYPOTHESIS 落为实测成立的 FACT、H2 落为实测不成立的 FACT，新增 Q-008 记录窗内补间的代价（动画期间透明区吞点击、阴影跟随大矩形）与处置。FR-3.9 的行为要求（180~220ms、同一窗口、无跳变黑屏闪烁、端点 ±2px、动画期间可点击、可反向插值、动画后停重绘）一条未改，Must 未降级。证据：features/CHG-004/evidence/T-001-hypothesis-verdicts.md 与两份探针日志。"
+    },
+    {
+      "at": "2026-10-22T09:46:19+00:00",
+      "action": "revise",
+      "detail": "v3 探针实测后的需求变更（停止条件 8 的「改需求」分支，用户决定）。实测：双向窗内补间要在起点把窗口撑成两端的外接矩形（1160×636），结果三次跑分别 1027/1028/1042ms、内容只画出 3~4 帧；同一次运行里外接矩形恰好等于当前 rect（窗口尺寸没变）的那次 13 帧满速跑完 203ms → 1 秒停摆的真因是窗口 surface resize 本身，与命令频率无关。对照项单发 InnerSize+OuterPosition 实测 20ms 落定（09:24:51.289→51.309）。用户原话「不行，返回全量也要有动画」→ 看到 v3 每次冻 1 秒后改为「算了不要动画了，都做成瞬间的」。据此：FR-3.9 由「180~220ms 形变动画」改为「同一窗口的瞬时切换」（Must 级别与编号不变，需求仍 44 条），REQ-004 整节重写（同帧一次性下发 Decorations/Resizable/MinInnerSize/InnerSize/OuterPosition，Decorations 排在 InnerSize 之前；全量形态也下发 OuterPosition；切换后回读真实几何再 flush_config(true)；隐藏态只改配置不下发；不再 request_repaint）；mode::Morph/MorphFrame/GeometryCmd/union()/reverse()/MORPH_DURATION/state.morphing 全部不实现；Q-008 记的两条代价（透明外接区吞点击、阴影跟随大矩形）随之消解，objc2 setHasShadow(false) 备用手段不需要；停止条件 3 关闭（没有补间就没有补间不达标）、8 记为已触发已处置、新增 9（瞬时切换若出现可见重建感必须回来找用户决定）；事实表新增 v3 双向不成立与瞬时切换成立两行。另澄清 REQ-001 的 MinInnerSize：由「清成 ZERO」改为「按形态取下限（简洁 320×96 / 全量 640×420）」，原文与同节 320×96 下限自相矛盾。docs 同步改完：01-requirements.md FR-3.9、03-ui-design.md §4 与交互流程、02-architecture.md §3.3 与模块表、06-test-cases.md W-2.14、traceability.md FR-3.9 行与统计节新增条、07-acceptance.md 变更登记 2026-10-22 行。时间估算 9~12h 降为 7~10h。证据：features/CHG-004/evidence/T-001-hypothesis-verdicts.md §v3 与 T-001-probe-v3.log。"
+    },
+    {
+      "at": "2026-10-22T10:06:37+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c",
+        "version": "v0.3",
+        "by": "filthy-ice",
+        "reference": "P5 规格 v0.3 批准：FR-3.9 由形变动画改为瞬时切换（用户 2026-10-22 决定「算了不要动画了，都做成瞬间的」，依据 v3 探针实测）",
+        "at": "2026-10-22T10:06:37+00:00",
+        "snapshot": "approvals/v0.3-235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c.md",
+        "scope": "local-delivery",
+        "context_hash": "0033ddf40f0b7ef246fbb18610b512c994debfae8f5e87f47983aa78b03d5bd4",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-10-22T10:10:45+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-004",
+        "version": "v0.3",
+        "spec_hash": "235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c"
+      }
+    },
+    {
+      "at": "2026-10-22T10:10:45+00:00",
+      "action": "seal-plan",
+      "detail": "ddf878507b38b6a432d0cf7270e6c7593e5e3253bbc9cf8d250f5d4aae969e1d"
+    },
+    {
+      "at": "2026-10-22T10:10:50+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-10-22T10:11:04+00:00",
+      "action": "task-done",
+      "detail": "T-001"
     }
   ],
   "approval": {
-    "hash": "0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2",
-    "version": "v0.1",
+    "hash": "235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c",
+    "version": "v0.3",
     "by": "filthy-ice",
-    "reference": "P5 简洁悬浮窗规格批准（含可缩放/分段按钮/Must+Should 全做三项决定）",
-    "at": "2026-10-22T03:31:55+00:00",
-    "snapshot": "approvals/v0.1-0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2.md",
+    "reference": "P5 规格 v0.3 批准：FR-3.9 由形变动画改为瞬时切换（用户 2026-10-22 决定「算了不要动画了，都做成瞬间的」，依据 v3 探针实测）",
+    "at": "2026-10-22T10:06:37+00:00",
+    "snapshot": "approvals/v0.3-235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c.md",
     "scope": "local-delivery",
     "context_hash": "0033ddf40f0b7ef246fbb18610b512c994debfae8f5e87f47983aa78b03d5bd4",
     "branches": {
       "ice-translator": "main"
     }
   },
-  "plan_hash": "788f353ac4e887e62deaf0098f71fd0fb10005ece9084f9fbf9c91d6b4fa8916"
+  "plan_hash": "ddf878507b38b6a432d0cf7270e6c7593e5e3253bbc9cf8d250f5d4aae969e1d"
 }

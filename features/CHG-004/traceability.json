@@ -1,8 +1,8 @@
 {
   "baseline": {
     "change": "CHG-004",
-    "version": "v0.1",
-    "spec_hash": "0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2"
+    "version": "v0.3",
+    "spec_hash": "235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c"
   },
   "design": [
     {
@@ -112,7 +112,7 @@
         "-p",
         "ice-app"
       ],
-      "note": "无头断言：viewport 命令集合与顺序、把手命中、DragSettler、snap 五例与坐标翻转、Morph 端点与反向、compact 版式不溢出与译文可滚、dim_alpha 四组、Watcher 七例、落盘接线"
+      "note": "无头断言：viewport 命令集合与顺序（一次切换里 InnerSize/OuterPosition 各恰好 1 条、Decorations 排在 InnerSize 之前）、把手命中、DragSettler、snap 五例与坐标翻转、compact 版式不溢出与译文可滚、dim_alpha 四组、Watcher 七例、落盘接线"
     },
     {
       "id": "V-004",
@@ -233,7 +233,7 @@
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
       "required": true,
-      "note": "用户按 docs/06-test-cases.md §3 的 W-2.1~W-2.20 真人走查（尺寸与缩放、三处把手、四边吸附与拖离、连续切换 10 次录屏、窗内引擎切换与译文滚动、失焦半透明、剪贴板即翻、强杀重启与插拔屏幕），逐行结论写进 docs/07-acceptance.md 的 P5 段"
+      "note": "用户按 docs/06-test-cases.md §3 的 W-2.1~W-2.20 真人走查（尺寸与缩放、三处把手、四边吸附与拖离、连续切换 10 次盯「一步到位、不重建窗口、无黑屏闪烁、切完立刻能点」、窗内引擎切换与译文滚动、失焦半透明、剪贴板即翻、强杀重启与插拔屏幕），逐行结论写进 docs/07-acceptance.md 的 P5 段"
     },
     {
       "id": "V-010",
@@ -247,7 +247,7 @@
       "kind": "VERIFIED_RUNTIME",
       "environment": "sandbox",
       "required": true,
-      "note": "真机运行：三条 HYPOTHESIS 的实测结论、切到简洁窗后的真实 inner_rect、边缘缩放后的几何、四边吸附与拖离的坐标、形变每帧几何与末帧 ±2px 校正；由 ./sdd record 导入脱敏日志"
+      "note": "真机运行：三条 HYPOTHESIS 的实测结论（含 v3 的双向补间不成立与瞬时切换 20ms 落定）、切到简洁窗后的真实 inner_rect、边缘缩放后的几何、四边吸附与拖离的坐标、切换后回读几何与目标 rect 的 ±2px 一致性；由 ./sdd record 导入脱敏日志"
     },
     {
       "id": "V-011",
