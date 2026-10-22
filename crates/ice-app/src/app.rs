@@ -11,8 +11,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Align, Key, KeyboardShortcut, Layout, Modifiers, RichText};
-use ice_core::config::{Config, UiMode};
+use eframe::egui::{self, Pos2, Rect, Vec2, ViewportCommand};
+use ice_core::config::{Config, DockEdge, UiMode};
 use ice_core::history::HistoryStore;
 use ice_providers::dispatcher::Translator;
 use ice_providers::{AiEngine, MachineTranslateEngine};
@@ -21,9 +21,10 @@ use tokio::sync::mpsc;
 
 use crate::jobs::{self, JobRunner, OutcomeReceiver};
 use crate::mode;
-use crate::state::{self, AppState, KeyState, Tone};
+use crate::state::{self, AppState, KeyState, Tab, Tone};
 use crate::system::clipboard::{self, CopyKind};
-use crate::system::hotkeys::{self, Action, SOURCE_EDITOR_ID};
+use crate::system::hotkeys::{self, Action};
+use crate::system::screen;
 use crate::system::secrets;
 use crate::system::single_instance::InstanceLock;
 use crate::theme;
@@ -77,6 +78,8 @@ pub struct IceApp {
     last_save: Instant,
     /// 恢复判定的去抖（`mode::REVEAL_GRACE`）
     reveal_guard: mode::RevealGuard,
+    /// 拖动/缩放静止判定（`mode::DRAG_SETTLE`）：松手后跑一次吸附与落盘
+    drag_settler: mode::DragSettler,
 }
 
 impl IceApp {
@@ -108,6 +111,7 @@ impl IceApp {
             key_probe,
             last_save: Instant::now(),
             reveal_guard: mode::RevealGuard::default(),
+            drag_settler: mode::DragSettler::default(),
         }
     }
 
@@ -125,17 +129,26 @@ impl IceApp {
             Action::CopyTranslation => {
                 views::full::copy(&mut self.state, effects, CopyKind::Translation)
             }
-            Action::ToggleTopmost => {
-                let on = self.state.toggle_topmost();
-                mode::apply_topmost(ctx, &mut self.state);
-                self.state
-                    .toast(Tone::Info, if on { "已置顶" } else { "已取消置顶" });
-            }
+            Action::ToggleTopmost => self.toggle_topmost(ctx),
             Action::HideWindow => self.hide(ctx),
             Action::Quit => self.quit(ctx),
             // 换行由 `TextEdit` 自己插入（它的 `return_key` 就是 Shift+Enter），应用不参与
             Action::Newline => {}
+            // Esc 只在简洁窗清空输入行；全量窗 Esc 不绑定任何动作（与 P4 一致）
+            Action::ClearInput => {
+                if self.state.mode() == UiMode::Compact {
+                    self.state.clear_input();
+                }
+            }
         }
+    }
+
+    /// 切换置顶（K-09）。快捷键与简洁窗动作行的按钮共用这一条路径。
+    fn toggle_topmost(&mut self, ctx: &egui::Context) {
+        let on = self.state.toggle_topmost();
+        mode::apply_topmost(ctx, &mut self.state);
+        self.state
+            .toast(Tone::Info, if on { "已置顶" } else { "已取消置顶" });
     }
 
     /// Cmd+Q：先落盘再关窗，`on_exit` 里还会再存一次（幂等）
@@ -149,6 +162,140 @@ impl IceApp {
     fn hide(&mut self, ctx: &egui::Context) {
         mode::hide(ctx, &mut self.state);
         self.reveal_guard.on_hide(Instant::now());
+    }
+
+    /// 把手按下：窗口拖拽交给原生（REQ-002）。
+    ///
+    /// `StartDrag` 在窗口没有焦点时会被 egui-winit 直接丢掉
+    /// （`egui-winit-0.37.0/src/lib.rs:1961-1968` 的 `window.has_focus()` 判定），
+    /// 所以未聚焦时先补一条 `Focus`。简洁窗是常驻置顶的小条，用户常常正在别的应用里
+    /// 干活、顺手就来抓它——那一次恰好是没有焦点的，少这条命令表现为"拖不动"。
+    fn start_drag(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().focused) != Some(true) {
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
+        }
+        ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+        self.drag_settler.arm(Instant::now());
+    }
+
+    /// 拖动/缩放静止之后跑一次：吸附（REQ-003）+ 立即落盘（REQ-009）。
+    ///
+    /// 原生拖拽期间 egui 收不到 pointer 事件（`StartDrag` 把控制权交给了 AppKit，
+    /// macOS 那边进的是嵌套事件循环），"松手"这个时刻应用侧无从得知，
+    /// 只能靠 `DragSettler` 的静止判定。
+    fn settle_drag(&mut self, ctx: &egui::Context) {
+        let outer = ctx.input(|i| i.viewport().outer_rect);
+        match self.drag_settler.feed(outer, Instant::now()) {
+            Some(settled) => {
+                let area = (self.state.mode() == UiMode::Compact)
+                    .then(|| screen::work_area(ctx, settled))
+                    .flatten();
+                self.apply_snap(ctx, settled, area);
+            }
+            // 还在等静止：续一帧重绘。原生拖拽结束后事件循环未必还有别的理由再画一帧，
+            // 不续的话"静止满 150ms"永远等不到，吸附一次都不会发生。
+            None if self.drag_settler.is_armed() => {
+                ctx.request_repaint_after(mode::DRAG_SETTLE);
+            }
+            None => {}
+        }
+    }
+
+    /// `area` 为 `None` 表示这次不吸附（全量窗有系统标题栏，或拿不到屏幕可用区）：只落盘。
+    ///
+    /// 可用区由调用方注入而不是在这里读屏幕，是为了让吸附决策可以无头断言——
+    /// `screen::work_area` 在真机上会读到**这台机器**的屏幕，测试没法固定期望值。
+    fn apply_snap(&mut self, ctx: &egui::Context, settled: Rect, area: Option<Rect>) {
+        let Some(area) = area else {
+            self.flush_config(true);
+            return;
+        };
+        // 松手时窗口整个落在可用区之外（外接屏拔掉、休眠唤醒后的旧坐标）：夹回来，
+        // 别让用户去 Dock 里找窗口。REQ-009 的启动路径与插拔恢复在 T-010 接上，
+        // 这里先覆盖"拖完就丢"这一种。
+        if !area.intersect(settled).is_positive() {
+            let fitted = mode::fit_into_area(settled, area);
+            self.place_compact(ctx, fitted.min, self.state.config.ui.docked_edge);
+            return;
+        }
+        let (snapped, edge) = mode::snap(
+            settled,
+            area,
+            self.state.config.ui.snap_threshold_px,
+            self.state.config.ui.dock_sliver_px,
+        );
+        // 吸附结果与当前几何一致时一个命令都不发：否则程序自己挪的那一次又会被下一轮
+        // 判定当成"移动"，150ms 后再吸附一次，无限循环且每轮写盘（REQ-009 的节流被打穿）
+        let already_there =
+            (snapped.min - settled.min).length() <= 0.5 && edge == self.state.config.ui.docked_edge;
+        if already_there {
+            self.flush_config(true);
+            return;
+        }
+        self.place_compact(ctx, snapped.min, edge);
+        ctx.request_repaint();
+    }
+
+    /// 把简洁窗挪到一个新位置：发命令 + 写回配置 + 立即落盘（REQ-009）。
+    ///
+    /// 落盘走 `force`：拖动结束后没有任何东西再请求重绘，脏标记挂着不动，强杀就丢。
+    fn place_compact(&mut self, ctx: &egui::Context, position: Pos2, edge: DockEdge) {
+        ctx.send_viewport_cmd(ViewportCommand::OuterPosition(position));
+        self.state.config.ui.compact_rect.x = position.x;
+        self.state.config.ui.compact_rect.y = position.y;
+        self.state.config.ui.docked_edge = edge;
+        self.state.mark_config_dirty();
+        self.flush_config(true);
+    }
+
+    /// 简洁窗的"设置"：瞬时切回全量并直接落到设置页（REQ-005）。
+    ///
+    /// 不能复用 `Effects::toggle_mode`：那是"切换"，在全量窗里点设置会反被切成简洁窗。
+    fn open_settings(&mut self, ctx: &egui::Context) {
+        self.drag_settler.disarm();
+        if self.state.mode() != UiMode::Full {
+            mode::apply(ctx, &mut self.state, UiMode::Full);
+        }
+        self.state.tab = Tab::Settings;
+        ctx.request_repaint();
+    }
+
+    /// 点停靠指示：换下一条边，并立刻把窗口移过去（K-07、REQ-003）。
+    ///
+    /// 这次移动是程序驱动的，不是用户拖动，所以先把静止判定解除——
+    /// 否则 150ms 后 `settle_drag` 会把它当成一次松手，又吸附一遍。
+    fn cycle_dock(&mut self, ctx: &egui::Context) {
+        let edge = mode::cycle_edge(self.state.config.ui.docked_edge);
+        self.state.config.ui.docked_edge = edge;
+        self.drag_settler.disarm();
+        let outer = ctx.input(|i| i.viewport().outer_rect);
+        let area = outer.and_then(|outer| screen::work_area(ctx, outer));
+        self.move_to_edge(ctx, edge, outer, area);
+        self.state
+            .toast(Tone::Info, views::compact::dock_label(edge, false));
+    }
+
+    /// 把简洁窗移到某条停靠边。拿不到真实外框或屏幕可用区时只记下新的停靠边、不发命令：
+    /// 发一条按猜测算出来的 `OuterPosition` 比什么都不做更糟（窗口会跳到错的地方），
+    /// 而下一次形态切换会按配置里的边重新落位。
+    fn move_to_edge(
+        &mut self,
+        ctx: &egui::Context,
+        edge: DockEdge,
+        outer: Option<Rect>,
+        area: Option<Rect>,
+    ) {
+        let (Some(outer), Some(area)) = (outer, area) else {
+            self.state.mark_config_dirty();
+            // 用户点了一下却没有任何后续帧时，脏标记会一直挂着，强杀就丢
+            self.flush_config(true);
+            return;
+        };
+        let size = self.state.config.ui.compact_rect;
+        let window = Rect::from_min_size(outer.min, Vec2::new(size.w, size.h));
+        let placed = mode::dock(window, area, edge, self.state.config.ui.dock_sliver_px);
+        self.place_compact(ctx, placed.min, edge);
+        ctx.request_repaint();
     }
 
     /// 隐藏期间的看护（缺陷 D-2）。
@@ -205,8 +352,22 @@ impl IceApp {
                 },
             );
         }
+        if effects.open_settings {
+            self.open_settings(ctx);
+        }
+        if effects.toggle_topmost {
+            self.toggle_topmost(ctx);
+        }
+        if effects.cycle_dock {
+            self.cycle_dock(ctx);
+        }
         if effects.clear_history {
             self.state.clear_history(&self.history);
+        }
+        // 拖拽命令排在最后：同一帧里若还有几何命令（形态切换、换停靠边），
+        // 得先让它们进队，`StartDrag` 才不会把窗口从一个正在变化的状态里抓走
+        if effects.start_drag {
+            self.start_drag(ctx);
         }
     }
 
@@ -380,6 +541,7 @@ impl eframe::App for IceApp {
         }
 
         mode::capture(&ctx, &mut self.state);
+        self.settle_drag(&ctx);
 
         let ai_available = self.ai_available();
         match self.state.mode() {
@@ -390,7 +552,9 @@ impl eframe::App for IceApp {
                 &self.history,
                 ai_available,
             ),
-            UiMode::Compact => compact(ui, &mut self.state, &mut effects),
+            UiMode::Compact => {
+                views::compact::show(ui, &mut self.state, &mut effects, ai_available)
+            }
         }
 
         self.run_effects(&ctx, effects);
@@ -410,69 +574,17 @@ impl eframe::App for IceApp {
     }
 }
 
-/// 简洁形态（FR-3.2）。P4 只保证"内容可用 + 能切回来"；
-/// 拖拽把手、贴边吸附、失焦半透明与形变动画属 P5（K-06~K-09、FR-3.5/3.7/3.9）。
-fn compact(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
-    egui::Panel::top("compact_source")
-        .exact_size(34.0)
-        .show(ui, |ui| {
-            let output = egui::TextEdit::singleline(&mut state.source)
-                .id(egui::Id::unique(SOURCE_EDITOR_ID))
-                .desired_width(f32::INFINITY)
-                .hint_text("输入或粘贴，Enter 翻译")
-                .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
-                .show(ui);
-            state.focus_in_source = output.response.has_focus();
-            state.sync_char_count();
-        });
-
-    egui::Panel::bottom("compact_bar")
-        .exact_size(28.0)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                if ui
-                    .button("全量")
-                    .on_hover_text("切回全量界面（Cmd+Shift+M）")
-                    .clicked()
-                {
-                    effects.toggle_mode = true;
-                }
-                if ui.button("复制").clicked() {
-                    views::full::copy(state, effects, CopyKind::Translation);
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.colored_label(theme::MUTED, state.engine.display_name());
-                });
-            });
-        });
-
-    egui::CentralPanel::default().show(ui, |ui| {
-        if let Some(failure) = &state.failure {
-            ui.add(egui::Label::new(RichText::new(&failure.message).color(theme::ERROR)).wrap());
-        } else if let Some(result) = &state.translation {
-            ui.add(egui::Label::new(&result.text).wrap());
-        } else if state.in_flight.is_some() {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.colored_label(theme::WARN, "翻译中…");
-            });
-        } else {
-            ui.colored_label(theme::MUTED, "译文显示在这里");
-        }
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Job, Tab};
+    use crate::state::Job;
     use crate::stub::StubEngine;
     use crate::system::single_instance;
     use crate::views::Effects;
-    use ice_core::config::AiProvider;
+    use ice_core::config::{AiProvider, UiConfig};
     use ice_core::glossary::{Glossary, Term};
     use ice_core::language::EngineKind;
+    use ice_providers::request::TranslationResult;
 
     fn ctx() -> egui::Context {
         egui::Context::default()
@@ -935,5 +1047,310 @@ mod tests {
         app.state.config.ai.key_configured = true;
         app.state.key = KeyState::Missing;
         assert!(!app.ai_available(), "钥匙串里没有 Key 就不算就绪");
+    }
+
+    // ---- CHG-004：简洁窗的接线（REQ-002 拖拽 / REQ-003 吸附 / REQ-005 清空与设置）----
+
+    fn queued(ctx: &egui::Context) -> Vec<ViewportCommand> {
+        ctx.viewport(|vp| vp.commands.clone())
+    }
+
+    /// 1440×900 的屏，菜单栏 25pt 在上、Dock 70pt 在下（与 `mode.rs` 的吸附测试同一块屏）
+    fn area() -> Rect {
+        Rect::from_min_max(Pos2::new(0.0, 25.0), Pos2::new(1440.0, 830.0))
+    }
+
+    fn compact_state() -> AppState {
+        let config = Config {
+            ui: UiConfig {
+                mode: UiMode::Compact,
+                ..UiConfig::default()
+            },
+            ..Default::default()
+        };
+        let mut state = AppState::new(config, Glossary::default(), KeyState::Missing, None);
+        state.source = "hello".into();
+        state
+    }
+
+    /// 把窗口的几何与焦点喂给无头 `Context`，等价于 `update_viewport_info` 每帧的刷新
+    fn feed_geometry(ctx: &egui::Context, outer: Option<Rect>, focused: Option<bool>) {
+        let info = egui::ViewportInfo {
+            inner_rect: outer,
+            outer_rect: outer,
+            focused,
+            ..Default::default()
+        };
+        let mut raw = egui::RawInput::default();
+        raw.viewports.insert(egui::ViewportId::ROOT, info);
+        ctx.run_ui(raw, |_| {}).drop_without_applying_deltas();
+    }
+
+    /// 简洁窗常驻置顶，用户往往正在别的应用里干活、顺手就来抓它——那一次窗口是**没有焦点**的，
+    /// 而 egui-winit 的 `StartDrag` 被 `window.has_focus()` 挡着（`lib.rs:1961-1968`），
+    /// 不先补一条 `Focus` 就表现为"把手拖不动"（走查里报的第一条缺陷）。
+    #[test]
+    fn an_unfocused_window_gets_focus_before_the_native_drag() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+        feed_geometry(
+            &c,
+            Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(460.0, 96.0))),
+            Some(false),
+        );
+
+        let effects = Effects {
+            start_drag: true,
+            ..Default::default()
+        };
+        app.run_effects(&c, effects);
+
+        let commands = queued(&c);
+        let focus = commands
+            .iter()
+            .position(|cmd| *cmd == ViewportCommand::Focus)
+            .expect("未聚焦时必须先补 Focus，否则 StartDrag 会被平台丢掉");
+        let drag = commands
+            .iter()
+            .position(|cmd| *cmd == ViewportCommand::StartDrag)
+            .expect("把手按下要真的把拖拽交给原生");
+        assert!(focus < drag, "Focus 必须排在 StartDrag 之前");
+        assert!(app.drag_settler.is_armed(), "松手判定要从这一刻开始计时");
+    }
+
+    #[test]
+    fn a_focused_window_does_not_get_a_redundant_focus_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+        feed_geometry(
+            &c,
+            Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(460.0, 96.0))),
+            Some(true),
+        );
+
+        let effects = Effects {
+            start_drag: true,
+            ..Default::default()
+        };
+        app.run_effects(&c, effects);
+
+        let commands = queued(&c);
+        assert!(commands.contains(&ViewportCommand::StartDrag));
+        assert!(!commands.contains(&ViewportCommand::Focus));
+    }
+
+    /// 松手静止后按注入的可用区吸附，并把结果立即写进配置与磁盘（REQ-003 + REQ-009）
+    #[test]
+    fn a_settled_drag_snaps_to_the_nearest_edge_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+        let settled = Rect::from_min_size(
+            Pos2::new(1440.0 - 30.0 - 460.0, 400.0),
+            Vec2::new(460.0, 96.0),
+        );
+
+        app.apply_snap(&c, settled, Some(area()));
+
+        let expected = 1440.0 - 460.0 + 6.0;
+        assert_eq!(app.state.config.ui.docked_edge, DockEdge::Right);
+        assert_eq!(app.state.config.ui.compact_rect.x, expected);
+        assert!(queued(&c).contains(&ViewportCommand::OuterPosition(Pos2::new(expected, 400.0))));
+        assert!(!app.state.config_dirty, "吸附完要立即落盘，不留脏标记");
+        let saved = Config::load_at(&dir.path().join("config.toml"))
+            .expect("配置要能读回来")
+            .0;
+        assert_eq!(
+            saved.ui.compact_rect.x, expected,
+            "盘上的几何要是吸附后的那个"
+        );
+        assert_eq!(saved.ui.docked_edge, DockEdge::Right);
+    }
+
+    /// 已经停在目标位置上：一个命令都不发、一次盘都不写。
+    /// 否则程序自己挪的那一次会被下一轮静止判定当成"用户又拖了"，每 150ms 无限重算。
+    #[test]
+    fn snapping_again_from_the_docked_position_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = compact_state();
+        state.config.ui.docked_edge = DockEdge::Right;
+        state.config.ui.compact_rect.x = 1440.0 - 460.0 + 6.0;
+        state.config.ui.compact_rect.y = 400.0;
+        let mut app = app(dir.path(), state);
+        let c = ctx();
+        let settled = Rect::from_min_size(
+            Pos2::new(1440.0 - 460.0 + 6.0, 400.0),
+            Vec2::new(460.0, 96.0),
+        );
+
+        app.apply_snap(&c, settled, Some(area()));
+
+        assert!(queued(&c).is_empty(), "已经在那儿了，不该再发几何命令");
+        assert_eq!(app.state.config.ui.compact_rect.x, settled.min.x);
+    }
+
+    /// 全量窗有系统标题栏，不参与吸附：静止之后只落盘
+    #[test]
+    fn a_full_window_never_snaps() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        let c = ctx();
+        let settled = Rect::from_min_size(
+            Pos2::new(1440.0 - 30.0 - 460.0, 400.0),
+            Vec2::new(460.0, 96.0),
+        );
+
+        app.apply_snap(&c, settled, None);
+
+        assert!(queued(&c).is_empty());
+        assert_eq!(app.state.config.ui.docked_edge, DockEdge::None);
+    }
+
+    /// 拖到屏幕外松手（外接屏拔掉、休眠唤醒后的旧坐标）：夹回可用区，不许把窗口弄丢
+    #[test]
+    fn a_window_released_off_screen_is_pulled_back_into_the_work_area() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+        let lost = Rect::from_min_size(Pos2::new(5000.0, 4000.0), Vec2::new(460.0, 96.0));
+
+        app.apply_snap(&c, lost, Some(area()));
+
+        let rect = app.state.config.ui.compact_rect;
+        assert!(
+            rect.x >= 0.0 && rect.y >= 25.0,
+            "夹回后不该有屏幕外坐标：{rect:?}"
+        );
+        assert!(
+            rect.x + rect.w <= 1440.0 && rect.y + rect.h <= 830.0,
+            "整块都要回到可用区里：{rect:?}"
+        );
+    }
+
+    /// 点击停靠指示：换下一条边并立刻把窗口移过去，同时落盘（K-07）
+    #[test]
+    fn moving_to_an_edge_places_the_window_and_saves_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+        let outer = Rect::from_min_size(Pos2::new(500.0, 400.0), Vec2::new(460.0, 96.0));
+
+        app.move_to_edge(&c, DockEdge::Right, Some(outer), Some(area()));
+
+        let expected = 1440.0 - 460.0 + 6.0;
+        assert!(queued(&c).contains(&ViewportCommand::OuterPosition(Pos2::new(expected, 400.0))));
+        assert_eq!(app.state.config.ui.docked_edge, DockEdge::Right);
+        assert_eq!(app.state.config.ui.compact_rect.x, expected);
+        assert!(!app.state.config_dirty);
+    }
+
+    /// 拿不到真实几何时只记下新的停靠边，不发按猜测算出来的 `OuterPosition`
+    #[test]
+    fn cycling_the_dock_edge_without_geometry_only_records_the_new_edge() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = compact_state();
+        state.config.ui.docked_edge = DockEdge::Right;
+        let mut app = app(dir.path(), state);
+        let c = ctx();
+
+        let effects = Effects {
+            cycle_dock: true,
+            ..Default::default()
+        };
+        app.run_effects(&c, effects);
+
+        assert_eq!(
+            app.state.config.ui.docked_edge,
+            DockEdge::Bottom,
+            "停靠右边 → 下一条是下边"
+        );
+        assert!(
+            !queued(&c)
+                .iter()
+                .any(|cmd| matches!(cmd, ViewportCommand::OuterPosition(_))),
+            "没有真实几何就不该猜一个位置出来"
+        );
+        assert!(!app.state.config_dirty, "换了边就要落盘");
+        assert!(!app.drag_settler.is_armed(), "程序驱动的移动不是用户拖动");
+    }
+
+    /// 简洁窗里 Esc 清空输入行，并把旧译文与在飞任务一起作废
+    #[test]
+    fn escape_in_the_compact_window_clears_the_input_and_the_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        app.state.translation = Some(TranslationResult::cached("你好", EngineKind::Machine));
+        let c = ctx();
+        let mut effects = Effects::default();
+
+        app.run(Action::ClearInput, &c, &mut effects);
+
+        assert!(app.state.source.is_empty());
+        assert!(app.state.translation.is_none(), "旧译文留着会误导");
+        assert!(
+            app.state.in_flight.is_none(),
+            "在飞的任务要作废，否则清空后半秒译文又自己冒出来"
+        );
+        assert!(effects.job.is_none(), "清空不发请求");
+    }
+
+    /// 全量窗里 Esc 仍不绑定任何动作（与 P4 一致）
+    #[test]
+    fn escape_does_nothing_in_the_full_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        app.state.source = "别清我".into();
+        let mut effects = Effects::default();
+        app.run(Action::ClearInput, &ctx(), &mut effects);
+        assert_eq!(app.state.source, "别清我", "全量窗里 Esc 不做任何事");
+    }
+
+    /// 简洁窗的"设置"：瞬时切回全量并直接落到设置页（REQ-005）。
+    /// 不复用 `toggle_mode`：那是"切换"，在全量窗里点设置会反被切成简洁窗。
+    #[test]
+    fn the_compact_settings_button_switches_to_full_and_lands_on_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+
+        let effects = Effects {
+            open_settings: true,
+            ..Default::default()
+        };
+        app.run_effects(&c, effects);
+
+        assert_eq!(app.state.mode(), UiMode::Full);
+        assert_eq!(app.state.tab, Tab::Settings);
+        assert!(queued(&c).contains(&ViewportCommand::Decorations(true)));
+        assert!(!app.drag_settler.is_armed());
+    }
+
+    /// 动作行的置顶按钮与 Cmd+Shift+T 共用同一条路径：写回配置 + 下发 WindowLevel + 提示
+    #[test]
+    fn the_topmost_button_and_the_hotkey_share_one_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+
+        let effects = Effects {
+            toggle_topmost: true,
+            ..Default::default()
+        };
+        app.run_effects(&c, effects);
+
+        assert!(app.state.config.ui.always_on_top);
+        assert!(queued(&c).contains(&ViewportCommand::WindowLevel(
+            egui::WindowLevel::AlwaysOnTop
+        )));
+        assert_eq!(app.state.toasts.len(), 1);
+
+        let mut effects = Effects::default();
+        app.run(Action::ToggleTopmost, &c, &mut effects);
+        assert!(
+            !app.state.config.ui.always_on_top,
+            "快捷键那条路径同样能切回来"
+        );
     }
 }

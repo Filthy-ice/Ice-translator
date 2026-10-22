@@ -379,6 +379,19 @@ impl AppState {
         self.set_engine(EngineKind::Machine)
     }
 
+    /// Esc：清空输入行以及它对应的结果（REQ-005）。
+    ///
+    /// 不发请求、不退出、不收窗。在飞的任务一并作废：`in_flight` 置空之后，
+    /// 那次结果回来时会被 `apply_outcome` 当成过期结果丢掉——否则用户清空了输入行，
+    /// 半秒后译文又自己冒出来。
+    pub fn clear_input(&mut self) {
+        self.source.clear();
+        self.translation = None;
+        self.failure = None;
+        self.in_flight = None;
+        self.sync_char_count();
+    }
+
     pub fn visible_languages(&self) -> Vec<Language> {
         self.config.translation.visible_languages()
     }

@@ -12,6 +12,17 @@ pub const APP_ID: &str = "IceTranslator";
 pub const KEYCHAIN_SERVICE: &str = "IceTranslator";
 pub const KEYCHAIN_ACCOUNT: &str = "ai-api-key";
 
+/// 全量窗的最小内尺寸（FR-3.2、`03-ui-design.md` §1）。
+///
+/// 这里的四个常量是两种形态下限的唯一出处：`ice-app::mode` 用它们拼 `MinInnerSize`
+/// 交给 AppKit 逐帧执行，`Config::sanitized` 用它们在加载时夹回手改坏的配置。
+/// 两处各写一份字面量就会漂（P4 的简洁窗高度下限写成 64，与设计的 96 不一致）。
+pub const MIN_FULL_W: f32 = 640.0;
+pub const MIN_FULL_H: f32 = 420.0;
+/// 简洁窗的最小内尺寸（FR-3.2，CHG-004 REQ-001：可缩放，但不小于 320×96）
+pub const MIN_COMPACT_W: f32 = 320.0;
+pub const MIN_COMPACT_H: f32 = 96.0;
+
 /// 屏幕矩形，用于持久化窗口位置（FR-3.6）
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct WindowRect {
@@ -379,10 +390,10 @@ impl Config {
         self.ui.font_scale = self.ui.font_scale.clamp(0.8, 2.0);
         self.ui.dock_sliver_px = self.ui.dock_sliver_px.clamp(2.0, 24.0);
         self.ui.snap_threshold_px = self.ui.snap_threshold_px.clamp(8.0, 200.0);
-        self.ui.full_rect.w = self.ui.full_rect.w.max(640.0);
-        self.ui.full_rect.h = self.ui.full_rect.h.max(420.0);
-        self.ui.compact_rect.w = self.ui.compact_rect.w.max(320.0);
-        self.ui.compact_rect.h = self.ui.compact_rect.h.max(64.0);
+        self.ui.full_rect.w = self.ui.full_rect.w.max(MIN_FULL_W);
+        self.ui.full_rect.h = self.ui.full_rect.h.max(MIN_FULL_H);
+        self.ui.compact_rect.w = self.ui.compact_rect.w.max(MIN_COMPACT_W);
+        self.ui.compact_rect.h = self.ui.compact_rect.h.max(MIN_COMPACT_H);
         if self.translation.timeout_ms < 1_000 {
             self.translation.timeout_ms = 1_000;
         }
@@ -467,8 +478,29 @@ mod tests {
         let cfg = cfg.sanitized();
         assert_eq!(cfg.ui.font_scale, 2.0);
         assert_eq!(cfg.ui.snap_threshold_px, 8.0);
-        assert_eq!(cfg.ui.compact_rect.w, 320.0);
+        assert_eq!(cfg.ui.compact_rect.w, MIN_COMPACT_W);
         assert_eq!(cfg.translation.timeout_ms, 1_000);
+    }
+
+    /// 手改配置改出比原生约束还小的简洁窗时，夹回下限而不是拒绝启动（CHG-004 REQ-001 边界）。
+    /// 高度下限曾经写成 64，与 `MIN_COMPACT_SIZE` 的 96 不一致——那条缝里能存下 AppKit
+    /// 根本不允许的尺寸，启动后窗口会被原生约束顶回 96，配置与真实几何就此对不上。
+    #[test]
+    fn sanitize_lifts_a_hand_edited_compact_rect_to_the_native_floor() {
+        let mut cfg = Config::default();
+        cfg.ui.compact_rect.w = 100.0;
+        cfg.ui.compact_rect.h = 40.0;
+        let rect = cfg.sanitized().ui.compact_rect;
+        assert_eq!((rect.w, rect.h), (MIN_COMPACT_W, MIN_COMPACT_H));
+    }
+
+    #[test]
+    fn sanitize_leaves_a_larger_compact_rect_alone() {
+        let mut cfg = Config::default();
+        cfg.ui.compact_rect.w = 700.0;
+        cfg.ui.compact_rect.h = 200.0;
+        let rect = cfg.sanitized().ui.compact_rect;
+        assert_eq!((rect.w, rect.h), (700.0, 200.0), "无上限，不该被夹小");
     }
 
     #[test]

@@ -166,6 +166,41 @@
       "at": "2026-10-22T10:11:04+00:00",
       "action": "task-done",
       "detail": "T-001"
+    },
+    {
+      "at": "2026-10-22T10:14:37+00:00",
+      "action": "replan",
+      "detail": "计划文档自相矛盾，实施前修正（不动 spec.md，v0.3 批准继续有效）。\n\ndesign.md 的「REQ-001 实现与验证」一节还停在 v0.2 的机制：Compact 分支下发\nMinInnerSize(Vec2::ZERO) + MaxInnerSize(Vec2::INFINITY)，注释写「解掉全量留下的\n640×420」。而 v0.3 的 spec.md REQ-001 第 64 行已明确改为「先把最小内尺寸约束改成\n目标形态自己的下限（简洁 = MIN_COMPACT_SIZE 320×96，全量 = MIN_FULL_SIZE 640×420）」，\n并写了「MinInnerSize(Vec2::ZERO) 等价于 set_min_inner_size(None)（完全无约束），\n本包不用它——320×96 的下限交给原生约束执行，比只在 sanitize() 里夹一次更靠得住」。\n\n同一份 design.md 的「REQ-004 实现与验证」一节在 v0.3 那轮已经改对（commands_for_mode\n按形态取 min_size，两个形态都 Resizable(true)），所以是 REQ-001 一节被漏改：计划文档\n内部就自相矛盾，且与已批准的规格相左。这是我在 v0.3 修订时的遗漏，不是新发现的技术\n不确定性——三条 HYPOTHESIS 的实测结论一条没变。\n\n修正范围：design.md 第 84-100 行（Compact 分支命令块、顺序说明、验证条目），把\nMinInnerSize(ZERO)/MaxInnerSize(INFINITY) 换成按形态取下限，验证条目相应改成断言\nMinInnerSize(MIN_COMPACT_SIZE) 排在 InnerSize 之前；第 7 行正文里的\n「CHG-004 · v0.1 · spec_hash 0a74661d…」补成 v0.3 与当前哈希（文件头的 stamp 已是对的）。\ntasks.json 与 traceability.json 不动，T-001 的 done 状态保留。"
+    },
+    {
+      "at": "2026-10-22T10:16:16+00:00",
+      "action": "seal-plan",
+      "detail": "d9ced17e78709b6f78b654f65e37f6e4c008a22962fadff38113ed7a42c64277"
+    },
+    {
+      "at": "2026-10-22T10:16:16+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-10-22T10:20:16+00:00",
+      "action": "task-done",
+      "detail": "T-002"
+    },
+    {
+      "at": "2026-10-22T10:31:20+00:00",
+      "action": "task-done",
+      "detail": "T-003"
+    },
+    {
+      "at": "2026-10-22T11:31:32+00:00",
+      "action": "task-done",
+      "detail": "T-004"
+    },
+    {
+      "at": "2026-10-22T11:31:39+00:00",
+      "action": "task-done",
+      "detail": "T-005"
     }
   ],
   "approval": {
@@ -181,5 +216,5 @@
       "ice-translator": "main"
     }
   },
-  "plan_hash": "ddf878507b38b6a432d0cf7270e6c7593e5e3253bbc9cf8d250f5d4aae969e1d"
+  "plan_hash": "d9ced17e78709b6f78b654f65e37f6e4c008a22962fadff38113ed7a42c64277"
 }

@@ -203,8 +203,12 @@ impl eframe::App for Probe {
                 let panel = self.panel.unwrap_or(full);
 
                 // 窗口真实边界画一层极淡的框，方便肉眼确认透明余量有多大
-                ui.painter()
-                    .rect_stroke(full, 0.0, (1.0, Color32::from_gray(90)), StrokeKind::Middle);
+                ui.painter().rect_stroke(
+                    full,
+                    0.0,
+                    (1.0, Color32::from_gray(90)),
+                    StrokeKind::Middle,
+                );
                 ui.painter().rect_filled(
                     panel,
                     10.0,
@@ -225,8 +229,12 @@ impl eframe::App for Probe {
                 if tall {
                     inner.label(format!(
                         "window {:.0}×{:.0} @({:.0},{:.0}) focused {} cmds {}",
-                        geom.inner.x, geom.inner.y, geom.outer_pos.x, geom.outer_pos.y,
-                        geom.focused, self.cmds
+                        geom.inner.x,
+                        geom.inner.y,
+                        geom.outer_pos.x,
+                        geom.outer_pos.y,
+                        geom.focused,
+                        self.cmds
                     ));
                 }
                 inner.horizontal_wrapped(|ui| {
