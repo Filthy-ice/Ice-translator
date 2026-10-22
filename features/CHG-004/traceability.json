@@ -1,0 +1,278 @@
+{
+  "baseline": {
+    "change": "CHG-004",
+    "version": "v0.1",
+    "spec_hash": "0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2"
+  },
+  "design": [
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    },
+    {
+      "requirement": "REQ-007",
+      "section": "## REQ-007 实现与验证"
+    },
+    {
+      "requirement": "REQ-008",
+      "section": "## REQ-008 实现与验证"
+    },
+    {
+      "requirement": "REQ-009",
+      "section": "## REQ-009 实现与验证"
+    },
+    {
+      "requirement": "REQ-010",
+      "section": "## REQ-010 实现与验证"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "note": "全量单测；含 P4 既有 246 项的回归（形态切换内容保留、恢复看护、两栏对齐、动作条不压边等不得回退）"
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-006",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-core"
+      ],
+      "note": "config.sanitize 的简洁窗尺寸下限、语言检测置信度门槛与 WindowRect 的离屏判定"
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
+      "note": "无头断言：viewport 命令集合与顺序、把手命中、DragSettler、snap 五例与坐标翻转、Morph 端点与反向、compact 版式不溢出与译文可滚、dim_alpha 四组、Watcher 七例、落盘接线"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "note": "含新增 unsafe（AppKit 探针）：clippy 零警告"
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "note": "格式门禁"
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "python3",
+        "-B",
+        "tools/check_traceability.py"
+      ],
+      "note": "需求↔用例双向闭合：FR-3.2/3.5/3.7/3.8/3.9、FR-1.2/1.4、TC-3.5-a~e、TC-1.2-c、W-2.1~W-2.20"
+    },
+    {
+      "id": "V-007",
+      "requirements": [
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "scan"
+      ],
+      "note": "敏感信息基线扫描（含新增证据件）"
+    },
+    {
+      "id": "V-008",
+      "requirements": [
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "bash",
+        "-c",
+        "! grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates"
+      ],
+      "note": "Key 形态字符串零命中（NFR-3、ADR-005）"
+    },
+    {
+      "id": "V-009",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009",
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "用户按 docs/06-test-cases.md §3 的 W-2.1~W-2.20 真人走查（尺寸与缩放、三处把手、四边吸附与拖离、连续切换 10 次录屏、窗内引擎切换与译文滚动、失焦半透明、剪贴板即翻、强杀重启与插拔屏幕），逐行结论写进 docs/07-acceptance.md 的 P5 段"
+    },
+    {
+      "id": "V-010",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真机运行：三条 HYPOTHESIS 的实测结论、切到简洁窗后的真实 inner_rect、边缘缩放后的几何、四边吸附与拖离的坐标、形变每帧几何与末帧 ±2px 校正；由 ./sdd record 导入脱敏日志"
+    },
+    {
+      "id": "V-011",
+      "requirements": [
+        "REQ-005",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真机运行：窗内切机翻/AI 的重译与错误路径、长译文滚动到底、Esc 清空、失焦 85%/聚焦 100% 与关闭开关后恒定、剪贴板即翻开/关各一次 30 秒空闲 CPU 取样（ps -o cputime 差值，判据 <1%）"
+    },
+    {
+      "id": "V-012",
+      "requirements": [
+        "REQ-006",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真机运行：英文源文 + 自动检测的自动反向（含提示条与持久化）、停靠右边缘后 kill -TERM 重启位置仍在、插拔外接屏各一次界面正常；剪贴板与翻译内容只记长度与哈希前 8 位"
+    }
+  ]
+}
