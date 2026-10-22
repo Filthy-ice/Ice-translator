@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "id": "CHG-004",
+  "title": "简洁悬浮窗：可缩放无边框窗体、拖动与吸附、形变动画、窗内引擎切换、自动反向",
+  "version": "v0.1",
+  "status": "IMPLEMENTING",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-001",
+      "blocking": false,
+      "question": "简洁窗要不要可缩放？03-ui-design.md §3 定的是固定 460×96、mode.rs 发的是 Resizable(false)。",
+      "resolution": "改成可缩放：默认仍 460×96、下限 320×96、无上限，缩放结果写回 config.ui.compact_rect。需求 FR-3.2 与设计 §3 的文字在实现阶段同步改并登记变更行（REQ-001、REQ-010）。",
+      "source": "2026-10-22 会话：用户在 CHG-004@v0.1 规格评审前的问题清单中作出选择，随后批准该 Spec 哈希。用户答复：「简洁窗口也需要能鼠标拖动缩放啊」。"
+    },
+    {
+      "id": "Q-002",
+      "blocking": false,
+      "question": "简洁窗内切机翻/AI 的控件做成什么样？动作行只有 28px，原来只放三个动作。",
+      "resolution": "动作行常驻「机翻|AI」分段小按钮，当前引擎高亮，点一下即切并对当前源文自动重译（复用 state.set_engine）；动作行按钮改用中文短词以腾出宽度，不用 dingbats（P4 缺陷 D-5）。",
+      "source": "2026-10-22 会话：用户在 CHG-004@v0.1 规格评审前的问题清单中作出选择，随后批准该 Spec 哈希。用户答复：选择「动作行常驻「机翻|AI」分段小按钮（推荐）」。"
+    },
+    {
+      "id": "Q-003",
+      "blocking": false,
+      "question": "CHG-004 这一包做多大？P5 还挂着三条 Should（FR-3.7 半透明、FR-3.8 剪贴板即翻、FR-5.3 屏幕变化）与一条 P4 转来的待办（几何即时落盘）。",
+      "resolution": "Must + Should 全做：REQ-001~REQ-009 全包（含几何即时落盘与 FR-5.3 的夹回可视区），P6 直接进图片翻译，不再为简洁模式单开一包。",
+      "source": "2026-10-22 会话：用户在 CHG-004@v0.1 规格评审前的问题清单中作出选择，随后批准该 Spec 哈希。用户答复：选择「Must + Should 全做（推荐）」。"
+    },
+    {
+      "id": "Q-004",
+      "blocking": false,
+      "question": "默认 96px 高下长译文仍看不全——要不要让窗口按内容自动长高？",
+      "resolution": "按用户答复推断为不做自动长高：由用户自己拉大窗口（REQ-001）+ 译文区定高 ScrollArea 可滚（REQ-005）。评审时若要改成随内容长高到最多 4 行，需重算 Spec 哈希。",
+      "source": "2026-10-22 会话：对长译文处理方式的提问，用户答复「简洁窗口也需要能鼠标拖动缩放啊」，据此推断为可缩放而非自动长高；已在 spec.md Q-004 明写为推断并留出改口。"
+    },
+    {
+      "id": "Q-005",
+      "blocking": false,
+      "question": "剪贴板即翻在窗口收起（隐藏）时要不要也生效，并自动把窗口叫回来？",
+      "resolution": "默认只在窗口可见时即翻：收起时不轮询、不弹窗，空闲 CPU 与 P4 同量级（30 秒 0.000s）。若评审改成收起也即翻并自动叫回，实现改挂 App::logic（隐藏期只有它在跑）并在 REQ-008 补一条行为。",
+      "source": "2026-10-22 会话：Agent 提出默认方案与理由（不希望复制一段文字就凭空弹出悬浮条），留待用户在 Spec 评审时改口；spec.md Q-005。"
+    },
+    {
+      "id": "Q-006",
+      "blocking": false,
+      "question": "停靠时贴边那 6px 热区与 AppKit 的原生缩放手柄重叠，谁让位？",
+      "resolution": "实现选择，不改需求：停靠边不允许从该侧缩放，其余三边照常；拖离恢复自由浮动后四边都可缩放。理由是拖回悬浮条比从贴边侧拉宽更常见（REQ-003 边界）。",
+      "source": "2026-10-22 会话：Agent 依 winit-0.30.13/src/platform_impl/macos/window_delegate.rs:1037-1050 与 03-ui-design.md §3 吸附几何作出裁定；spec.md Q-006。"
+    },
+    {
+      "id": "Q-007",
+      "blocking": false,
+      "question": "三条 HYPOTHESIS（无边框缩放热区、逐帧 InnerSize 补间不闪、窗口级半透明）都要真机才能定论，而 Agent 无法自己驱动 GUI（osascript 被辅助功能权限拒、screencapture 出黑图）。",
+      "resolution": "保持未决，不阻塞批准：实现第一天各做一次最小实测（拉一下边、切一次形态、失焦一次），把几何日志与录屏交用户复核。不成立时按停止条件 1/2/3 处理——改实现方案 Agent 自定，改需求或降级 Must 必须回到评审。",
+      "source": "docs/07-acceptance.md P1 事实清单第 6~8 条（本机无法合成点击与截图）；spec.md Q-007 与停止条件。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-10-22T03:01:25+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-10-22T03:12:15+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-10-22T03:12:15+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-10-22T03:31:55+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2",
+        "version": "v0.1",
+        "by": "filthy-ice",
+        "reference": "P5 简洁悬浮窗规格批准（含可缩放/分段按钮/Must+Should 全做三项决定）",
+        "at": "2026-10-22T03:31:55+00:00",
+        "snapshot": "approvals/v0.1-0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2.md",
+        "scope": "local-delivery",
+        "context_hash": "0033ddf40f0b7ef246fbb18610b512c994debfae8f5e87f47983aa78b03d5bd4",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-10-22T03:45:08+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-004",
+        "version": "v0.1",
+        "spec_hash": "0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2"
+      }
+    },
+    {
+      "at": "2026-10-22T03:45:08+00:00",
+      "action": "seal-plan",
+      "detail": "788f353ac4e887e62deaf0098f71fd0fb10005ece9084f9fbf9c91d6b4fa8916"
+    },
+    {
+      "at": "2026-10-22T03:45:13+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    }
+  ],
+  "approval": {
+    "hash": "0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2",
+    "version": "v0.1",
+    "by": "filthy-ice",
+    "reference": "P5 简洁悬浮窗规格批准（含可缩放/分段按钮/Must+Should 全做三项决定）",
+    "at": "2026-10-22T03:31:55+00:00",
+    "snapshot": "approvals/v0.1-0a74661dd24107ebe2a576aacde34be301ddfcaa457fd8a54484689f3bd057e2.md",
+    "scope": "local-delivery",
+    "context_hash": "0033ddf40f0b7ef246fbb18610b512c994debfae8f5e87f47983aa78b03d5bd4",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "788f353ac4e887e62deaf0098f71fd0fb10005ece9084f9fbf9c91d6b4fa8916"
+}
