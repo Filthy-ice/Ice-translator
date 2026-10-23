@@ -114,16 +114,22 @@
 ```
 监视器可用区 (x, y, w, h) = 去掉菜单栏与 Dock
 松手时窗口 rect，d = min(到四边距离)
+若已停靠（锚点 = 停靠那刻下发的窗口原点，是独立状态；不能取每帧被 capture 改写的 compact_rect）：
+   沿停靠轴向屏幕内的位移 ≥ snap_threshold_px(40) ──► docked_edge = None，位置原样保留（拖离）
+   —— 拖离不能共用下面的 d：藏出去后窗口在停靠轴上本就超出可用区一整个自身长/边距，
+      d 恒为大负数，用它会每次吸回、拖离永远不成立
 若 d < snap_threshold_px(40)：
-   右： rect.x = area.right - rect.w + sliver(6)
+   右： rect.x = area.right - sliver(6)
    左： rect.x = area.x - rect.w + sliver
    上： rect.y = area.y - rect.h + sliver
-   下： rect.y = area.bottom - rect.h + sliver
+   下： rect.y = area.bottom - sliver
    docked_edge = 对应边
 否则 docked_edge = None（自由浮动）
 ```
 
-贴边后仍保留 6px 可见热区供拖回；`sliver` 与 `threshold` 均可配置并被 `sanitize()` 夹在合理范围。
+贴边后**四条边一致**：窗口藏到那条边之外，可视区内只留 6px 可见热区供拖回（左/上停靠因此必然是负坐标、右/下必然让 `rect.max` 超过可用区边界，这是机制而不是越界）。夹取只处理非预期的越界：交叉轴全量夹回可视区，停靠轴仅在窗口沿该轴比可用区还长时把起点夹到 `area.min`。`sliver` 与 `threshold` 均可配置并被 `sanitize()` 夹在合理范围。
+
+> 2026-10-23 变更（CHG-004 v0.4 / Q-009）：本块原来的右/下两行写的是 `area.right - rect.w + sliver` 与 `area.bottom - rect.h + sliver`，与左/上不对称（算出来是窗口基本全可见、只往外多探 6px），也与下一句"保留 6px 可见热区供拖回"相反。用户选定"四边都藏"，公式改为上面的对称版。**连带改动**：拖离判定改成"相对停靠锚点的位移"（伪代码里新增的那一段），因为藏出去之后"窗口到边线的距离"恒为大负数，原来那条几何判据对四条边都再也判不出拖离。
 
 ## 4. 交互流程
 

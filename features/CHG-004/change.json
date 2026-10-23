@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "CHG-004",
   "title": "简洁悬浮窗：可缩放无边框窗体、拖动与吸附、瞬时形态切换、窗内引擎切换、自动反向",
-  "version": "v0.3",
+  "version": "v0.4",
   "status": "IMPLEMENTING",
   "kind": "feature",
   "repos": [
@@ -57,6 +57,20 @@
       "question": "三条 HYPOTHESIS（无边框缩放热区、逐帧 InnerSize 补间不闪、窗口级半透明）都要真机才能定论，而 Agent 无法自己驱动 GUI（osascript 被辅助功能权限拒、screencapture 出黑图）。",
       "resolution": "保持未决，不阻塞批准：实现第一天各做一次最小实测（拉一下边、切一次形态、失焦一次），把几何日志与录屏交用户复核。不成立时按停止条件 1/2/3 处理——改实现方案 Agent 自定，改需求或降级 Must 必须回到评审。",
       "source": "docs/07-acceptance.md P1 事实清单第 6~8 条（本机无法合成点击与截图）；spec.md Q-007 与停止条件。"
+    },
+    {
+      "id": "Q-008",
+      "blocking": false,
+      "question": "窗内补间的代价：动画那 ≤220ms 里窗口矩形比可见内容大（外接矩形），落在透明区的点击会被本窗口接住，且系统若给窗口画阴影会跟着大矩形走",
+      "resolution": "已消解（2026-10-22）：v3 实测双向窗内补间每次必撞 ~1.0s 停摆（起点撑外接矩形就是 surface resize），据此取消动画、FR-3.9 改为瞬时切换 → 不再有外接矩形、不再有吞点击的透明余量、阴影也不会跟着大矩形跑，objc2 setHasShadow(false) 这条备用手段不需要了（system::screen 仍会引 objc2 取监视器可用区）。REQ-004 已按瞬时切换重写",
+      "source": "features/CHG-004/evidence/T-001-hypothesis-verdicts.md（v3 三轮实测）+ docs/07-acceptance.md 2026-10-22 变更登记行；用户 2026-10-22 原话「算了不要动画了，都做成瞬间的」"
+    },
+    {
+      "id": "Q-009",
+      "blocking": false,
+      "question": "REQ-003 的四条停靠公式互相对不上：左/上是「藏进去只剩 6px 可见」，右/下按字面算出来却是「窗口基本全可见、只往外多探 6px」；同一条 REQ 又写「SHALL NOT 产生负坐标或把窗口推到屏幕外」，与左/上的热区做法直接冲突。三种读法（按字面 / 四边都藏 / 四边齐平）都能自圆其说，实现侧不能静默挑一个。",
+      "resolution": "四边都藏 6px：停靠即把窗口藏到那条边之外，四条边一致只留 dock_sliver_px 的一条可见热区供拖回。REQ-003 第一条的右/下公式改为 x = area.right - sliver、y = area.bottom - sliver（左/上不变），第三条的越界禁止改为「只禁止非预期越界」并明写贴边藏出去是机制本身。规格据此升到 v0.4。**连带（同一决定的必然后果，不是新需求）**：藏出去后「窗口到边线的几何距离」在停靠轴上恒为大负数，原来那条几何判据再也判不出「拖离」，故 REQ-003 新增一句把拖离定为「相对停靠锚点沿停靠轴向内的位移 ≥ 阈值」，纯函数的输入清单相应加上「当前停靠边 + 停靠锚点」，`docs/03-ui-design.md` §3 伪代码与 TC-3.5-d 的判据同步改写。",
+      "source": "2026-10-23 会话：实施 T-005（吸附）时发现规格内部矛盾，向用户给出「按字面（已实现）/ 四边都藏 6px / 四边都齐平 / 先真机试用再定」四个选项，用户选择「四边都藏 6px（推荐）」。"
     }
   ],
   "history": [
@@ -201,20 +215,61 @@
       "at": "2026-10-22T11:31:39+00:00",
       "action": "task-done",
       "detail": "T-005"
+    },
+    {
+      "at": "2026-10-23T03:07:06+00:00",
+      "action": "revise",
+      "detail": "用户 2026-10-23 决定：REQ-003 停靠几何四边统一为「藏到边外、可视区内只留 6px 可见热区」（Q-009）。v0.3 的右/下公式与左/上不对称，且与同条的『不许产生负坐标』互斥，字面上无法同时满足；实现 T-005 时发现并上报，用户选定对称藏边。"
+    },
+    {
+      "at": "2026-10-23T03:35:50+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f",
+        "version": "v0.4",
+        "by": "filthy-ice",
+        "reference": "P5 规格 v0.4 批准：FR-3.5 停靠几何四边统一为「藏到边外、可视区只留 6px 热区」，连带拖离判定改为按停靠锚点位移（用户 2026-10-23 决定「四边都藏 6px」）",
+        "at": "2026-10-23T03:35:50+00:00",
+        "snapshot": "approvals/v0.4-6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f.md",
+        "scope": "local-delivery",
+        "context_hash": "112cdd20d91d693e42aaa0707357e4366e13765e829678f777e072ac512b015e",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-10-23T03:36:11+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-004",
+        "version": "v0.4",
+        "spec_hash": "6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f"
+      }
+    },
+    {
+      "at": "2026-10-23T03:36:11+00:00",
+      "action": "seal-plan",
+      "detail": "e6a6ae2f0f080484ab3d3545219c7963336332095c89a074ee5047123a34ad8f"
+    },
+    {
+      "at": "2026-10-23T03:36:12+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
     }
   ],
   "approval": {
-    "hash": "235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c",
-    "version": "v0.3",
+    "hash": "6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f",
+    "version": "v0.4",
     "by": "filthy-ice",
-    "reference": "P5 规格 v0.3 批准：FR-3.9 由形变动画改为瞬时切换（用户 2026-10-22 决定「算了不要动画了，都做成瞬间的」，依据 v3 探针实测）",
-    "at": "2026-10-22T10:06:37+00:00",
-    "snapshot": "approvals/v0.3-235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c.md",
+    "reference": "P5 规格 v0.4 批准：FR-3.5 停靠几何四边统一为「藏到边外、可视区只留 6px 热区」，连带拖离判定改为按停靠锚点位移（用户 2026-10-23 决定「四边都藏 6px」）",
+    "at": "2026-10-23T03:35:50+00:00",
+    "snapshot": "approvals/v0.4-6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f.md",
     "scope": "local-delivery",
-    "context_hash": "0033ddf40f0b7ef246fbb18610b512c994debfae8f5e87f47983aa78b03d5bd4",
+    "context_hash": "112cdd20d91d693e42aaa0707357e4366e13765e829678f777e072ac512b015e",
     "branches": {
       "ice-translator": "main"
     }
   },
-  "plan_hash": "d9ced17e78709b6f78b654f65e37f6e4c008a22962fadff38113ed7a42c64277"
+  "plan_hash": "e6a6ae2f0f080484ab3d3545219c7963336332095c89a074ee5047123a34ad8f"
 }

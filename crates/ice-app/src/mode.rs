@@ -92,23 +92,22 @@ pub fn clamp_compact_rect(rect: WindowRect) -> WindowRect {
 /// 判定是纯函数：输入窗口外框、屏幕可用区、阈值与热区宽度，输出新矩形与停靠边。
 /// `area` 来自 `system::screen::work_area`（去掉菜单栏与 Dock 的那块）。
 ///
-/// 四条公式逐字照抄 `spec.md` REQ-003 与 `docs/03-ui-design.md` §3 的伪代码：
+/// 四条公式逐字照抄 `spec.md` REQ-003 与 `docs/03-ui-design.md` §3（v0.4 的对称版）：
 ///
 /// ```text
-/// 右 x = area.right  - w + sliver      左 x = area.x      - w + sliver
-/// 下 y = area.bottom - h + sliver      上 y = area.y      - h + sliver
+/// 右 x = area.right  - sliver      左 x = area.x      - w + sliver
+/// 下 y = area.bottom - sliver      上 y = area.y      - h + sliver
 /// ```
 ///
-/// **注意这四条并不对称**：左/上把窗口大部分推出屏幕、只留 `sliver` 宽的可见热区
-/// （与"保留 6px 可见热区供拖回"、TC-3.5-d"热区消失"一致）；而右/下按同一公式算出来的是
-/// 窗口**超出**可用区 `sliver` 像素（几乎全可见）。基线文档三处都是这么写的，
-/// 所以这里按字面实现，不自行改成"四边都只露 6px"——那属需求变更，要重新走批准。
+/// **四边一致：把窗口藏到那条边之外，可视区内只留 `sliver` 宽的一条热区供拖回**。
+/// 因此左/上停靠必然是负坐标、右/下必然让 `rect.max` 超过 `area.max`——这是机制本身，
+/// 不是越界（2026-10-23 用户定"四边都藏 6px"，见 Q-009；v0.3 的右/下写的是
+/// `area.max - size + sliver`，算出来是窗口几乎全可见、只往外多探 6px，与左/上不对称）。
 ///
-/// 夹取只分两种（设计里"吸附后再跑一次 `fit_into_area`"与 TC-3.5-a 的字面期望冲突，
-/// 全量夹取会把 sliver 也夹没，四条公式全部失效）：
+/// 夹取只分两种（吸附后再跑一次 `fit_into_area` 会把刚留出来的 sliver 一起夹没）：
 /// - **交叉轴**（贴左右时夹 y、贴上下时夹 x）全量夹进可用区，不许窗口斜着飘出去；
 /// - **停靠轴**只在窗口比可用区还长时夹到起点，此时 `area.max - size` 是负数，
-///   照抄会把窗口甩到屏幕外（TC-3.5-e 要的正是"不产生负坐标、夹在可视区内"）。
+///   照抄会把窗口甩到屏幕另一侧之外（TC-3.5-e 要的正是拦住这一种）。
 pub fn snap(window: Rect, area: Rect, threshold: f32, sliver: f32) -> (Rect, DockEdge) {
     let candidates = [
         (DockEdge::Left, window.min.x - area.min.x),
@@ -133,7 +132,7 @@ pub fn dock(window: Rect, area: Rect, edge: DockEdge, sliver: f32) -> Rect {
     let size = window.size();
     let (x, y) = match edge {
         DockEdge::Right => (
-            docked_axis(area.max.x - size.x + sliver, size.x, area.min.x, area.max.x),
+            docked_axis(area.max.x - sliver, size.x, area.min.x, area.max.x),
             cross_axis(window.min.y, size.y, area.min.y, area.max.y),
         ),
         DockEdge::Left => (
@@ -142,7 +141,7 @@ pub fn dock(window: Rect, area: Rect, edge: DockEdge, sliver: f32) -> Rect {
         ),
         DockEdge::Bottom => (
             cross_axis(window.min.x, size.x, area.min.x, area.max.x),
-            docked_axis(area.max.y - size.y + sliver, size.y, area.min.y, area.max.y),
+            docked_axis(area.max.y - sliver, size.y, area.min.y, area.max.y),
         ),
         DockEdge::Top => (
             cross_axis(window.min.x, size.x, area.min.x, area.max.x),
@@ -151,6 +150,31 @@ pub fn dock(window: Rect, area: Rect, edge: DockEdge, sliver: f32) -> Rect {
         DockEdge::None => return window,
     };
     Rect::from_min_size(Pos2::new(x, y), size)
+}
+
+/// 已停靠时判"拖离"（REQ-003 第三条、TC-3.5-d）：松手原点相对**停靠锚点**沿停靠轴
+/// 向屏幕内移动的距离 ≥ 阈值即解除停靠。
+///
+/// 不能共用 `snap` 里那个"窗口到边线的几何距离"：窗口藏到边外之后，那条边的距离恒为
+/// 约 `-(size - sliver)`（460 宽的窗、sliver 6 时约 -454），总是四边里最小的，
+/// `snap` 会把"向内拖 200px"重新吸回原边，拖离永远不成立。
+///
+/// `anchor` 必须是停靠那一刻下发的那个原点，不能取 `config.ui.compact_rect`——
+/// `capture` 每帧按实时几何改写它，拖动途中就被冲掉、位移恒为 0。
+///
+/// 只算停靠轴：交叉轴（沿边滑动）的位移不判拖离，停靠态应当保留。
+pub fn released(edge: DockEdge, anchor: Pos2, settled: Pos2, threshold: f32) -> bool {
+    let inward = match edge {
+        DockEdge::Right => anchor.x - settled.x,
+        DockEdge::Left => settled.x - anchor.x,
+        DockEdge::Top => settled.y - anchor.y,
+        DockEdge::Bottom => anchor.y - settled.y,
+        DockEdge::None => return false,
+    };
+    matches!(
+        inward.partial_cmp(&threshold),
+        Some(Ordering::Greater) | Some(Ordering::Equal)
+    )
 }
 
 /// 交叉轴：整条夹进可用区，窗口不许斜着飘出去
@@ -818,18 +842,22 @@ mod tests {
         Rect::from_min_size(Pos2::new(x, y), COMPACT)
     }
 
-    /// TC-3.5-a：距右边缘 30px（阈值 40）→ 停靠右边，`x = area.right − w + sliver`
+    /// TC-3.5-a：距右边缘 30px（阈值 40）→ 停靠右边，`x = area.right − sliver`
     #[test]
     fn snapping_to_the_right_edge_uses_the_specified_formula() {
         let window = at(1440.0 - 30.0 - 460.0, 400.0);
         let (rect, edge) = snap(window, area(), 40.0, 6.0);
         assert_eq!(edge, DockEdge::Right);
-        assert_eq!(rect.min.x, 1440.0 - 460.0 + 6.0);
+        assert_eq!(rect.min.x, 1440.0 - 6.0);
+        assert_eq!(area().max.x - rect.min.x, 6.0, "可视区内只露出 6px 热区");
+        assert!(
+            rect.max.x > area().max.x,
+            "窗口本体藏在边外，这是机制不是越界"
+        );
         assert_eq!(rect.min.y, 400.0, "交叉轴上本来就在可用区内，不该动");
     }
 
-    /// TC-3.5-b：左/上/下各 30px，分别停靠对应边。
-    /// 左与上按基线公式把窗口大部分推出屏幕，只留 6px 可见热区（拖回来的抓手）。
+    /// TC-3.5-b：左/上/下各 30px，分别停靠对应边，**四条边可见部分恒为 6px**
     #[test]
     fn the_other_three_edges_snap_the_same_way() {
         let (rect, edge) = snap(at(30.0, 400.0), area(), 40.0, 6.0);
@@ -844,7 +872,12 @@ mod tests {
 
         let (rect, edge) = snap(at(700.0, 830.0 - 30.0 - 96.0), area(), 40.0, 6.0);
         assert_eq!(edge, DockEdge::Bottom);
-        assert_eq!(rect.min.y, 830.0 - 96.0 + 6.0);
+        assert_eq!(rect.min.y, 830.0 - 6.0);
+        assert_eq!(
+            area().max.y - rect.min.y,
+            6.0,
+            "下边与上边一样只藏到剩 6px 热区"
+        );
     }
 
     /// TC-3.5-c：四边都够远 → 自由浮动，位置一个像素都不动
@@ -856,21 +889,97 @@ mod tests {
         assert_eq!(rect, window);
     }
 
-    /// TC-3.5-d：已停靠右边、又被拖离 200px → 恢复自由浮动，不自动吸回原边
+    /// TC-3.5-d：已停靠右边、又向内拖 200px → `released` 判出解除停靠
     #[test]
-    fn dragging_a_docked_window_away_releases_it() {
+    fn dragging_a_docked_window_inward_releases_it() {
         let (docked, edge) = snap(at(1440.0 - 30.0 - 460.0, 400.0), area(), 40.0, 6.0);
         assert_eq!(edge, DockEdge::Right);
-        let dragged = Rect::from_min_size(Pos2::new(docked.min.x - 200.0, 400.0), COMPACT);
-        let (rect, edge) = snap(dragged, area(), 40.0, 6.0);
-        assert_eq!(edge, DockEdge::None);
-        assert_eq!(rect, dragged, "松手位置原样保留");
+        let anchor = docked.min;
+        let dragged = at(anchor.x - 200.0, 400.0);
+        assert!(
+            released(edge, anchor, dragged.min, 40.0),
+            "向内 200px ≥ 阈值，必须判拖离"
+        );
+        assert!(
+            !released(edge, anchor, at(anchor.x - 20.0, 400.0).min, 40.0),
+            "20px 还没过阈值，仍算停靠"
+        );
+        assert!(
+            !released(edge, anchor, anchor, 40.0),
+            "原地松手（位移 0）不算拖离"
+        );
     }
 
-    /// TC-3.5-e：窗口比屏幕可用区还高 → 不产生负坐标，夹在可视区内。
+    /// 四条边都判得出拖离，方向各不相同（v0.3 只有右边判得出来，左/上从一开始就拖不离）
+    #[test]
+    fn every_edge_releases_toward_the_screen_interior() {
+        // (停靠边, 锚点, 向内拖 200px 后的原点)
+        let cases = [
+            (
+                DockEdge::Right,
+                Pos2::new(600.0, 400.0),
+                Pos2::new(400.0, 400.0),
+            ),
+            (
+                DockEdge::Left,
+                Pos2::new(600.0, 400.0),
+                Pos2::new(800.0, 400.0),
+            ),
+            (
+                DockEdge::Top,
+                Pos2::new(600.0, 400.0),
+                Pos2::new(600.0, 600.0),
+            ),
+            (
+                DockEdge::Bottom,
+                Pos2::new(600.0, 400.0),
+                Pos2::new(600.0, 200.0),
+            ),
+        ];
+        for (edge, anchor, inward) in cases {
+            assert!(
+                released(edge, anchor, inward, 40.0),
+                "{edge:?} 沿停靠轴向内 200px 应判拖离"
+            );
+            let outward = anchor + (anchor - inward);
+            assert!(
+                !released(edge, anchor, outward, 40.0),
+                "{edge:?} 往边外推不是拖离"
+            );
+            // 沿交叉轴拖 200px 是"贴着边滑动"，停靠态要留着
+            let along = match edge {
+                DockEdge::Left | DockEdge::Right => Pos2::new(anchor.x, anchor.y + 200.0),
+                _ => Pos2::new(anchor.x + 200.0, anchor.y),
+            };
+            assert!(
+                !released(edge, anchor, along, 40.0),
+                "{edge:?} 的交叉轴位移不该解除停靠"
+            );
+        }
+        assert!(!released(
+            DockEdge::None,
+            Pos2::ZERO,
+            Pos2::new(900.0, 900.0),
+            40.0
+        ));
+    }
+
+    /// 为什么必须有 `released`：藏出去之后停靠那条边的几何距离恒为大负数、且总是四边最小，
+    /// 只跑 `snap` 会把"向内拖 200px"重新吸回原边。谁想把它"简化"回单一几何判据，先过这条。
+    #[test]
+    fn geometry_alone_would_snap_a_dragged_away_window_back() {
+        let (docked, _) = snap(at(1440.0 - 30.0 - 460.0, 400.0), area(), 40.0, 6.0);
+        let dragged = at(docked.min.x - 200.0, 400.0);
+        let (rect, edge) = snap(dragged, area(), 40.0, 6.0);
+        assert_eq!(edge, DockEdge::Right, "几何判据仍然判成停靠");
+        assert_eq!(rect.min.x, 1440.0 - 6.0, "并且把窗口吸回边外");
+    }
+
+    /// TC-3.5-e：窗口比屏幕可用区还高 → 停靠轴的起点夹到 `area.min`（不是
+    /// `area.max − size` 那个负数，照抄会把窗口甩到屏幕另一侧之外），交叉轴全量夹回可视区。
     /// 这是"停靠轴也要夹"的唯一情形；其余情况一律保留热区（见 `snap` 的文档）。
     #[test]
-    fn a_window_taller_than_the_work_area_never_gets_negative_coordinates() {
+    fn a_window_taller_than_the_work_area_gets_clamped_to_the_area_start() {
         let tall = Rect::from_min_size(Pos2::new(700.0, 800.0), Vec2::new(460.0, 900.0));
         let (rect, edge) = snap(tall, area(), 40.0, 6.0);
         assert_eq!(edge, DockEdge::Bottom);
@@ -879,11 +988,16 @@ mod tests {
             "夹到可用区起点，不是 area.bottom − 900 + 6 那个负数"
         );
         assert!(rect.min.y >= area().min.y);
+        assert!(
+            area().max.y - rect.min.y >= 6.0,
+            "夹完仍要留得住拖回来的 6px 热区"
+        );
 
         let wide = Rect::from_min_size(Pos2::new(1400.0, 400.0), Vec2::new(1600.0, 96.0));
         let (rect, edge) = snap(wide, area(), 40.0, 6.0);
         assert_eq!(edge, DockEdge::Right);
         assert_eq!(rect.min.x, 0.0);
+        assert!(area().max.x - rect.min.x >= 6.0);
     }
 
     /// 交叉轴永远夹在可用区内：贴着右边停靠时 y 不许留在屏幕外。
@@ -892,7 +1006,7 @@ mod tests {
     /// 窗口远在屏幕下方时 `d_bottom` 是个大负数，胜出的一定是底边，测不到右边的交叉轴。
     #[test]
     fn docking_clamps_the_cross_axis_into_the_work_area() {
-        let x = 1440.0 - 460.0 + 6.0;
+        let x = 1440.0 - 6.0;
         let rect = dock(at(x, 2000.0), area(), DockEdge::Right, 6.0);
         assert_eq!(rect.min.y, 830.0 - 96.0, "越下要夹回可用区底边");
         assert_eq!(rect.min.x, x, "停靠轴本身不动");
