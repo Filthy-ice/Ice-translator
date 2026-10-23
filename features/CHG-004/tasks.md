@@ -1,6 +1,6 @@
 Change: CHG-004
-Version: v0.3
-Spec-Hash: 235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c
+Version: v0.4
+Spec-Hash: 6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [x] T-001 三条 HYPOTHESIS 最小实测：无边框边缘缩放、逐帧 InnerSize 补间、with_transparent 副作用（已跑完三轮：H1/H3 成立；H2 不成立；窗内补间只能单向、双向必撞 ~1s 停摆；单发几何命令 20ms 落定 → 用户决定取消动画，FR-3.9 改为瞬时切换） | ice-translator | REQ-001, REQ-004, REQ-007

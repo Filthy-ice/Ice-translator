@@ -1,6 +1,6 @@
 Change: CHG-004
-Version: v0.3
-Spec-Hash: 235deaf136a3d2a0f9d8585b72f05f2b8948470f70d9e26629c5f5872091fa9c
+Version: v0.4
+Spec-Hash: 6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f
 
 # CHG-004 · Design
 
@@ -104,21 +104,35 @@ UiMode::Compact => vec![
 
 把手三处，全部走 `ViewportCommand::StartDrag`（原生拖拽，不自绘坐标）：
 
-1. **顶部 10px 把手条**：`Panel::top("compact_handle").exact_size(10.0)`，`ui.set_cursor_icon(CursorIcon::Grab)`；用 `ui.interact(ui.max_rect(), Id, Sense::click_and_drag())`，`response.drag_started()` 时发命令。
-2. **动作行空白**：动作行 `ui.horizontal` 结束后对剩余空白 `interact(..., Sense::click_and_drag())`。
-3. **译文区尾部空白**：译文 `ScrollArea` 内文本右侧的剩余区域同样处理（文本本身要可选中，所以把手是"文本 rect 之外"的那块，用 `ui.available_rect_before_wrap()` 减去文本 rect 得到）。
+1. **顶部 10px 把手条**：`Panel::top("compact_handle").exact_size(10.0)`，`Sense::drag()` + `response.on_hover_cursor(CursorIcon::Grab)`，`drag_started()` 时发命令。`Frame::side_top_panel` 自带 `Margin::symmetric(8,2)`，10px 的条只剩 6px 可用，所以这一条用 `Frame::NONE.fill(panel_fill)` 铺满。
+2. **动作行空白**：左侧按钮组与右侧两个指示按钮之间的空隙单独成一块 `interact(..., Sense::drag())`，左右各留 4px 余量，避免吃掉按钮的命中区。
+3. **译文区尾部空白**：译文 `ScrollArea` **下方**那条 8px 带（不是文本右侧——右侧正是滚动条要留的位置，REQ-002 明写滚动条要能拖）。这块带在滚动容器之外，从 `CentralPanel` 的矩形里切出来，所以它既不撑高内容也不造出假滚动条。
+
+三处把手是实现成**三个互不重叠的显式矩形**、各自 `ui.interact`，不是"整块窗覆盖一层透明把手"：egui 的命中测试取最后画上去的那个 rect，把手若叠在控件上会把控件吃掉（egui 自己的 `Window` 标题栏避让关闭按钮用的就是这一招）。三个矩形与 `drag_handle` 的实际位置用 `ctx.data` 记下来，供单测断言"都在窗口内且两两不相交"。
+
+`Sense::drag()` 而不是原设计的 `Sense::click_and_drag()`：后者要等指针走过 `max_click_dist`（6.0px）才把 response 标成 dragged，与 REQ-002 的"按下任一处 SHALL 立即发 `StartDrag`"矛盾；纯 `drag()` 在按下那一帧就置位。代价是把手区不能再被点击——三块都是空白区，本来没有点击语义。
 
 未聚焦时第一次按下会被吞：`StartDrag` 的实现被 `window.has_focus()` 挡着（`egui-winit-0.37.0/src/lib.rs:1961-1968`，注释说 x11 上不判焦点会永久吃掉输入）。处置：把手 `drag_started()` 时若 `ctx.input(|i| i.viewport().focused) != Some(true)`，先发 `ViewportCommand::Focus`（同帧命令按序执行，`Focus` 在 `StartDrag` 之前入队），真机验证"一次按下就能拖"。若实测仍要两下，走停止条件 4。
 
 不触发拖动的控件：输入框（`TextEdit` 自己吃掉事件）、四个按钮、引擎分段、译文文本、滚动条——实现上把手只覆盖"空白区域"，绝不与控件 rect 重叠；单测用无头 `run_ui` 在不同指针位置断言 `Effects::start_drag` 有无被置位（沿用 P4 的 Effects 断言手法）。
 
-松手触发吸附：原生拖拽期间 egui 收不到 pointer 事件，所以用**静止判定**——`DragSettler::feed(outer_rect, now) -> Option<Rect>`：`start_drag` 发出后置 `armed`；此后每帧比较 rect，变化就刷新 `last_move`，连续 `DRAG_SETTLE = 150ms` 不变则返回最终 rect（交 REQ-003 吸附 + REQ-009 落盘），返回后解除 `armed`。纯函数，单测喂一串带时间戳的 rect 序列（移动中 → 停 150ms → 返回一次且只返回一次）。
+松手触发吸附：原生拖拽期间 egui 收不到 pointer 事件（AppKit 进了嵌套事件循环），所以用**静止判定**——`DragSettler::feed(outer_rect, now) -> Option<Rect>`：`start_drag` 发出后置 `armed`；此后每帧比较 rect，变化就刷新 `last_move`，连续 `DRAG_SETTLE = 150ms` 不变则返回最终 rect（交 REQ-003 吸附 + REQ-009 落盘），返回后解除 `armed`。纯函数，单测喂一串带时间戳的 rect 序列（移动中 → 停 150ms → 返回一次且只返回一次）。
+
+实现时要加三条原设计没写的规则（都是写单测时暴露出来的）：
+- **读不到几何的那一帧按"还在动"处理并刷新计时**。原先这里是 `let rect = outer?;`，直接把计时停在旧值上，于是拖动中途就能判出静止、把用户还按着的窗口吸到边上——子像素抖动同理，比较时用 0.5px 容差而不是 `==`。
+- **armed 期间每帧续 `request_repaint_after(DRAG_SETTLE)`**。原生拖拽结束后事件循环可能再没有理由画一帧，不续就永远等不到"静止满 150ms"，吸附形同没做。
+- **程序驱动的移动一律 `disarm()`**（`open_settings`、`cycle_dock`、形态切换），否则自己发的 `OuterPosition` 会被当成"用户松手了"再吸一次。吸附回写前还要把吸附结果与松手 rect 比一次（≤0.5px 且边相同就跳过），防止吸完又触发下一轮。
 
 **验证**：把手命中/不命中（4 组指针位置）、`StartDrag` 入队、未聚焦时先入队 `Focus`、`DragSettler` 五例（未 armed 不返回、移动中不返回、静止不足不返回、恰好静止返回一次、再次移动重新计时）；真机 W-2.13（三处把手各拖一次，且拖输入框/按钮不移动窗口）。
 
 ## REQ-003 实现与验证
 
-纯函数 `snap(window: Rect, area: Rect, threshold: f32, sliver: f32) -> (Rect, DockEdge)`：
+纯函数两条，都在 `mode.rs`（REQ-003 末尾那句"判定 SHALL 是纯函数"的输入清单在 v0.4 加了"当前停靠边 + 停靠锚点"，就是为了第二条）：
+
+- `snap(window: Rect, area: Rect, threshold: f32, sliver: f32) -> (Rect, DockEdge)`——松手位置的几何吸附
+- `released(edge: DockEdge, anchor: Pos2, settled: Pos2, threshold: f32) -> bool`——已停靠时判"拖离"（v0.4 新增，Q-009 那条决定的连带后果）
+
+`snap`：
 
 ```
 d_left   = window.min.x - area.min.x
@@ -126,13 +140,32 @@ d_right  = area.max.x - window.max.x
 d_top    = window.min.y - area.min.y
 d_bottom = area.max.y - window.max.y
 取最小的那条边与其距离 d；d < threshold 才吸附：
-  Right  → x = area.max.x - w + sliver
+  Right  → x = area.max.x - sliver
   Left   → x = area.min.x - w + sliver
   Top    → y = area.min.y - h + sliver
-  Bottom → y = area.max.y - h + sliver
-吸附后再跑一次 fit_into_area（见 REQ-009）保证不出负坐标、不出可视区（TC-3.5-e）
+  Bottom → y = area.max.y - sliver
 否则 (window, DockEdge::None)
 ```
+
+**四条公式在 v0.4 按 Q-009 改成对称版**：右/下原来是 `area.max - size + sliver`，算出来是"窗口基本全可见、只往外多探 6px"，与左/上的"藏进去只剩 6px"以及本条要的可见热区相反。现在四边一致：贴边即把窗口藏到那条边之外，可视区内只留 `sliver` 宽的一条热区供拖回。因此左/上停靠必然是负坐标、右/下停靠必然让 `rect.max` 超过 `area.max`——这是机制本身，不是越界。
+
+**拖离改按锚点位移，不能再共用 `snap` 的那个距离**：窗口藏到边外之后，它在停靠轴上超出可用区一整个"自身宽/高 − sliver"，那条边的 `d` 恒为约 `-454`（460×96 的窗、sliver 6），`min_by` 每次都选中它、`d < threshold` 恒成立，于是 `snap` 会把"向内拖 200px"重新吸回原边，REQ-003 第三条永远不成立。改为 `released`：判"松手原点相对**停靠锚点**沿停靠轴向屏幕内移动的距离 ≥ threshold"：
+
+```
+Right  → anchor.x - settled.x     Left   → settled.x - anchor.x
+Top    → settled.y - anchor.y     Bottom → anchor.y - settled.y
+判出的位移 ≥ threshold ──► (settled 原样, DockEdge::None)   // 交叉轴方向的位移不计，
+                                                            // 沿边滑动仍应保持停靠
+```
+
+`apply_snap` 的顺序因此是：整条掉出可用区 → `fit_into_area`；已停靠且 `released` → 就地释放为自由浮动；否则跑 `snap`。
+
+锚点不能取 `config.ui.compact_rect`：`mode::capture` 每帧（`app.rs:156`）都把实时几何写回它，拖动途中锚点就被 pointer 位置冲掉了，位移恒为 0。改为 `IceApp::dock_anchor: Option<Pos2>`——`place_compact` 在 `edge != None` 时把它写成刚下发的那个原点、`edge == None` 时清空；启动时若配置里 `docked_edge != None`，锚点取 `compact_rect.min`（那次强制落盘写的正是停靠后的几何，两者相等），不新增配置字段。v0.3 的左/上停靠从一开始就有这个"拖不离"的缺陷，只是 TC-3.5-d 当时只测右边（右/下按 v0.3 公式只超出 6px，几何距离碰巧还能用）没暴露。
+夹取分两轴，**不在吸附后再跑一次 `fit_into_area`**（原设计的这一句与 TC-3.5-a 的字面期望冲突：`fit_into_area` 是全量夹取，会把刚留出来的 6px 热区一起夹没，四条公式全部失效）：
+- **交叉轴**（贴左右时夹 y、贴上下时夹 x）全量夹进可用区，不许窗口斜着飘出去；
+- **停靠轴**只在窗口沿该轴比可用区还长时把起点夹到 `area.min`——此时 `area.max - size` 本身是负数，照抄会把窗口甩到屏幕另一侧之外，TC-3.5-e 要的正是拦住这一种。
+
+`fit_into_area` 仍然实现并被 REQ-009 的启动/插拔恢复用（`snap` 与"点指示换边"不用它）。它在本包还多一个消费者：松手时窗口整条落在可用区之外（`!area.intersect(settled).is_positive()`），此时不判吸附，先 `fit_into_area` 把窗口拉回可视区。
 
 与 `03-ui-design.md` §3 的伪代码逐行对应，`sliver`/`threshold` 从 `config.ui` 取（默认 6/40）。
 
@@ -140,7 +173,7 @@ d_bottom = area.max.y - window.max.y
 
 `area` 来自 `system::screen::work_area(ctx, outer_rect)`（见"Spec 事实更正"）；探针失败时回退 `monitor_size`，并把这次回退记进日志（`warn_once` 语义，避免每帧刷屏）。
 
-**验证**：TC-3.5-a~e 五例纯函数单测（右 30px / 左上右下各 30px / 四边都 >40px / 停靠后拖离 200px / 窗口高于可用区）+ `cycle_edge` 五例 + 坐标翻转纯函数四例（主屏、副屏在主屏右侧、副屏在主屏下方、窗口不在任何屏内）；真机 W-2.5/2.6 + 新增 W-2.18（指示循环一圈）。
+**验证**：TC-3.5-a~e 五例纯函数单测（右 30px → `x = area.max.x - sliver` 且可视区只露 6px / 左上右下各 30px → 四边可见部分恒为 6px / 四边都 >40px / 停靠后向内拖 200px / 窗口高于可用区）+ `released` 四边各一例（右与下按 `-x`、`-y` 方向判，左与上按 `+x`、`+y` 判；再各加一例"沿交叉轴拖 200px 不释放"）+ `cycle_edge` 五例 + 坐标翻转纯函数四例（主屏、副屏在主屏右侧、副屏在主屏下方、窗口不在任何屏内）；接线一例锁住"锚点不是 `compact_rect`"——先吸附停靠、再让 `capture` 把 `compact_rect` 写成拖动途中的值，断言仍按 `dock_anchor` 判出释放。真机 W-2.5/2.6 + 新增 W-2.18（指示循环一圈）+ W-2.18 补一条"四条边各拖离一次都能脱开"。
 
 ## REQ-004 实现与验证
 
@@ -197,10 +230,10 @@ pub fn commands_for_mode(cfg: &UiConfig, mode: UiMode) -> Vec<ViewportCommand> {
 - **译文滚动**：定高 `ScrollArea`（`id_salt("compact_translation")` + `auto_shrink([false,false])`），沿用 P4 缺陷 D-4 的手法；`Ui::new_child` 不继承裁剪，所以正文一律进滚动容器，不手工推进光标。
 - **Esc**：`hotkeys::classify` 加 `Key::Escape → Action::ClearInput`；`app.rs::run` 里仅在 `state.mode() == Compact` 时执行 `state.clear_input()`（清源文 + 译文 + failure，不发请求、不退出、不收窗）。
 - **设置按钮**：`Effects::open_settings = true` → `app.rs` 执行"切回全量（走 REQ-004 的瞬时切换）+ `state.tab = Tab::Settings`"。
-- **提示条**：复用 P4 的 `toasts(&ctx, state)`（`egui::Area` 浮层），简洁窗里定位到窗口顶部以下 12px，不遮输入行文字。
-- **窄宽不溢出**：动作行用 `ui.available_width()` 判断，宽度 < 380px 时停靠指示退化为单字、置顶退化为"顶"；按钮本身不缩（可点性优先）。这是 P4 缺陷 D-1 的同类回归，必须有断言。
+- **提示条**：复用 P4 的 `toasts(&ctx, state)`（`egui::Area` 浮层）。简洁窗里的偏移量取 `把手条 10 + 输入行 34 + 4 = 48px`，而不是原写的 12px——12px 正好压在把手条上，而 REQ-005 的硬要求是"位置不遮住输入行文字"。`toasts` 因此多收一个 `offset_y` 参数，全量窗仍给 12px。
+- **窄宽不溢出**：320px 下限里要常驻 7 个可点控件（`全量`/`复制`/`设置`/`机翻`/`AI`/停靠指示/置顶指示），13pt 的默认字号在 304px 可用宽度放不下——原设计那句"按钮本身不缩"在 REQ-005 的"常驻"面前做不到。实现是三层收缩：① 整行 `ui.style_mut().override_text_style = TextStyle::Small`（10pt；`small_button` 自己钉死 Small，不受这层影响，正好是要的效果）；② `button_padding = (4, 1)`、`item_spacing.x = 4`；③ 行宽 < 380px 时停靠指示退化成单字（"右"而不是"停靠：右"）、置顶退化成"顶"。字号最大 2.0 时靠 ③ 兜住。这是 P4 缺陷 D-1 的同类回归，两条断言一起锁：`every_control_fits_the_minimum_compact_window`（记下的每个控件矩形都在 320×96 内、且两两不相交）与 `narrow_windows_use_the_short_labels` / `a_wider_window_gets_the_full_labels_and_still_does_not_overflow`。
 
-**验证**：无头 `run_ui` 断言六个控件都存在且 `min_rect` 不越出 320×96 的窗口 rect（D-1 的回归锁）；点"AI"→ `Effects::job` 非空且 `state.engine == Ai`；滚轮 8 帧后译文 `ScrollArea` 偏移增长（D-4 的手法）；Esc → 源文与译文都清空且 `in_flight` 为 None；`Effects::open_settings` → 模式变 Full 且 tab 变 Settings；真机 W-2.2/2.11/2.15/2.16 + 新增 W-2.19。
+**验证**：无头 `run_ui` 断言七个控件的矩形都存在、都落在 320×96 的窗口 rect 内且两两不相交（D-1 的回归锁，不相交同时证明把手没有吃掉按钮）；点"AI"→ `Effects::job` 非空且 `state.engine == Ai`；AI 未配置时该段禁用；长译文 `ScrollArea` 有滚动范围而短译文不凭空造出滚动条（D-4 的手法）；Esc → 源文与译文都清空且 `in_flight` 为 None；`Effects::open_settings` → 模式变 Full 且 tab 变 Settings；复制只置 `Effects::copy`、不碰真剪贴板；真机 W-2.2/2.11/2.15/2.16 + 新增 W-2.19。
 
 ## REQ-006 实现与验证
 

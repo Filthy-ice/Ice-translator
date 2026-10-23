@@ -55,11 +55,11 @@
 | TC-3.1-b | FR-3.1 | 无头调用 `apply_mode(Full)` | 恢复边框与可缩放，尺寸回到 `full_rect` | ✅ `switching_back_to_full_restores_decorations_and_size` |
 | TC-3.3-a | FR-3.3 | 置 `always_on_top` 后 `apply_topmost` | 排队 `WindowLevel::AlwaysOnTop`，且写回 config | ✅ `topmost_maps_to_always_on_top_window_level` |
 | TC-3.6-a | FR-3.6 | 记录的窗口位置在已拔掉的外接屏上 | `within()` 判为 false → 回主屏中心 | ✅ `window_off_screen_detection` |
-| TC-3.5-a | FR-3.5 | 松手位置距右边缘 30px（阈值 40） | 停靠到右边，x = area.right − w + sliver | 待 P5（纯函数单测） |
-| TC-3.5-b | FR-3.5 | 距左/上/下边缘各 30px | 分别停靠对应边 | 待 P5 |
+| TC-3.5-a | FR-3.5 | 松手位置距右边缘 30px（阈值 40） | 停靠到右边，`x = area.right − sliver`（窗口藏到边外，可视区内只留 6px 热区） | 待 P5（纯函数单测） |
+| TC-3.5-b | FR-3.5 | 距左/上/下边缘各 30px | 分别停靠对应边，四边可见部分恒为 6px | 待 P5 |
 | TC-3.5-c | FR-3.5 | 距四边均 > 40px | `DockEdge::None`，位置不变 | 待 P5 |
-| TC-3.5-d | FR-3.5 | 停靠状态下再拖离 200px | 恢复自由浮动，热区消失 | 待 P5 |
-| TC-3.5-e | FR-3.5 | 窗口高度大于屏幕可用高度 | 不产生负坐标，夹在可视区内 | 待 P5 |
+| TC-3.5-d | FR-3.5 | 停靠状态下从热区向屏幕内拖 200px（位移 ≥ 阈值 40） | 恢复自由浮动，`docked_edge` 清空，松手位置原样保留；判据是相对**停靠锚点**的位移而不是窗口到边线的几何距离（窗口藏出去后该距离恒为大负数，用它会每次吸回） | 待 P5 |
+| TC-3.5-e | FR-3.5 | 窗口高度大于屏幕可用高度 | 停靠轴起点夹到 `area.min`（不是 `area.max − size` 那个负数），交叉轴全量夹回可视区，6px 热区不被夹没 | 待 P5 |
 
 ### 界面层（P4，`cargo test -p ice-app`）
 

@@ -80,6 +80,11 @@ pub struct IceApp {
     reveal_guard: mode::RevealGuard,
     /// 拖动/缩放静止判定（`mode::DRAG_SETTLE`）：松手后跑一次吸附与落盘
     drag_settler: mode::DragSettler,
+    /// 停靠那一刻下发的窗口原点，拖离判定的锚点（REQ-003 第三条）。
+    ///
+    /// 不能取 `config.ui.compact_rect`：`mode::capture` 每帧按实时几何改写它，
+    /// 拖动途中锚点就被冲掉、位移恒为 0，于是谁都拖不离。
+    dock_anchor: Option<Pos2>,
 }
 
 impl IceApp {
@@ -100,6 +105,12 @@ impl IceApp {
             state.toast(Tone::Warn, notice);
         }
         state.reload_history(&history);
+        // 启动时就带着停靠态：锚点取上次落盘的原点——`place_compact` 停靠那次是强制落盘，
+        // 写进去的正是停靠后的几何，两者相等（拖动途中被杀的那次例外，无所谓）。
+        let dock_anchor = (state.config.ui.docked_edge != DockEdge::None).then(|| {
+            let rect = state.config.ui.compact_rect;
+            Pos2::new(rect.x, rect.y)
+        });
         Self {
             state,
             runtime,
@@ -112,6 +123,7 @@ impl IceApp {
             last_save: Instant::now(),
             reveal_guard: mode::RevealGuard::default(),
             drag_settler: mode::DragSettler::default(),
+            dock_anchor,
         }
     }
 
@@ -218,6 +230,22 @@ impl IceApp {
             self.place_compact(ctx, fitted.min, self.state.config.ui.docked_edge);
             return;
         }
+        // 已停靠且从热区向内拖过阈值 → 就地解除停靠，停在松手处（REQ-003 第三条、TC-3.5-d）。
+        // 必须排在 `snap` 之前：藏出去的窗口在停靠那条边上的几何距离恒为约 -(size − sliver)
+        // 的大负数、且总是四边最小，先跑 `snap` 会立刻把它吸回原边，拖离永远判不出来。
+        let docked = self.state.config.ui.docked_edge;
+        if let Some(anchor) = self.dock_anchor.filter(|_| docked != DockEdge::None) {
+            if mode::released(
+                docked,
+                anchor,
+                settled.min,
+                self.state.config.ui.snap_threshold_px,
+            ) {
+                self.place_compact(ctx, settled.min, DockEdge::None);
+                ctx.request_repaint();
+                return;
+            }
+        }
         let (snapped, edge) = mode::snap(
             settled,
             area,
@@ -239,11 +267,15 @@ impl IceApp {
     /// 把简洁窗挪到一个新位置：发命令 + 写回配置 + 立即落盘（REQ-009）。
     ///
     /// 落盘走 `force`：拖动结束后没有任何东西再请求重绘，脏标记挂着不动，强杀就丢。
+    ///
+    /// 停靠态的锚点在这里一起维护：`Some(edge)` 就把锚点搬到刚下发的那个原点，
+    /// 解除停靠则清空——这是"拖离"唯一可信的参照（`compact_rect` 每帧被 `capture` 改写）。
     fn place_compact(&mut self, ctx: &egui::Context, position: Pos2, edge: DockEdge) {
         ctx.send_viewport_cmd(ViewportCommand::OuterPosition(position));
         self.state.config.ui.compact_rect.x = position.x;
         self.state.config.ui.compact_rect.y = position.y;
         self.state.config.ui.docked_edge = edge;
+        self.dock_anchor = (edge != DockEdge::None).then_some(position);
         self.state.mark_config_dirty();
         self.flush_config(true);
     }
@@ -1154,7 +1186,7 @@ mod tests {
 
         app.apply_snap(&c, settled, Some(area()));
 
-        let expected = 1440.0 - 460.0 + 6.0;
+        let expected = 1440.0 - 6.0;
         assert_eq!(app.state.config.ui.docked_edge, DockEdge::Right);
         assert_eq!(app.state.config.ui.compact_rect.x, expected);
         assert!(queued(&c).contains(&ViewportCommand::OuterPosition(Pos2::new(expected, 400.0))));
@@ -1176,19 +1208,124 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut state = compact_state();
         state.config.ui.docked_edge = DockEdge::Right;
-        state.config.ui.compact_rect.x = 1440.0 - 460.0 + 6.0;
+        state.config.ui.compact_rect.x = 1440.0 - 6.0;
         state.config.ui.compact_rect.y = 400.0;
         let mut app = app(dir.path(), state);
         let c = ctx();
-        let settled = Rect::from_min_size(
-            Pos2::new(1440.0 - 460.0 + 6.0, 400.0),
-            Vec2::new(460.0, 96.0),
-        );
+        let settled = Rect::from_min_size(Pos2::new(1440.0 - 6.0, 400.0), Vec2::new(460.0, 96.0));
 
         app.apply_snap(&c, settled, Some(area()));
 
         assert!(queued(&c).is_empty(), "已经在那儿了，不该再发几何命令");
         assert_eq!(app.state.config.ui.compact_rect.x, settled.min.x);
+    }
+
+    /// TC-3.5-d（接线）：停靠后从 6px 热区向内拖过阈值 → 就地解除停靠，停在松手处并落盘
+    #[test]
+    fn dragging_a_docked_window_inward_releases_it_and_keeps_the_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+        app.apply_snap(
+            &c,
+            Rect::from_min_size(
+                Pos2::new(1440.0 - 30.0 - 460.0, 400.0),
+                Vec2::new(460.0, 96.0),
+            ),
+            Some(area()),
+        );
+        let docked = 1440.0 - 6.0;
+        assert_eq!(app.state.config.ui.docked_edge, DockEdge::Right);
+        assert_eq!(app.dock_anchor, Some(Pos2::new(docked, 400.0)));
+
+        let dragged = Rect::from_min_size(Pos2::new(docked - 200.0, 400.0), Vec2::new(460.0, 96.0));
+        app.apply_snap(&c, dragged, Some(area()));
+
+        assert_eq!(
+            app.state.config.ui.docked_edge,
+            DockEdge::None,
+            "向内拖过阈值要恢复自由浮动"
+        );
+        assert_eq!(
+            app.state.config.ui.compact_rect.x, dragged.min.x,
+            "停在松手处"
+        );
+        assert!(queued(&c).contains(&ViewportCommand::OuterPosition(dragged.min)));
+        assert_eq!(app.dock_anchor, None, "解除停靠要把锚点一起清掉");
+        assert!(
+            !app.state.config_dirty,
+            "解除停靠也算一次几何定案，立即落盘"
+        );
+    }
+
+    /// 拖离的参照必须是"停靠那一刻下发的原点"，不能是 `compact_rect`：
+    /// `mode::capture` 每帧把实时几何写进 `compact_rect`，拖动途中它就等于窗口当前位置，
+    /// 拿它当锚点位移恒为 0，四条边谁都拖不离（v0.3 的左/上就是这样）。
+    #[test]
+    fn the_release_reads_the_anchor_even_after_capture_moved_the_config_rect() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+        let docked = 1440.0 - 6.0;
+        app.apply_snap(
+            &c,
+            Rect::from_min_size(
+                Pos2::new(1440.0 - 30.0 - 460.0, 400.0),
+                Vec2::new(460.0, 96.0),
+            ),
+            Some(area()),
+        );
+
+        // 拖动途中的一帧：真实几何是"已经往里走了 100px"，capture 把它写进配置
+        let in_flight =
+            Rect::from_min_size(Pos2::new(docked - 100.0, 400.0), Vec2::new(460.0, 96.0));
+        feed_geometry(&c, Some(in_flight), Some(true));
+        mode::capture(&c, &mut app.state);
+        assert_eq!(
+            app.state.config.ui.compact_rect.x, in_flight.min.x,
+            "前提：capture 确实把 compact_rect 冲成了途中位置"
+        );
+        assert_eq!(app.dock_anchor, Some(Pos2::new(docked, 400.0)), "锚点不动");
+
+        // 静止在"向内 200px"处：仍要判出拖离
+        let dragged = Rect::from_min_size(Pos2::new(docked - 200.0, 400.0), Vec2::new(460.0, 96.0));
+        app.apply_snap(&c, dragged, Some(area()));
+        assert_eq!(
+            app.state.config.ui.docked_edge,
+            DockEdge::None,
+            "锚点被 capture 冲掉也不许影响拖离判定"
+        );
+    }
+
+    /// 沿交叉轴拖 200px 是"贴着边滑动"，不是拖离：停靠态保留，一个命令都不发
+    #[test]
+    fn sliding_along_the_docked_edge_keeps_the_window_docked() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+        let docked = 1440.0 - 6.0;
+        app.apply_snap(
+            &c,
+            Rect::from_min_size(
+                Pos2::new(1440.0 - 30.0 - 460.0, 400.0),
+                Vec2::new(460.0, 96.0),
+            ),
+            Some(area()),
+        );
+
+        let slid = Rect::from_min_size(Pos2::new(docked, 600.0), Vec2::new(460.0, 96.0));
+        app.apply_snap(&c, slid, Some(area()));
+
+        assert_eq!(
+            app.state.config.ui.docked_edge,
+            DockEdge::Right,
+            "仍然停在右边"
+        );
+        assert!(
+            !queued(&c).contains(&ViewportCommand::OuterPosition(slid.min)),
+            "吸附结果就是松手位置，不必再挪"
+        );
+        assert_eq!(app.dock_anchor.unwrap().x, docked, "released 只看停靠轴");
     }
 
     /// 全量窗有系统标题栏，不参与吸附：静止之后只落盘
@@ -1239,7 +1376,7 @@ mod tests {
 
         app.move_to_edge(&c, DockEdge::Right, Some(outer), Some(area()));
 
-        let expected = 1440.0 - 460.0 + 6.0;
+        let expected = 1440.0 - 6.0;
         assert!(queued(&c).contains(&ViewportCommand::OuterPosition(Pos2::new(expected, 400.0))));
         assert_eq!(app.state.config.ui.docked_edge, DockEdge::Right);
         assert_eq!(app.state.config.ui.compact_rect.x, expected);
