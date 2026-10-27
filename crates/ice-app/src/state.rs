@@ -80,6 +80,25 @@ pub enum Tone {
     Error,
 }
 
+/// 采信检测结果的置信度门槛，与机翻引擎内部同源（`machine.rs:62`）。
+/// 低于它的属于"猜的"，拿它去改用户的语言设置比重试一次更糟。
+const DETECT_CONFIDENCE: f32 = 0.3;
+
+/// REQ-006：检出的语言与当前目标语言相同（等于"自己译自己"）时，给出该换成哪个目标语言。
+///
+/// 返回 `None` 表示"不动"。中文（简/繁）↔ 英语是默认通道，其余任何语言撞到目标时都换回
+/// 简体中文（用户的母语）。只翻**目标**语言，源语言永远不动——源语言留在"自动检测"才有
+/// 这一步，显式选了源语言是用户的决定，应用只能拦不能改。
+pub fn auto_reverse_target(detected: Language, target: Language) -> Option<Language> {
+    if detected != target {
+        return None;
+    }
+    match detected {
+        Language::ZhHans | Language::ZhHant => Some(Language::En),
+        _ => Some(Language::ZhHans),
+    }
+}
+
 /// 提示条自动消失的时长
 pub const TOAST_VISIBLE: std::time::Duration = std::time::Duration::from_secs(4);
 
@@ -295,6 +314,7 @@ impl AppState {
             self.failure = None;
             return None;
         }
+        self.reverse_target_when_it_collides();
         self.request_id += 1;
         let id = self.request_id;
         self.in_flight = Some(id);
@@ -307,6 +327,40 @@ impl AppState {
                 self.config.translation.lang_pair(),
             ),
         })
+    }
+
+    /// REQ-006：源语言留在"自动检测"而检出的语言正好是当前目标语言时，**发请求之前**把目标翻过来。
+    ///
+    /// 排在 `request_id += 1` 之前，所以 `lang_pair()` 拿到的已经是新语言对，机翻引擎的
+    /// 同语言拒绝分支（`machine.rs:160-164`）永远不会被触发，用户也不用再按一次 Enter。
+    ///
+    /// 显式选定源语言时一个字都不改（REQ-006 第三条）：那是用户自己的选择，
+    /// 应用只能拦、不能替他改。检测失败（`None` 或置信度不够）也不改、不拦，按 P4 回退走。
+    fn reverse_target_when_it_collides(&mut self) {
+        if self.config.translation.source.is_some() {
+            return;
+        }
+        let Some(detection) =
+            ice_core::detect(&self.source).filter(|d| d.confidence >= DETECT_CONFIDENCE)
+        else {
+            return;
+        };
+        let previous = self.config.translation.target;
+        let Some(new_target) = auto_reverse_target(detection.language, previous) else {
+            return;
+        };
+        self.config.translation.target = new_target;
+        self.config.translation.remember_target(new_target);
+        self.config_dirty = true;
+        self.toast(
+            Tone::Info,
+            format!(
+                "检测到{}，已自动改为 {} → {}",
+                detection.language.display_name(),
+                detection.language.display_name(),
+                new_target.display_name()
+            ),
+        );
     }
 
     /// 应用一个任务结果。返回 `false` 表示这是过期结果，已按 `request_id` 丢弃（REQ-002）。
@@ -562,6 +616,106 @@ mod tests {
         assert_eq!(first.id, 1);
         assert!(state.submit().is_none(), "请求进行中不得叠加第二个请求");
         assert_eq!(state.request_id, 1);
+    }
+
+    /// REQ-006 的纯函数：同语言才翻，中文（简/繁）↔ 英语，其余一律回简体中文。
+    /// 不同语言返回 `None`——这一条同时守住"一次提交最多翻转一次"：翻完的目标与检出语言必然不同。
+    #[test]
+    fn a_colliding_target_flips_to_the_other_side() {
+        assert_eq!(
+            auto_reverse_target(Language::ZhHans, Language::ZhHans),
+            Some(Language::En)
+        );
+        assert_eq!(
+            auto_reverse_target(Language::ZhHant, Language::ZhHant),
+            Some(Language::En)
+        );
+        assert_eq!(
+            auto_reverse_target(Language::En, Language::En),
+            Some(Language::ZhHans)
+        );
+        assert_eq!(
+            auto_reverse_target(Language::Ja, Language::Ja),
+            Some(Language::ZhHans)
+        );
+        assert_eq!(
+            auto_reverse_target(Language::Fr, Language::Fr),
+            Some(Language::ZhHans)
+        );
+        assert_eq!(auto_reverse_target(Language::En, Language::ZhHans), None);
+        assert_eq!(auto_reverse_target(Language::ZhHans, Language::En), None);
+    }
+
+    /// 英文源文 + 目标也是英语：发请求之前就翻成简体中文，用户不需要再按一次 Enter
+    #[test]
+    fn an_english_source_against_an_english_target_is_reversed_before_the_request() {
+        let mut state = app_with_source("hello world, this is a small test");
+        state.config.translation.target = Language::En;
+
+        let job = state.submit().expect("检测失败不该拦住提交");
+
+        assert_eq!(
+            job.request.pair.target,
+            Language::ZhHans,
+            "Job 用的必须是翻转后的语言对"
+        );
+        assert_eq!(job.request.pair.source, None, "源语言永远留在自动检测");
+        assert_eq!(state.config.translation.target, Language::ZhHans);
+        assert_eq!(
+            state.config.translation.recent_targets.first(),
+            Some(&Language::ZhHans),
+            "新目标语言要走 remember_target 进最近使用"
+        );
+        assert!(state.config_dirty, "改了语言就得落盘");
+        let toast = state
+            .toasts
+            .iter()
+            .map(|t| t.text.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
+        assert!(
+            toast.contains("检测到英语") && toast.contains("英语 → 简体中文"),
+            "提示条要说明改成了什么：{toast}"
+        );
+    }
+
+    /// 中文源文撞中文目标是更常见的一侧：换成英语
+    #[test]
+    fn a_chinese_source_against_a_chinese_target_goes_to_english() {
+        let mut state = app_with_source("今天天气很好，我们去公园散步");
+        let job = state.submit().expect("要发请求");
+        assert_eq!(job.request.pair.target, Language::En);
+        assert_eq!(state.config.translation.target, Language::En);
+    }
+
+    /// 用户**显式**选了源语言时一个字都不改（REQ-006 第三条）：照 P4 让引擎拦下
+    #[test]
+    fn an_explicit_source_language_is_never_overridden() {
+        let mut state = app_with_source("hello world");
+        state.config.translation.source = Some(Language::En);
+        state.config.translation.target = Language::En;
+
+        let job = state.submit().expect("照样发请求，由引擎同语言拒绝");
+
+        assert_eq!(job.request.pair.source, Some(Language::En));
+        assert_eq!(
+            job.request.pair.target,
+            Language::En,
+            "显式设定不许应用替用户改"
+        );
+        assert!(state.toasts.is_empty(), "没改语言就不该有提示条");
+    }
+
+    /// 检不出语言（纯数字）：不翻、不拦，请求按 P4 的回退照常发
+    #[test]
+    fn undetectable_text_does_not_trigger_a_reversal() {
+        let mut state = app_with_source("12345 67890");
+        state.config.translation.target = Language::En;
+
+        let job = state.submit().expect("检测失败不阻塞提交");
+
+        assert_eq!(job.request.pair.target, Language::En);
+        assert!(state.toasts.is_empty());
     }
 
     #[test]

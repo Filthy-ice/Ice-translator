@@ -26,10 +26,54 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_a
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 10.0;
             ai_group(ui, state, effects, ai_available);
+            window_group(ui, effects);
             defaults_group(ui, state, effects);
             appearance_group(ui, state);
             data_group(ui, state, effects);
         });
+}
+
+/// 窗口这一组（REQ-011）：两颗只有按钮、没有开关的"应急出口"。
+///
+/// 用户第二轮走查的原话是"简洁模式要能够缩小到最小地步，并且有退出按钮"——退出这件事
+/// 在界面上本来只有 Cmd+Q 和 Activity，看不见就等于没有；而"收进后台"与"退出"长得一样
+/// （都是窗口没了），所以这颗按钮旁边必须写明差别。
+///
+/// 「恢复默认窗口尺寸」管的是缺陷留下的坏数据（D-10 把两个尺寸槽写成一样）：
+/// 程序不猜哪个值本该属于谁，也不自动改写，只有用户按下去才恢复。
+fn window_group(ui: &mut egui::Ui, effects: &mut Effects) {
+    let ctx = ui.ctx().clone();
+    group(ui, "窗口", |ui| {
+        ui.horizontal(|ui| {
+            let reset = ui.button("恢复默认窗口尺寸");
+            record(&ctx, "btn_reset", reset.rect);
+            ui.label(
+                RichText::new("两种形态各回到默认尺寸并居中（窗口被历史版本写坏过时用）")
+                    .color(theme::MUTED),
+            );
+            if reset.clicked() {
+                effects.reset_geometry = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            let quit = ui.button("退出程序");
+            record(&ctx, "btn_quit", quit.rect);
+            ui.label(RichText::new("红灯 / Cmd+W 是收进后台，不是退出").color(theme::MUTED));
+            if quit.clicked() {
+                effects.quit = true;
+            }
+        });
+    });
+}
+
+/// 把控件矩形记在临时数据里，供无头测试命中点击（与 `compact::record` 同一套办法）：
+/// 这两颗按钮的行为契约是"置一个意图"，只能真的点一下才知道接没接上。
+fn record(ctx: &egui::Context, salt: &str, rect: egui::Rect) {
+    ctx.data_mut(|d| d.insert_temp(rect_id(salt), rect));
+}
+
+fn rect_id(salt: &str) -> egui::Id {
+    egui::Id::NULL.with("ice-translator.settings").with(salt)
 }
 
 fn group(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
@@ -378,6 +422,25 @@ fn appearance_group(ui: &mut egui::Ui, state: &mut AppState) {
             {
                 state.mark_config_dirty();
             }
+            // FR-3.7（K-08）：开关在 P4 就有字段，本包才真的接线到绘制上
+            if ui
+                .checkbox(
+                    &mut state.config.ui.dim_when_unfocused,
+                    "悬浮窗失焦时半透明",
+                )
+                .on_hover_text("只在简洁悬浮窗生效：没有焦点时整块窗体透出桌面，聚焦后恢复 100%")
+                .changed()
+            {
+                state.mark_config_dirty();
+            }
+            // FR-3.8：这是"应用在后台读用户剪贴板"，开关文案必须明写它会做什么（REQ-008 隐私条）
+            if ui
+                .checkbox(&mut state.config.ui.clipboard_watch, "剪贴板即翻")
+                .on_hover_text("开启后会读取你复制的文本并自动翻译；关闭时完全不读取剪贴板")
+                .changed()
+            {
+                state.mark_config_dirty();
+            }
         });
     });
 }
@@ -522,6 +585,103 @@ mod tests {
         };
         let output = ctx.run_ui(raw, |ui| show(ui, state, effects, ai_available));
         output.drop_without_applying_deltas();
+    }
+
+    /// 点击要跨帧：命中测试用的是**上一帧**的控件矩形，所以 `ctx` 得留着连跑几帧，
+    /// 不能像 `render` 那样一帧一个新建的 Context
+    struct Harness {
+        ctx: egui::Context,
+        size: egui::Vec2,
+    }
+
+    impl Harness {
+        fn new(size: egui::Vec2) -> Self {
+            Self {
+                ctx: egui::Context::default(),
+                size,
+            }
+        }
+
+        fn step(&mut self, state: &mut AppState, effects: &mut Effects, events: Vec<egui::Event>) {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.size)),
+                events,
+                ..Default::default()
+            };
+            let output = self.ctx.run_ui(raw, |ui| show(ui, state, effects, false));
+            output.drop_without_applying_deltas();
+        }
+
+        fn warm(&mut self, state: &mut AppState, effects: &mut Effects) {
+            for _ in 0..2 {
+                self.step(state, effects, vec![]);
+            }
+        }
+
+        fn click(&mut self, state: &mut AppState, effects: &mut Effects, at: egui::Pos2) {
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            self.step(
+                state,
+                effects,
+                vec![egui::Event::PointerMoved(at), button(true)],
+            );
+            self.step(state, effects, vec![button(false)]);
+        }
+
+        fn rect(&self, salt: &str) -> egui::Rect {
+            self.ctx
+                .data_mut(|d| d.get_temp::<egui::Rect>(rect_id(salt)))
+                .unwrap_or_else(|| panic!("没有记下 {salt} 的矩形"))
+        }
+    }
+
+    /// REQ-011：这两颗是"应急出口"，点下去只置一个意图，剩下的事由 `app.rs` 接。
+    /// 断言的是接线，不是文案：文案改了测试不管，意图没置上就是用户按了没反应。
+    #[test]
+    fn the_window_group_buttons_set_their_intent() {
+        let mut h = Harness::new(egui::vec2(1080.0, 900.0));
+        let mut state = state();
+        let mut effects = Effects::default();
+        h.warm(&mut state, &mut effects);
+
+        h.click(&mut state, &mut effects, h.rect("btn_reset").center());
+        assert!(
+            effects.reset_geometry,
+            "点了「恢复默认窗口尺寸」没置恢复意图"
+        );
+
+        let mut effects = Effects::default();
+        h.click(&mut state, &mut effects, h.rect("btn_quit").center());
+        assert!(effects.quit, "点了「退出程序」没置退出意图");
+        assert!(
+            !effects.reset_geometry,
+            "两颗按钮共用了同一个意图：恢复尺寸不该顺手退出，反之也一样"
+        );
+    }
+
+    /// 全量窗最小宽度（640×420，`config::MIN_FULL_*`）下两颗按钮仍要在窗内。
+    /// REQ-011 的动机就是"看不见等于没有"，被裁出窗口的那颗和没有是同一回事。
+    #[test]
+    fn the_window_group_buttons_survive_the_narrowest_full_window() {
+        let size = egui::vec2(640.0, 420.0);
+        let mut h = Harness::new(size);
+        let mut state = state();
+        let mut effects = Effects::default();
+        h.warm(&mut state, &mut effects);
+
+        let win = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        for salt in ["btn_reset", "btn_quit"] {
+            let rect = h.rect(salt);
+            assert!(
+                win.contains_rect(rect),
+                "{salt} 出界：{rect:?} 不在 {win:?} 内"
+            );
+        }
     }
 
     #[test]

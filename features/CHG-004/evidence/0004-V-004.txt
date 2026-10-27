@@ -1,0 +1,6 @@
+
+    Checking ice-core v0.1.0 (/Users/filthy-ice/Desktop/my-translator/Ice-translator/crates/ice-core)
+    Checking ice-providers v0.1.0 (/Users/filthy-ice/Desktop/my-translator/Ice-translator/crates/ice-providers)
+    Checking ice-vision v0.1.0 (/Users/filthy-ice/Desktop/my-translator/Ice-translator/crates/ice-vision)
+    Checking ice-app v0.1.0 (/Users/filthy-ice/Desktop/my-translator/Ice-translator/crates/ice-app)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 2.06s

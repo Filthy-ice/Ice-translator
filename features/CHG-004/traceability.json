@@ -1,8 +1,8 @@
 {
   "baseline": {
     "change": "CHG-004",
-    "version": "v0.4",
-    "spec_hash": "6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f"
+    "version": "v0.7",
+    "spec_hash": "00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577"
   },
   "design": [
     {
@@ -44,6 +44,18 @@
     {
       "requirement": "REQ-010",
       "section": "## REQ-010 实现与验证"
+    },
+    {
+      "requirement": "REQ-011",
+      "section": "## REQ-011 实现与验证"
+    },
+    {
+      "requirement": "REQ-012",
+      "section": "## REQ-012 实现与验证"
+    },
+    {
+      "requirement": "REQ-013",
+      "section": "## REQ-013 实现与验证"
     }
   ],
   "verifications": [
@@ -58,7 +70,10 @@
         "REQ-006",
         "REQ-007",
         "REQ-008",
-        "REQ-009"
+        "REQ-009",
+        "REQ-011",
+        "REQ-012",
+        "REQ-013"
       ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
@@ -69,14 +84,15 @@
         "test",
         "--workspace"
       ],
-      "note": "全量单测；含 P4 既有 246 项的回归（形态切换内容保留、恢复看护、两栏对齐、动作条不压边等不得回退）"
+      "note": "全量单测；含 P4 既有 246 项的回归（形态切换内容保留、恢复看护、两栏对齐、动作条不压边等不得回退）（v0.7 的 D-10 三段护栏、band_heights 分高与底栏不压框断言都在这套里）"
     },
     {
       "id": "V-002",
       "requirements": [
         "REQ-001",
         "REQ-006",
-        "REQ-009"
+        "REQ-009",
+        "REQ-012"
       ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
@@ -88,7 +104,7 @@
         "-p",
         "ice-core"
       ],
-      "note": "config.sanitize 的简洁窗尺寸下限、语言检测置信度门槛与 WindowRect 的离屏判定"
+      "note": "config.sanitize 的简洁窗尺寸下限、语言检测置信度门槛与 WindowRect 的离屏判定；v0.7 的 MIN_COMPACT_H 130→160 与 compact_rect 默认 460×160 的加载夹回"
     },
     {
       "id": "V-003",
@@ -100,7 +116,10 @@
         "REQ-005",
         "REQ-007",
         "REQ-008",
-        "REQ-009"
+        "REQ-009",
+        "REQ-011",
+        "REQ-012",
+        "REQ-013"
       ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
@@ -112,7 +131,7 @@
         "-p",
         "ice-app"
       ],
-      "note": "无头断言：viewport 命令集合与顺序（一次切换里 InnerSize/OuterPosition 各恰好 1 条、Decorations 排在 InnerSize 之前）、把手命中、DragSettler、snap 五例与坐标翻转、compact 版式不溢出与译文可滚、dim_alpha 四组、Watcher 七例、落盘接线"
+      "note": "无头断言：viewport 命令集合与顺序（一次切换里 InnerSize/OuterPosition 各恰好 1 条、Decorations 排在 InnerSize 之前）、把手命中、DragSettler、snap 五例与坐标翻转、compact 版式不溢出与译文可滚、dim_alpha 四组、Watcher 七例、落盘接线；v0.7 追加：切换未落定时重发至多两组、第二组到期不采纳实测尺寸、基线之后只写用户自己的缩放；两带 1:1 与带间 ≥5px；全量窗底栏与两栏矩形不重叠且字数同行；两颗退出按钮接到 Quit 路径"
     },
     {
       "id": "V-004",
@@ -125,7 +144,10 @@
         "REQ-006",
         "REQ-007",
         "REQ-008",
-        "REQ-009"
+        "REQ-009",
+        "REQ-011",
+        "REQ-012",
+        "REQ-013"
       ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
@@ -153,7 +175,10 @@
         "REQ-006",
         "REQ-007",
         "REQ-008",
-        "REQ-009"
+        "REQ-009",
+        "REQ-011",
+        "REQ-012",
+        "REQ-013"
       ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
@@ -182,7 +207,7 @@
         "-B",
         "tools/check_traceability.py"
       ],
-      "note": "需求↔用例双向闭合：FR-3.2/3.5/3.7/3.8/3.9、FR-1.2/1.4、TC-3.5-a~e、TC-1.2-c、W-2.1~W-2.20"
+      "note": "需求↔用例双向闭合：FR-3.2/3.5/3.7/3.8/3.9、FR-1.2/1.4、TC-3.5-a~h、TC-1.2-c、W-2.1~W-2.21"
     },
     {
       "id": "V-007",
@@ -227,13 +252,16 @@
         "REQ-007",
         "REQ-008",
         "REQ-009",
-        "REQ-010"
+        "REQ-010",
+        "REQ-011",
+        "REQ-012",
+        "REQ-013"
       ],
       "repo": "ice-translator",
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
       "required": true,
-      "note": "用户按 docs/06-test-cases.md §3 的 W-2.1~W-2.20 真人走查（尺寸与缩放、三处把手、四边吸附与拖离、连续切换 10 次盯「一步到位、不重建窗口、无黑屏闪烁、切完立刻能点」、窗内引擎切换与译文滚动、失焦半透明、剪贴板即翻、强杀重启与插拔屏幕），逐行结论写进 docs/07-acceptance.md 的 P5 段"
+      "note": "用户按 docs/06-test-cases.md §3 的 W-2.1~W-2.29 真人走查（全表 29 行：尺寸与缩放、标题栏与两处窗内把手、左/右吸附与桌面并集口径、悬停唤出与自动收回、向内拖离、连续切换 10 次盯「一步到位、不重建窗口、无黑屏闪烁、切完立刻能点」、窗内引擎切换与译文滚动到底、失焦半透明与标题栏观感、剪贴板即翻、强杀重启与插拔屏幕；v0.7 五行 W-2.25 切换后尺寸真的换了（D-10 复验）、W-2.26 退出入口与「收起」分得开、W-2.27 两带各半 + ≥5px + 两个圆角框、W-2.28 全量窗底栏与字数同行且不压任何框、W-2.29 两种形态拉到最小都不塌），逐行结论写进 docs/07-acceptance.md 的 P5 段"
     },
     {
       "id": "V-010",
@@ -241,26 +269,28 @@
         "REQ-001",
         "REQ-002",
         "REQ-003",
-        "REQ-004"
+        "REQ-004",
+        "REQ-012"
       ],
       "repo": "ice-translator",
       "kind": "VERIFIED_RUNTIME",
       "environment": "sandbox",
       "required": true,
-      "note": "真机运行：三条 HYPOTHESIS 的实测结论（含 v3 的双向补间不成立与瞬时切换 20ms 落定）、切到简洁窗后的真实 inner_rect、边缘缩放后的几何、四边吸附与拖离的坐标、切换后回读几何与目标 rect 的 ±2px 一致性；由 ./sdd record 导入脱敏日志"
+      "note": "真机运行：三条 HYPOTHESIS 的实测结论（含 v3 的双向补间不成立与瞬时切换 20ms 落定）、切到简洁窗后的真实 inner_rect、边缘缩放后的几何、左/右吸附、悬停唤出与自动收回、向内拖离的坐标、切换后回读几何与目标 rect 的 ±2px 一致性；由 ./sdd record 导入脱敏日志；v0.7 补：简洁窗拉到下限时原生夹在 320×160（不是 130）、切换未落定时日志里那一条 WARN 与两槽不相等"
     },
     {
       "id": "V-011",
       "requirements": [
         "REQ-005",
         "REQ-007",
-        "REQ-008"
+        "REQ-008",
+        "REQ-013"
       ],
       "repo": "ice-translator",
       "kind": "VERIFIED_RUNTIME",
       "environment": "sandbox",
       "required": true,
-      "note": "真机运行：窗内切机翻/AI 的重译与错误路径、长译文滚动到底、Esc 清空、失焦 85%/聚焦 100% 与关闭开关后恒定、剪贴板即翻开/关各一次 30 秒空闲 CPU 取样（ps -o cputime 差值，判据 <1%）"
+      "note": "真机运行：窗内切机翻/AI 的重译与错误路径、长译文滚动到底、Esc 清空、失焦 85%/聚焦 100% 与关闭开关后恒定、剪贴板即翻开/关各一次 30 秒空闲 CPU 取样（ps -o cputime 差值，判据 <1%)；v0.7 补：全量窗滚到底最后一行完整可见且底栏与两栏不重叠、窄窗下先缩按钮再换行"
     },
     {
       "id": "V-012",

@@ -1,6 +1,6 @@
 Change: CHG-004
-Version: v0.4
-Spec-Hash: 6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f
+Version: v0.7
+Spec-Hash: 00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
 
 # CHG-004 · Design
 
@@ -14,14 +14,14 @@ Spec-Hash: 6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f
 
 | 文件 | 动作 | 内容 |
 |---|---|---|
-| `crates/ice-app/src/mode.rs` | 扩 | `MIN_COMPACT_SIZE`、`commands_for_mode` 改（按形态给最小尺寸 + 两种形态都允许缩放 + 全量也下发 `OuterPosition`，即 REQ-004 的瞬时切换）、`snap`/`cycle_edge`/`fit_into_area`/`dim_alpha` 四个纯函数、`DragSettler` 拖动/缩放静止判定 |
-| `crates/ice-app/src/views/compact.rs` | **新** | 简洁窗版式：把手条、输入行、译文定高 `ScrollArea`、动作行（全量 / 复制 / 设置 / 机翻\|AI / 停靠指示 / 置顶）。P4 暂由 `app.rs::compact` 私有函数代管，本包迁出（`docs/02-architecture.md` §2 的 `views::compact` 从"—"变实体） |
+| `crates/ice-app/src/mode.rs` | 扩 | `MIN_COMPACT_SIZE`、`commands_for_mode` 改（按形态给最小尺寸 + 两种形态都允许缩放 + 全量也下发 `OuterPosition`，即 REQ-004 的瞬时切换）、`snap`/`dock`/`reveal_rect`/`released`/`fit_into_area`/`dim_alpha` 等纯函数（v0.5：`cycle_edge` 下线）、`DragSettler` 拖动/缩放静止判定、`window_level`（停靠态强制 Floating） |
+| `crates/ice-app/src/views/compact.rs` | **新** | 简洁窗版式：把手条、输入行、译文定高 `ScrollArea`、动作行（全量 / 复制 / 设置 / 机翻\|AI / 置顶；v0.5 起正常字号、放不下换行，无停靠指示）。P4 暂由 `app.rs::compact` 私有函数代管，本包迁出（`docs/02-architecture.md` §2 的 `views::compact` 从"—"变实体） |
 | `crates/ice-app/src/views/mod.rs` | 改 | `engine_picker` 提为 `pub(crate)` 供简洁窗复用；`Effects` 加 `start_drag`、`open_settings` 两个字段 |
 | `crates/ice-app/src/system/screen.rs` | **新** | 屏幕可用区探针：macOS 走 `NSScreen.visibleFrame`（`cfg(target_os = "macos")` + unsafe），其余平台回退 `viewport().monitor_size`；坐标翻转是纯函数，可无头单测 |
 | `crates/ice-app/src/system/clipboard.rs` | 扩 | `Watcher`：纯判定（新内容 / 自己写的 / 焦点占用 / 空文本 → 该不该填）+ 一个薄 `poll()`（impure，只调 `arboard::get_text`） |
 | `crates/ice-app/src/system/hotkeys.rs` | 扩 | `Key::Escape → Action::ClearInput`（只在简洁模式生效，全量模式 Esc 仍不绑定任何动作，与 P4 一致） |
 | `crates/ice-app/src/state.rs` | 扩 | `submit()` 里插自动反向钩子；`auto_reverse_target` 纯函数；`clear_input()` |
-| `crates/ice-app/src/app.rs` | 改 | 删掉私有 `compact()`、接 `views::compact`；切换后回读几何并立即落盘（REQ-004）；拖动/缩放静止后的吸附与落盘；剪贴板轮询挂点；失焦 alpha；`initial_viewport` 加 `with_transparent(true)` |
+| `crates/ice-app/src/app.rs` | 改 | 删掉私有 `compact()`、接 `views::compact`；切换后回读几何并立即落盘（REQ-004）；`pending_geometry` + `MODE_GEOMETRY_GRACE` 挡住 D-6 的过渡几何回写；拖动/缩放静止后的吸附与落盘；停靠状态机 `dock_shown`/`dock_left_at`/`dock_latched` 与每帧 `watch_dock`（唤出/收回/闸门/层级，REQ-003）；剪贴板轮询挂点；失焦 alpha；`initial_viewport` 加 `with_transparent(true)` |
 
 ### 依赖变更
 
@@ -92,13 +92,15 @@ UiMode::Compact => vec![
 
 顺序是正确性的一部分：`InnerSize` 走 `window.request_inner_size`，平台不允许时直接返回当前尺寸并忽略请求（`egui-winit-0.37.0/src/lib.rs:1969-1985`），所以"改约束"必须排在"设尺寸"之前——W-2.1 的根因就是 P4 切简洁时从没改过那条 640×420 的约束。Full 分支同理下发 `MinInnerSize(MIN_FULL_SIZE)`：两个形态各自带自己的下限，谁也不把值留给对方。
 
-不用 `MinInnerSize(Vec2::ZERO)`：它等价于 `set_min_inner_size(None)`，确实能解开 W-2.1，但同时把下限一起解掉了，320×96 就只剩 `sanitize()` 在加载时夹一次——用户把窗口拖到 200×60 时没有任何东西拦着，得等写回配置、下次启动才被夹回来。按形态取下限则由 AppKit 的原生约束逐帧执行，根本拖不下去（spec v0.3 REQ-001 的澄清）。`MaxInnerSize` 本包不下发：需求是"不设上限"，而 egui/winit 的默认就是无上限，再发一条 `Vec2::INFINITY` 是多余命令。
+不用 `MinInnerSize(Vec2::ZERO)`：它等价于 `set_min_inner_size(None)`，确实能解开 W-2.1，但同时把下限一起解掉了，320×130 就只剩 `sanitize()` 在加载时夹一次——用户把窗口拖到 200×60 时没有任何东西拦着，得等写回配置、下次启动才被夹回来。按形态取下限则由 AppKit 的原生约束逐帧执行，根本拖不下去（spec v0.3 REQ-001 的澄清）。`MaxInnerSize` 本包不下发：需求是"不设上限"，而 egui/winit 的默认就是无上限，再发一条 `Vec2::INFINITY` 是多余命令。
 
-`MIN_COMPACT_SIZE = Vec2::new(320.0, 96.0)`；`clamp_compact_rect(WindowRect) -> WindowRect` 把小于下限的宽高抬到下限（配置被手改坏也不拒绝启动）。`ice-core::config::sanitize()` 同步夹这两个下限（REQ-001 边界）：现有实现夹的是 `compact_rect.w.max(320.0)` / `h.max(64.0)`，**高度下限要从 64 改成 96** 与 `MIN_COMPACT_SIZE` 对齐，否则配置里能存下 320×70 这种原生约束不允许的值。单测覆盖"手改配置成 100×40"。
+`MIN_COMPACT_SIZE = Vec2::new(320.0, 130.0)`（v0.5 由 320×96 抬上来，Q-011：动作行不再压缩字号，96px 装不下一行正常按钮 + 任何译文）；`clamp_compact_rect(WindowRect) -> WindowRect` 把小于下限的宽高抬到下限（配置被手改坏也不拒绝启动）。`ice-core::config::sanitize()` 用同一组常量夹这两个下限（REQ-001 边界）：现有实现夹的是 `compact_rect.w.max(320.0)` / `h.max(64.0)`，**64 → 96 是 v0.4 改的，v0.5 再改成 130**，两个下限必须始终与 `MIN_COMPACT_SIZE` 同源，否则配置里能存下原生约束不允许的值。单测覆盖"手改配置成 100×40"。
 
-版式：`views/compact.rs` 用 `Panel::top`(输入行 34px) + `Panel::bottom`(动作行 28px) + `CentralPanel`(译文区)，译文区吃剩余高度——窗口被拉大时多出来的高度全给译文区（REQ-001 的"缩放到任意合法尺寸三块都不被裁"）。
+**D-6：切换过渡期的几何不能写回配置**（v0.5 新增，事实表那条 D-7 的成因②）。`mode::apply` 只下发一组一次性命令（REQ-004），`InnerSize` 是异步请求，而 `app.rs:575` 的 `mode::capture` 每帧把实时几何写回**当前形态**的配置槽——切换那一帧之后 `mode` 已经是 Compact、窗口还是全量大数据，于是 `compact_rect` 被写成 642×422，而没有任何人会再发一次缩小请求，简洁窗就此永久停在大数据上（走查实证：2026-10-23 盘上 `compact_rect` 的宽高与 `full_rect` 一字不差；反证：全新启动不切形态时目标尺寸不会被改写）。实现：`IceApp` 记 `pending_geometry: Option<(Vec2 /*目标内尺寸*/, Instant)>`，由 `apply`/`toggle` 在算出目标形态命令时一起写下；`capture` 在它仍是 `Some` 时**只写位置轴、不写尺寸轴**，直到实时内尺寸命中目标（±2px）或超过 `MODE_GEOMETRY_GRACE`（1s，取探针实测 20ms 的 50 倍余量）后清空。清空后行为与现在一致，用户手动缩放照样写回。
 
-**验证**：`commands_for_mode` 的命令集合与顺序（`MinInnerSize(MIN_COMPACT_SIZE)` 与 `Resizable(true)` 都必须排在 `InnerSize` 之前，用 `.position()` 断言，沿用 P4 `switching_to_compact_queues_a_borderless_small_window` 的手法；那条测试里断言的 `Resizable(false)` 要跟着改成 `true`）；两个形态各自的下限不串台（切到简洁后命令里不得出现 `MIN_FULL_SIZE`，反之亦然）；`clamp_compact_rect` 三例（正常/过窄/过矮）；`sanitize` 往返一例（100×40 → 320×96）；真机 W-2.1 + 新增 W-2.17（拉边缘缩放）。
+版式：`views/compact.rs` 用 `Panel::top`(把手 10px + 输入行 34px) + `Panel::bottom`(动作行) + `CentralPanel`(译文区)。**动作行不再 `exact_size`**：v0.5 起它是 `horizontal_wrapped` 的自然高度（一行约 24px，放不下变两行），译文区吃剩余高度——窗口被拉大时多出来的高度全给译文区（REQ-001 的"缩放到任意合法尺寸三块都不被裁"）。选换行而不是压字号的理由写在 spec REQ-005：无头测试用的内置字体没有中文字形，量出来的文字宽度必然偏小（P4 的 D-1 正是"断言全绿而按钮被裁出窗口"），而 `wrapped` 布局自带"不超出可用宽度"，与字体度量无关。
+
+**验证**：`commands_for_mode` 的命令集合与顺序（`MinInnerSize(MIN_COMPACT_SIZE)` 与 `Resizable(true)` 都必须排在 `InnerSize` 之前，用 `.position()` 断言，沿用 P4 `switching_to_compact_queues_a_borderless_small_window` 的手法；那条测试里断言的 `Resizable(false)` 要跟着改成 `true`）；两个形态各自的下限不串台（切到简洁后命令里不得出现 `MIN_FULL_SIZE`，反之亦然）；`clamp_compact_rect` 三例（正常/过窄/过矮）；`sanitize` 往返一例（100×40 → 320×130）；D-6 一例接线测试（切到简洁后喂一帧"仍是全量大小"的实时几何，断言 `compact_rect` 的宽高不动，grace 过期后再喂才允许写回）；真机 W-2.1 + 新增 W-2.17（拉边缘缩放）。
 
 ## REQ-002 实现与验证
 
@@ -121,59 +123,71 @@ UiMode::Compact => vec![
 实现时要加三条原设计没写的规则（都是写单测时暴露出来的）：
 - **读不到几何的那一帧按"还在动"处理并刷新计时**。原先这里是 `let rect = outer?;`，直接把计时停在旧值上，于是拖动中途就能判出静止、把用户还按着的窗口吸到边上——子像素抖动同理，比较时用 0.5px 容差而不是 `==`。
 - **armed 期间每帧续 `request_repaint_after(DRAG_SETTLE)`**。原生拖拽结束后事件循环可能再没有理由画一帧，不续就永远等不到"静止满 150ms"，吸附形同没做。
-- **程序驱动的移动一律 `disarm()`**（`open_settings`、`cycle_dock`、形态切换），否则自己发的 `OuterPosition` 会被当成"用户松手了"再吸一次。吸附回写前还要把吸附结果与松手 rect 比一次（≤0.5px 且边相同就跳过），防止吸完又触发下一轮。
+- **程序驱动的移动一律 `disarm()`**（`open_settings`、形态切换、以及 REQ-003 的唤出与收回——v0.4 这里列的是 `cycle_dock`，该控件已随 Q-010 下线），否则自己发的 `OuterPosition` 会被当成"用户松手了"再吸一次。吸附回写前还要把吸附结果与松手 rect 比一次（≤0.5px 且边相同就跳过），防止吸完又触发下一轮。
 
 **验证**：把手命中/不命中（4 组指针位置）、`StartDrag` 入队、未聚焦时先入队 `Focus`、`DragSettler` 五例（未 armed 不返回、移动中不返回、静止不足不返回、恰好静止返回一次、再次移动重新计时）；真机 W-2.13（三处把手各拖一次，且拖输入框/按钮不移动窗口）。
 
 ## REQ-003 实现与验证
 
-纯函数两条，都在 `mode.rs`（REQ-003 末尾那句"判定 SHALL 是纯函数"的输入清单在 v0.4 加了"当前停靠边 + 停靠锚点"，就是为了第二条）：
+v0.5 把停靠改成"只认左/右两条边 + 悬停唤出"（Q-010），因此不再是两个纯函数，而是**四个纯函数 + 一份运行时状态机**。全部落在 `mode.rs`（纯函数）与 `app.rs`（状态机接线），`views/compact.rs` 只少了停靠指示这一个控件。
 
-- `snap(window: Rect, area: Rect, threshold: f32, sliver: f32) -> (Rect, DockEdge)`——松手位置的几何吸附
-- `released(edge: DockEdge, anchor: Pos2, settled: Pos2, threshold: f32) -> bool`——已停靠时判"拖离"（v0.4 新增，Q-009 那条决定的连带后果）
-
-`snap`：
+**吸附 `snap(window, area, threshold, sliver) -> (Rect, DockEdge)`**：只在左/右两条边里取带符号距离最小的那条
 
 ```
-d_left   = window.min.x - area.min.x
-d_right  = area.max.x - window.max.x
-d_top    = window.min.y - area.min.y
-d_bottom = area.max.y - window.max.y
-取最小的那条边与其距离 d；d < threshold 才吸附：
-  Right  → x = area.max.x - sliver
-  Left   → x = area.min.x - w + sliver
-  Top    → y = area.min.y - h + sliver
-  Bottom → y = area.max.y - sliver
-否则 (window, DockEdge::None)
+d_left  = window.min.x - area.min.x
+d_right = area.max.x - window.max.x
+d = min(d_left, d_right)
+d < threshold ──► dock(window, area, 胜出的那条边, sliver)
+否则            ──► (window, DockEdge::None)
 ```
 
-**四条公式在 v0.4 按 Q-009 改成对称版**：右/下原来是 `area.max - size + sliver`，算出来是"窗口基本全可见、只往外多探 6px"，与左/上的"藏进去只剩 6px"以及本条要的可见热区相反。现在四边一致：贴边即把窗口藏到那条边之外，可视区内只留 `sliver` 宽的一条热区供拖回。因此左/上停靠必然是负坐标、右/下停靠必然让 `rect.max` 超过 `area.max`——这是机制本身，不是越界。
+上/下两条边**整个从判定里删掉**（v0.4 的四边对称作废）：藏进菜单栏或 Dock 之后那 3px 不在用户会去悬停的位置，"鼠标放上去自动出来"在那里不成立。`DockEdge::Top`/`Bottom` 留在枚举里只为反序列化兼容，运行时不再产生，启动读到就按 `None`。
 
-**拖离改按锚点位移，不能再共用 `snap` 的那个距离**：窗口藏到边外之后，它在停靠轴上超出可用区一整个"自身宽/高 − sliver"，那条边的 `d` 恒为约 `-454`（460×96 的窗、sliver 6），`min_by` 每次都选中它、`d < threshold` 恒成立，于是 `snap` 会把"向内拖 200px"重新吸回原边，REQ-003 第三条永远不成立。改为 `released`：判"松手原点相对**停靠锚点**沿停靠轴向屏幕内移动的距离 ≥ threshold"：
+**停靠位 `dock(window, area, edge, sliver) -> Rect`**：Right → `x = area.max.x - sliver`；Left → `x = area.min.x - w + sliver`。窗口藏到边外，可视区内只剩这条 `sliver` 宽的、贴在屏幕最外沿的窄边——光标推到屏幕边必然落进它，这是悬停唤出的几何前提。夹取仍是两轴分开：**交叉轴**（y）全量夹进可用区，**停靠轴**（x）只在窗口宽过可用区时把起点夹到 `area.min`（此时 `area.max - w` 是负数，照抄会把窗口甩到屏幕另一侧之外）。
+
+**唤出位 `reveal_rect(window, area, edge) -> Rect`**：Right → `x = area.max.x - w`；Left → `x = area.min.x`；y 沿用现值并夹进可用区。唤出**不改** `docked_edge`，只改运行时 `dock_shown`。
+
+**拖离 `released(edge, anchor, settled, threshold) -> bool`**：与 v0.4 同一条（相对停靠锚点沿停靠轴向屏幕内的位移 ≥ 阈值；交叉轴位移不计）。锚点在唤出时 SHALL 搬到唤出位、吸附时搬到收起位，否则"从唤出态向内拖"量不出位移。
+
+**运行时状态（`IceApp`，一律不持久化）**：
 
 ```
-Right  → anchor.x - settled.x     Left   → settled.x - anchor.x
-Top    → settled.y - anchor.y     Bottom → anchor.y - settled.y
-判出的位移 ≥ threshold ──► (settled 原样, DockEdge::None)   // 交叉轴方向的位移不计，
-                                                            // 沿边滑动仍应保持停靠
+dock_anchor : Option<Pos2>     // v0.4 已有；吸附/唤出/收回三处都要搬它
+dock_shown  : bool             // 停靠态当前是唤出（true）还是收起（false）
+dock_left_at: Option<Instant>  // 指针离开窗口的时刻，DOCK_AUTO_HIDE = 500ms 的计时起点
+dock_latched: bool             // 闸门：true 表示"指针还欠一次离开创口带"，不许唤出
 ```
 
-`apply_snap` 的顺序因此是：整条掉出可用区 → `fit_into_area`；已停靠且 `released` → 就地释放为自由浮动；否则跑 `snap`。
+闸门在两处置起：**吸附落位时**（用户把窗口拖到边上、松手即收起，此时指针正压在屏幕边上，不置闸门就会立刻再弹回去，停靠看起来"没生效"）与**每次自动收回时**（否则 500ms 后指针仍在 3px 上 → 唤出 → 指针离开 → 收回，来回抖）。解除条件只有一个：指针离开创口带（热区沿停靠轴向屏幕内扩 `dock_sliver_px` 的那一条）后再次进入。
 
-锚点不能取 `config.ui.compact_rect`：`mode::capture` 每帧（`app.rs:156`）都把实时几何写回它，拖动途中锚点就被 pointer 位置冲掉了，位移恒为 0。改为 `IceApp::dock_anchor: Option<Pos2>`——`place_compact` 在 `edge != None` 时把它写成刚下发的那个原点、`edge == None` 时清空；启动时若配置里 `docked_edge != None`，锚点取 `compact_rect.min`（那次强制落盘写的正是停靠后的几何，两者相等），不新增配置字段。v0.3 的左/上停靠从一开始就有这个"拖不离"的缺陷，只是 TC-3.5-d 当时只测右边（右/下按 v0.3 公式只超出 6px，几何距离碰巧还能用）没暴露。
-夹取分两轴，**不在吸附后再跑一次 `fit_into_area`**（原设计的这一句与 TC-3.5-a 的字面期望冲突：`fit_into_area` 是全量夹取，会把刚留出来的 6px 热区一起夹没，四条公式全部失效）：
-- **交叉轴**（贴左右时夹 y、贴上下时夹 x）全量夹进可用区，不许窗口斜着飘出去；
-- **停靠轴**只在窗口沿该轴比可用区还长时把起点夹到 `area.min`——此时 `area.max - size` 本身是负数，照抄会把窗口甩到屏幕另一侧之外，TC-3.5-e 要的正是拦住这一种。
+**每帧看护 `watch_dock(ctx)`**（挂在 `ui` 里、`settle_drag` 之后）：
 
-`fit_into_area` 仍然实现并被 REQ-009 的启动/插拔恢复用（`snap` 与"点指示换边"不用它）。它在本包还多一个消费者：松手时窗口整条落在可用区之外（`!area.intersect(settled).is_positive()`），此时不判吸附，先 `fit_into_area` 把窗口拉回可视区。
+```
+停靠边 ∉ {Left, Right}                    → 层级恢复 window_level(always_on_top)，四个状态清空，返回
+drag_settler.is_armed()（原生拖拽途中）    → 什么都不做（那时 egui 收不到 pointer 事件，判了也是错的）
+docked_edge ∈ {Left, Right} 且层级 ≠ Floating → 发 WindowLevel::Floating（Q-012：不论 always_on_top，否则那 3px 收不到事件）
+!dock_shown 且 !dock_latched 且 指针在窗口内   → place(reveal_rect) ；dock_shown = true；anchor 搬到唤出位；request_repaint()
+dock_shown 且 指针不在窗口内：
+    正在窗口内按住（拖动/选字）或 focus_in_source → 不动，清空 left_at
+    否则 left_at 起算 ≥ DOCK_AUTO_HIDE          → place(tucked_rect)；dock_shown = false；dock_latched = true；anchor 搬到收起位；request_repaint_after(DOCK_AUTO_HIDE)
+dock_latched 且 指针在创口带之外                → dock_latched = false
+```
 
-与 `03-ui-design.md` §3 的伪代码逐行对应，`sliver`/`threshold` 从 `config.ui` 取（默认 6/40）。
+指针在不在窗口内取 `ctx.input(|i| i.raw.pointer_in_window)`（winit 的鼠标进入/离开事件会自己唤醒事件循环，因此收起态**不需要**常驻重绘心跳；只有 500ms 收回计时需要一次性 `request_repaint_after`）。落位走 `place_compact` 那条既有路径（发 `OuterPosition` + 写 `compact_rect` + 立即落盘）。
 
-`cycle_edge(DockEdge) -> DockEdge`：`Right → Bottom → Left → Top → Right`，`None → Right`。停靠指示是个 `selectable_label`，文案"停靠：右"（宽度不足时退化成"右"，REQ-005 的窄宽规则），点击后 `cycle_edge` + 立刻按新边重算 rect 并发 `OuterPosition` + 落盘。
+**启动落位**：`docked_edge ∈ {Left, Right}` 时按 `dock(compact_rect, area, edge, sliver)` 重算一次再下发（幂等），初始 `dock_shown = false`、`dock_latched = true`。这一条顺带解决"在唤出态被强杀"——盘上存的是唤出位 x，直接照搬会让窗口以"停靠"之名整条可见地挂着。REQ-009 的启动越界校验配套改口径：停靠态按"那 `sliver` 是否还在可用区内"判，不按整窗判（否则左停靠的负 x 每次启动都会被当成越界拉回屏幕中心，等于每次启动都替用户解了停靠）。
+
+`fit_into_area` 仍然实现并被 REQ-009 的启动/插拔恢复用（`snap` 不用它）。它在本包还有一个消费者：松手时窗口整条落在可用区之外（`!area.intersect(settled).is_positive()`），此时不判吸附，先 `fit_into_area` 把窗口拉回可视区。
 
 `area` 来自 `system::screen::work_area(ctx, outer_rect)`（见"Spec 事实更正"）；探针失败时回退 `monitor_size`，并把这次回退记进日志（`warn_once` 语义，避免每帧刷屏）。
 
-**验证**：TC-3.5-a~e 五例纯函数单测（右 30px → `x = area.max.x - sliver` 且可视区只露 6px / 左上右下各 30px → 四边可见部分恒为 6px / 四边都 >40px / 停靠后向内拖 200px / 窗口高于可用区）+ `released` 四边各一例（右与下按 `-x`、`-y` 方向判，左与上按 `+x`、`+y` 判；再各加一例"沿交叉轴拖 200px 不释放"）+ `cycle_edge` 五例 + 坐标翻转纯函数四例（主屏、副屏在主屏右侧、副屏在主屏下方、窗口不在任何屏内）；接线一例锁住"锚点不是 `compact_rect`"——先吸附停靠、再让 `capture` 把 `compact_rect` 写成拖动途中的值，断言仍按 `dock_anchor` 判出释放。真机 W-2.5/2.6 + 新增 W-2.18（指示循环一圈）+ W-2.18 补一条"四条边各拖离一次都能脱开"。
+**随 v0.5 下线的东西**：`mode::cycle_edge`、`IceApp::cycle_dock`/`move_to_edge`、`views::compact::dock_label`、以及动作行里那个 `btn_dock` 控件与它的布局断言 salt（K-07 作废，Q-010 第④条）。`snap` 里 Top/Bottom 两个分支同样删除。
+
+**验证**：
+- 纯函数：`snap` 左右各吸一次 + "上下够近也不吸"一例（锁住 v0.5 砍掉两条边）+ 四边都远不吸；`dock`/`reveal_rect` 的公式与两轴夹取各一例（含"窗口宽过可用区"）；`released` 左右各一例 + 交叉轴滑动不释放 + `None` 恒 false。
+- 状态机（`app.rs` 接线，喂 `PointerMoved`/`Gone` 事件与几何）：进入热区→唤出并置 `WindowLevel::Floating`；离开 500ms→收回且置闸门；收回后指针仍在 3px 上→不反弹（断言一个命令都不发）；指针离开再回来→闸门解除并可再次唤出；按住不放或输入框有焦点→不收回；吸附落位后指针在边上→不立即弹回；拖离→层级恢复 `window_level(always_on_top)`。
+- 布局：`views/compact.rs` 的 `btn_dock` 相关断言随控件一起删。
+- 真机走查：左/右各吸一次、悬停唤出与自动收回各一次、"正在打字时不收回"一次、向内拖离一次（W-2.5、W-2.6，W-2.18 改为"停靠态鼠标推到屏幕边上会不会弹出来"——它同时是那条 HYPOTHESIS 的定论，不成立触发停止条件 10）。
 
 ## REQ-004 实现与验证
 
@@ -186,7 +200,7 @@ pub fn commands_for_mode(cfg: &UiConfig, mode: UiMode) -> Vec<ViewportCommand> {
     let rect = rect_for(cfg, mode);
     let (decorations, min_size) = match mode {
         UiMode::Full => (true, MIN_FULL_SIZE),
-        UiMode::Compact => (false, MIN_COMPACT_SIZE),   // REQ-001：简洁窗也要能缩放，下限 320×96
+        UiMode::Compact => (false, MIN_COMPACT_SIZE),   // REQ-001：简洁窗也要能缩放，下限 320×130
     };
     vec![
         ViewportCommand::Decorations(decorations),   // 原生属性，必须排在改尺寸之前
@@ -200,7 +214,7 @@ pub fn commands_for_mode(cfg: &UiConfig, mode: UiMode) -> Vec<ViewportCommand> {
 
 与 P4 版本的两处差别，都是有意的：
 
-1. **`Resizable(true)` 与 `MinInnerSize` 对简洁形态也下发**（P4 给的是 `Resizable(false)`），这是 REQ-001；`MinInnerSize` 从"清成 0"改成按形态取值，否则切回全量后简洁窗的 320×96 下限会跟着带过去。
+1. **`Resizable(true)` 与 `MinInnerSize` 对简洁形态也下发**（P4 给的是 `Resizable(false)`），这是 REQ-001；`MinInnerSize` 从"清成 0"改成按形态取值，否则切回全量后简洁窗的 320×130 下限会跟着带过去。
 2. **全量形态也下发 `OuterPosition`**（P4 只给简洁形态下发）。不下发时，从贴边停靠的悬浮条切回全量，窗口会留在屏幕边缘那条位置上，与 FR-3.6"记住位置尺寸"矛盾。`full_rect` 存的是外框矩形（P4 已修掉"把标题栏高度算进位置"那个缺陷），所以这里直接用它的 `x/y` 就是对的原点。
 
 顺序有意义：`Decorations` 先于 `InnerSize`。反过来会有一帧按错误的可用高度绘制（装饰回来后内容区矮一截），观感就是"内容闪一下"，正是 REQ-004 禁止的。
@@ -215,14 +229,15 @@ pub fn commands_for_mode(cfg: &UiConfig, mode: UiMode) -> Vec<ViewportCommand> {
 
 ## REQ-005 实现与验证
 
-`views/compact.rs` 的版式（460×96 默认，最小 320×96）：
+`views/compact.rs` 的版式（460×130 默认，最小 320×130）：
 
 ```
 ┌ 把手条 10px（Grab 光标，拖动）─────────────────────────────┐
 │ 输入行 34px：TextEdit::singleline，Enter 提交              │
 │ 译文区 剩余高度：ScrollArea::vertical().auto_shrink([false,false])│
 │   文本可选中复制；尾部空白是第三处把手                      │
-│ 动作行 28px：全量 · 复制 · 设置 · 机翻|AI · 停靠：右 · 置顶 │
+│ 动作行 自然高度（约 24px 一行，窄则两行）：              │
+│   全量 · 复制 · 设置 · 机翻|AI · 置顶   （v0.5：无停靠指示）│
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -230,10 +245,10 @@ pub fn commands_for_mode(cfg: &UiConfig, mode: UiMode) -> Vec<ViewportCommand> {
 - **译文滚动**：定高 `ScrollArea`（`id_salt("compact_translation")` + `auto_shrink([false,false])`），沿用 P4 缺陷 D-4 的手法；`Ui::new_child` 不继承裁剪，所以正文一律进滚动容器，不手工推进光标。
 - **Esc**：`hotkeys::classify` 加 `Key::Escape → Action::ClearInput`；`app.rs::run` 里仅在 `state.mode() == Compact` 时执行 `state.clear_input()`（清源文 + 译文 + failure，不发请求、不退出、不收窗）。
 - **设置按钮**：`Effects::open_settings = true` → `app.rs` 执行"切回全量（走 REQ-004 的瞬时切换）+ `state.tab = Tab::Settings`"。
+- **动作行用正常尺寸、放不下就换行**（v0.5，Q-011 推翻 v0.4 的三层收缩）：停靠指示下线后这一行只剩 6 个控件（`全量`/`复制`/`设置`/`机翻`/`AI`/`置顶`），实现改成 `ui.horizontal_wrapped(...)` 且**不再动** `override_text_style`、`button_padding`、`item_spacing`——用户 2026-10-23 的否定原话是"悬浮窗也可以正常使用操作栏，没必要搞一个缩减版的操作栏，还不容易点到"。随之删除的是 `NARROW_WIDTH` 常量、`dock_label(edge, narrow)`（整个函数下线）、`topmost_label(narrow)` 的窄标签退化（文案固定 `置顶`，状态由 `selectable_label` 的高亮表达）。选"换行"而不是"继续压缩"的技术理由：无头布局测试跑的是 egui 内置字体（没有中文字形，量出的文字宽度必然偏小），P4 的 D-1 就是这类"断言全绿而按钮被裁出窗口"；`wrapped` 布局自带"永不超出可用宽度"，与字体度量无关，等于把这一整类缺陷从结构上关掉。代价是最窄窗口里动作行会占两行高，所以 REQ-001 的高度下限同步抬到 130px。
 - **提示条**：复用 P4 的 `toasts(&ctx, state)`（`egui::Area` 浮层）。简洁窗里的偏移量取 `把手条 10 + 输入行 34 + 4 = 48px`，而不是原写的 12px——12px 正好压在把手条上，而 REQ-005 的硬要求是"位置不遮住输入行文字"。`toasts` 因此多收一个 `offset_y` 参数，全量窗仍给 12px。
-- **窄宽不溢出**：320px 下限里要常驻 7 个可点控件（`全量`/`复制`/`设置`/`机翻`/`AI`/停靠指示/置顶指示），13pt 的默认字号在 304px 可用宽度放不下——原设计那句"按钮本身不缩"在 REQ-005 的"常驻"面前做不到。实现是三层收缩：① 整行 `ui.style_mut().override_text_style = TextStyle::Small`（10pt；`small_button` 自己钉死 Small，不受这层影响，正好是要的效果）；② `button_padding = (4, 1)`、`item_spacing.x = 4`；③ 行宽 < 380px 时停靠指示退化成单字（"右"而不是"停靠：右"）、置顶退化成"顶"。字号最大 2.0 时靠 ③ 兜住。这是 P4 缺陷 D-1 的同类回归，两条断言一起锁：`every_control_fits_the_minimum_compact_window`（记下的每个控件矩形都在 320×96 内、且两两不相交）与 `narrow_windows_use_the_short_labels` / `a_wider_window_gets_the_full_labels_and_still_does_not_overflow`。
 
-**验证**：无头 `run_ui` 断言七个控件的矩形都存在、都落在 320×96 的窗口 rect 内且两两不相交（D-1 的回归锁，不相交同时证明把手没有吃掉按钮）；点"AI"→ `Effects::job` 非空且 `state.engine == Ai`；AI 未配置时该段禁用；长译文 `ScrollArea` 有滚动范围而短译文不凭空造出滚动条（D-4 的手法）；Esc → 源文与译文都清空且 `in_flight` 为 None；`Effects::open_settings` → 模式变 Full 且 tab 变 Settings；复制只置 `Effects::copy`、不碰真剪贴板；真机 W-2.2/2.11/2.15/2.16 + 新增 W-2.19。
+**验证**：无头 `run_ui` 断言 6 个控件的矩形都存在、都落在窗口 rect 内且两两不相交（D-1 的回归锁，不相交同时证明把手没有吃掉按钮），外加一条"按钮高度不小于 `interact_size.y`（20px）"——这条量的不是中文宽度，因此不受内置字体没有 CJK 字形的影响，能直接证明字号没被再压回去；320px 窄窗断言动作行**换成了两行**而不是溢出（`actions` 面板高度 > 一行高度）；点"AI"→ `Effects::job` 非空且 `state.engine == Ai`；AI 未配置时该段禁用；长译文 `ScrollArea` 有滚动范围而短译文不凭空造出滚动条（D-4 的手法）；Esc → 源文与译文都清空且 `in_flight` 为 None；`Effects::open_settings` → 模式变 Full 且 tab 变 Settings；复制只置 `Effects::copy`、不碰真剪贴板；真机 W-2.2/2.11/2.15/2.16 + 新增 W-2.19（这一条现在专测"正常尺寸按钮真机点得中"，无头测试证不了文字真实宽度）。
 
 ## REQ-006 实现与验证
 
@@ -308,6 +323,8 @@ pub fn observe(&mut self, text: Option<String>, input_focused: bool) -> Option<S
 
 离屏夹回：`fit_into_area(rect: Rect, area: Rect) -> Rect`（纯函数）——宽高超过可用区时先夹到可用区大小，再把位置夹进 `[area.min, area.max - size]`，保证不产生负偏移、不把窗口推到屏幕外。启动路径（`main.rs` 读配置后）与 `system::screen::work_area` 拿到真实可用区后各跑一次；P1 已有的 `WindowRect::{within, centered_in}` 继续负责"整块都在屏外 → 回中心"。
 
+**停靠态是上一条的例外**（v0.5，REQ-009 新增那条）：`docked_edge ∈ {Left, Right}` 时窗口按设计就有 `w − sliver` 在可用区之外（左停靠必然 x 为负），照上面的整窗判据每次启动都会把停靠好的悬浮条拉回屏幕中心、等于替用户解了停靠。判定改成"那 `dock_sliver_px` 的可见热区还在可用区内吗"：热区在 → 按 REQ-003 的启动落位重发一次 `dock(...)` 的坐标（顺带解决"唤出态被强杀后盘上存的是整窗可见的 x"）；热区也越界（外接屏拔掉）→ 才走 `fit_into_area`/回中心。
+
 FR-5.3：休眠唤醒/插拔后第一帧若 `outer_rect` 已失效（`None` 或落到可用区外），按上一条夹回，并重发一次当前形态的几何命令（复用 P4 `reveal()` 的"逼 winit 同步 surface 尺寸"手法，避免贴图）。
 
 配置写失败：沿用 P4 `flush_config` 的错误路径（保留脏标记 + 可读提示 + 不 panic + 不阻塞翻译）。
@@ -316,10 +333,10 @@ FR-5.3：休眠唤醒/插拔后第一帧若 `outer_rect` 已失效（`None` 或�
 
 ## REQ-010 实现与验证
 
-走查表：`docs/06-test-cases.md` §3 现有 W-2.1~W-2.14（14 行）保留，W-2.15/2.16 由"未实现"转"本包验"，新增 W-2.17（边缘缩放）、W-2.18（停靠指示循环）、W-2.19（简洁窗 320px 窄宽不溢出）、W-2.20（插拔屏幕）；P4 预报四条的引言块改成"已在 CHG-004 闭环"。
+走查表：`docs/06-test-cases.md` §3 现有 W-2.1~W-2.14（14 行）保留，W-2.15/2.16 由"未实现"转"本包验"，新增 W-2.17（边缘缩放）、W-2.18（**停靠态悬停唤出/自动收回/打字不收回**，v0.5 改写）、W-2.19（简洁窗 320px 窄宽换行不溢出）、W-2.20（插拔屏幕）、W-2.21（**切换形态后尺寸立刻是 460×130**，锁 D-6）；P4 预报四条的引言块改成"已在 CHG-004 闭环"。
 
 文档回写清单（REQ-010 的 SHALL 逐条落地）：
-- `docs/01-requirements.md`：FR-3.2（460×96 起、可缩放、下限 320×96、控件清单含引擎分段）、FR-1.2/FR-1.4（自动反向）；FR-3.9（改瞬时切换）**已在 2026-10-22 需求变更时改完**，实现后只需核对文字与代码一致；
+- `docs/01-requirements.md`：FR-3.2（460×130 起、可缩放、下限 320×130、控件清单含引擎分段且不再压缩字号）、FR-3.5（v0.5：只认左/右边缘 + 3px 热区 + 悬停唤出）、FR-1.2/FR-1.4（自动反向）；FR-3.9（改瞬时切换）**已在 2026-10-22 需求变更时改完**，实现后只需核对文字与代码一致；
 - `docs/02-architecture.md`：§2 的 `mode` 行补 `snap`/`dim_alpha`/`DragSettler` 并把状态从"部分"改为完成（**不补 `Morph`**，FR-3.9 已于 2026-10-22 改为瞬时切换，§3.3 的那条已在本轮改完）、`views::compact` 从"—"变实体、`system::clipboard` 补 `Watcher`、新增 `system::screen` 一行；§8 落地表补 P5；错误表 `SameLanguage` 行兑现 CHG-004 说明；
 - `docs/03-ui-design.md` §3：ASCII 图重画（把手条 + 可缩放 + 引擎分段 + 停靠/置顶指示）、控件清单加 K-10（引擎分段）与 K-11（缩放手柄/下限）、K-06 补"未聚焦先取焦点"；§4 的形态切换段落**已在 2026-10-22 改成瞬时版**；
 - `docs/05-dev-guide.md`：测试计数、目录结构（`views/compact.rs`、`system/screen.rs`）、§8 平台差异补 AppKit 探针三行、§9 常见故障补"egui 没有 work area API"与"改窗口尺寸前必须先改 `MinInnerSize`（`InnerSize` 是异步请求，被旧约束夹住时会静默忽略）"两条——后一条要写清本包按形态取下限、不用 `MinInnerSize(ZERO)` 那个"完全无约束"的逃生口（见 REQ-001）；
@@ -330,3 +347,80 @@ FR-5.3：休眠唤醒/插拔后第一帧若 `outer_rect` 已失效（`None` 或�
 证据规范沿用 P4 的四条硬规则（`RUST_LOG=ice_translator=debug,info`、`LC_ALL=en_US.UTF-8 pbcopy` + 回验、截图裁到只含应用窗口、引用写 `*-V-0NN.txt` 取编号最大者），另加一条本包特有的：**剪贴板即翻的证据只记长度与哈希前 8 位**，不出现剪贴板原文。
 
 **验证**：`tools/check_traceability.py`（需求↔用例双向闭合）、`./sdd scan`、`! grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates`、用户走查（V-009）。
+
+## v0.6 实现增量（2026-10-27 走查修正，覆盖上文与 REQ-001~005 相关的旧段落）
+
+上面按 v0.1~v0.5 写下的实现计划有四处已被这一轮真机走查推翻或补强，逐条登记。对应规格见 Q-013/Q-014 与 REQ-001/REQ-002/REQ-003/REQ-005 的 v0.6 文字。
+
+1. **简洁窗带回原生标题栏（Q-013），顶部 10px 把手条整条删除**——REQ-002 那一节"三处把手 + 三个互不重叠显式矩形"的方案作废两处，只剩动作行行尾空白与译文尾部 8px（`TAIL_HEIGHT`）两块；`Panel::top("compact_handle")` 的构造、`rect(ctx,"handle_bar")` 的记录与相应断言一起下线，`views::compact` 的第一带变成输入行（回归锁 `the_input_row_is_the_first_band_now_the_handle_bar_is_gone`）。
+   **连带的真问题是吸附的触发**：抓原生标题栏由 AppKit 自己搬窗口，应用侧一帧 `StartDrag` 都收不到，"把手按下即 arm"的那套在最高频的拖动方式下根本不跑。`DragSettler`（静止判定）保留不动，改的是**谁来 arm**：除了窗内两处把手按下，`app::observe_native_move` 在"连续 `STILL_BEFORE_DRAG` 帧几何静止之后出现一次位移"时也 arm，之后照旧由 `settle_drag` 在静止满 `DRAG_SETTLE` 后跑 `apply_snap` + 落盘。四道闸门防误判（误判的代价比漏判大——唤出到贴边位的那次移动若被当成用户拖动，刚弹出来又缩回去）：自己下发过位置用 `commanded` 记住目标点、到达或连续静止后吃掉这次跳变；`pending_geometry` 在宽限期内不 arm（形态切换那次跳变不是拖动）；全量窗与隐藏态不 arm。还有一条不写在需求里但必须做的：`DragSettler` 在 armed 而未静止时要续一帧 `request_repaint_after`，否则原生拖完之后事件循环没有别的理由再画，"静止满 150ms"永远等不到。
+   半透明那条不受影响：`with_transparent(true)` 仍在创建期，`apply_dim` 只压底色 alpha，原生标题栏由系统画、不跟着变淡（REQ-007 的走查判据据此补一句）。
+
+2. **输入行按内容长高到三行封顶（Q-014）**——取代"输入行定高 34px + 横向滚动"。机制是"上一帧量到的内容自然高度 → 这一帧给的高度"，夹在 `INPUT_HEIGHT`（34px，空态退回这个值而不是退到一行文字）与 `MAX_INPUT_ROWS`（3 行）之间。三条实测坑，缺一条这个钳制就不生效：`TextEdit::multiline` 默认 `desired_height_rows = 4`（不压回 1 行就永远缩不回去）；外层那条带必须 `auto_shrink([false,false])`（`[_, true]` 会让内层收缩、连带把带子压回 25px）；`ScrollArea` 的 `min_scrolled_size` 默认 64px 比三行还高，不显式 `min_scrolled_height(行高)` 时 `max_height` 直接被顶穿。行高公式用 `text_style_height(Body) + extra_text_line_spacing`，按前者单算会少算行距、第三行裁掉半行。
+
+3. **吸附的边界从单屏可用区改成桌面并集（缺陷 D-8）**——上文 REQ-003 那句"`area` 来自 `screen::work_area(ctx, outer_rect)`"作废，停靠/吸附/唤出三条改用 `screen::desktop()`（所有屏可用区的并集，`union` + `flip`）。双屏并排放时按单屏算会把两块屏相接的那条**接缝**当成可停靠边：窗口藏进接缝后，3px 热区既盖不住另一块屏、悬停也回不来，`released` 沿停靠轴量不出向内位移，于是永远解除不了停靠。`work_area`（单屏、去掉菜单栏与 Dock）只留给 REQ-009 的离屏夹回 `rescue_offscreen`——那条问的是"这块屏上还能不能看见窗口"，语义本来就按屏。接缝这条由 `screen::tests::the_desktop_union_spans_both_displays_and_skips_the_seam` 与 `mode::tests::a_display_seam_is_not_a_dockable_edge` 分两层锁住。
+
+4. **修 D-9：长译文滚到底，最后一行看不见**——两处独立成因、两处独立修法，都归到"框的界限搞错了"这句用户判断上。
+   - 简洁窗：共享构造 `full::scroll_area()` 没压 `min_scrolled_size`（egui 默认 64px），矮栏的视口被抬到 64px 并画到框外——实测 130px 高的窗里视口底边 115.9 越过译文框底边 103.0、压在动作行顶边 108.0 之上，而最大偏移按这个虚高视口算，最后十几像素怎么滚都进不来。修法就是那条构造里加 `.min_scrolled_height(0.0)`；"滚不动"的风险不靠这条默认值兜，由调用方的栏高守卫（`MIN_BODY_HEIGHT` 20px）负责。回归锁 `the_translation_viewport_never_grows_past_its_own_pane`（视口底边 ≤ 译文框底边、≤ 动作行顶边，且偏移能走到 `content − viewport`）。
+   - 全量窗：浮层动作条不参与布局、直接盖在滚动区之上，正文末尾没给它留位置。修法是在正文末尾 `ui.add_space(bar_cover(inner.width(), actions.len()))`——预留量与画条子用同一条公式（`bar_grid`），所以窄栏换行成两行时留得也更多。回归锁 `the_last_line_stops_above_the_action_bar`（滚到底后最后一行底边 ≤ 条子上沿，且预留量 ≤ 条子高度 +1px，防止改成"少给正文高度"那种会撑出假滚动余量的做法）。
+   - 方法论：这两条都是**断言全绿而看不见**的老坑（与 P4 的 D-1 同源），差别只在 D-1 是矩形被挤出面板、这次是视口比矩形高。补进 `docs/05-dev-guide.md` 的布局测试规范：**测滚动容器必须断言"可视区不越出给它的矩形"，只断言"偏移会增长"测不出越界**。
+
+## v0.7 实现增量（2026-10-27 走查第二轮，覆盖上文 REQ-001/REQ-005 与 v0.6 那四段的相关部分）
+
+对应规格见 Q-015~Q-018 与 REQ-001/REQ-004/REQ-005 的 v0.7 文字、新增的 REQ-011~REQ-013。下面第 0 条是缺陷修法，1~3 条是三颗新 REQ。
+
+### 0. D-10：宽限期护栏的兜底方向反了（REQ-001 / REQ-004）
+
+`PendingGeometry`（`mode.rs:420-450`）现在只有一个状态字段 `target: Option<(Vec2, Instant)>`，`size_axis_writable` 的三种放行里"宽限期已过"那条**无条件写 `self.target = None` 并返回 true**——于是切换没落定时，第一个被量到的实测尺寸（属于另一个形态）就被当作"用户选的尺寸"永久写进本槽。更糟的是它不可自愈：两槽一旦相等，下一帧 `measured == target` 恒成立，`landed` 分支每帧命中，护栏形同不存在（盘上 `full_rect` 与 `compact_rect` 逐项一字不差就是这个锁死的形状）。
+
+改法是把护栏从"一个可选目标"变成"三段状态机 + 一个基线"：
+
+```rust
+pub struct PendingGeometry {
+    stage: Option<Stage>,        // 原 target 挪进来
+    baseline: Option<Vec2>,      // 第二段到期时量到的实测尺寸：它成为"不动"的参照
+    retry: Option<Vec2>,         // 等调用方取走的重发目标（第一段到期那一帧立起）
+}
+struct Stage { target: Vec2, since: Instant, resent: bool }
+```
+
+- **第一段（不变）**：`|measured − target| ≤ PENDING_SIZE_TOLERANCE` → 落定，清状态，尺寸轴照常写回。
+- **第一段到期未命中**：`stage.resent = true`、`since` 重置，并把目标尺寸立进 `retry`；**由调用方重发一组** `InnerSize` + `OuterPosition`（`mode::resend_commands`）。重发不能由 `PendingGeometry` 自己发命令（它拿不到 `Context`，也不该拿），所以 `capture` 那条路径要能回报"这一帧需要重发"：新增 `fn take_retry(&mut self) -> Option<Vec2>`（取走即清空，一轮只给一次），`app::refresh_geometry` 据此发那两条。**只重发尺寸与位置**：`Decorations`/`Resizable`/`MinInnerSize` 在切换那一组里已经生效、也不随尺寸变。REQ-004 那条"各恰好 1 条"的断言因此改成"正常落定各 1 条、模拟未落定至多 2 条且第二组出现在宽限期之后"（`a_first_stage_expiry_resends_the_size_and_position_once` 数的是**当帧新发**的命令——`feed_geometry` 走 `run_ui`，会像原生层那样把上一帧的命令取走）。
+- **第二段到期仍未命中**：**不写实测尺寸**。把这一帧的 `measured` 存进 `baseline` 并记一条 WARN（`tracing::warn!` 只打两个槽的宽高与目标宽高，不含路径与任何内容，NFR-3），清掉 `stage`。此后 `size_axis_writable` 的判据变成"与 `baseline` 的差是否超过容差"：没超就返回 false（窗口停在哪儿都不写盘），超了说明是**用户自己在拉窗口**，返回 true 并清 `baseline`。这就是 REQ-001 里"把尺寸轴的所有权交还给用户"那句的机制——不是"到期后放行"，而是"到期后把当前值当成新的静默起点"。
+- 新的 `set()`（下一次形态切换）无条件清 `baseline`。
+
+**已污染的那一对槽不改写**（Q-015 ③）：程序没有依据猜 984×632 里哪个是本该属于谁的，自动改值等于偷偷修改用户配置。自愈由用户按设置页那颗「恢复默认窗口尺寸」显式完成（REQ-011 落点②），本包也不写迁移逻辑、不 bump 配置版本。
+
+无头断言三段（都喂假的 `Instant`，不需要真等一秒）：① 第一段到期时 `take_retry` 给出目标尺寸、`size_axis_writable` 对另一形态的尺寸返回 false、槽的宽高未动；② 第二段到期后连续再喂若干帧同样的实测尺寸，断言槽的宽高**保持切换前那个旧值**、位置轴照常更新、`baseline` 生效期间没有任何写盘；③ 喂一个与 `baseline` 相差 > 容差的尺寸，断言它被写回（用户手动缩放不被吞）。加上回归锁 `the_two_slots_never_end_up_equal_after_a_failed_switch`：模拟一次"始终没落定"的切换，断言结束后 `full_rect` 与 `compact_rect` 仍然不等。
+
+### REQ-011 实现与验证
+
+两颗按钮 + 一条说明 + 一颗恢复默认，都接现成的路径，不动 FR-5.2 的任何行为。视图只置意图，落盘与关窗全在 `app.rs`。
+
+- **简洁窗动作行**：`views/compact.rs::action_row` 的控件列表尾部加 `退出`（与 `全量`/`复制`/`设置`/`机翻|AI`/`置顶` 同字号同内边距，Q-011 那条"不许压缩控件"继续适用；窄宽下靠 `horizontal_wrapped` 换行，REQ-005 的换行断言自动覆盖它）。点击 → `effects.quit = true`，`app::run_effects` 见到这个标志就调 `self.run(Action::Quit, ..)`，与快捷键共用同一条路径，不新开第二种退出语义。`退出` 的矩形与其余按钮一样 `record` 进临时数据（`btn_quit`），无头点击才点得中。
+- **全量窗设置页**：`views/settings.rs::window_group` 新加一个「窗口」分组（放在 AI 服务组之后），里面两行：`恢复默认窗口尺寸` + `退出程序`，各自旁边一行 `theme::MUTED` 说明——前者"两种形态各回到默认尺寸并居中（窗口被历史版本写坏过时用）"，后者"红灯 / Cmd+W 是收进后台，不是退出"。两颗都只在这一页出现，不进其它页签。
+- **「恢复默认窗口尺寸」的落点**：`effects.reset_geometry = true` → `app::reset_window_sizes`。它**不走 `mode::apply`**：`apply` 开头先 `capture`，会把正要被覆盖的坏尺寸再记回槽里一次。改成直接下发 `mode::commands_for_mode` + 按 `pending` 的规矩登记目标尺寸（`pending_geometry.set`），落定后由每帧的 `capture` 自然写回。位置由纯函数 `app::restored_rect(default, keep, monitor)` 决定：拿得到可用区就 `WindowRect::centered_in`，拿不到（无头、探针失败）就**只换尺寸、位置留在原处**——宁可不挪，也不能把窗口甩到屏外。停靠一并清掉（`docked_edge = None` + `dock_anchor = None`），因为收位是按旧尺寸算的，留着旧锚点下一帧会把窗口顶出屏幕。之后 `mark_config_dirty` + `flush_config(true)` 立即落盘、`apply_topmost`、一条提示、`request_repaint`。两颗按钮分工要说清：前者管"退干净"，后者管"尺寸被历史版本写坏了"。
+- 路径复用：`app.rs` 里 `Action::Quit` 已经做对三件事（`capture` → 强制落盘 → `mode::quit` 置 `quitting` 再发 `Close`），按钮只是多一个入口，SHALL NOT 出现第二条退出实现。
+- 验证：`the_quit_button_is_in_the_action_row`（点简洁窗那颗 → `effects.quit`）、`the_window_group_buttons_set_their_intent`（点设置页两颗 → 各自那个标志，且互不串味）、`the_window_group_buttons_survive_the_narrowest_full_window`（640×420 下两颗都在窗内——REQ-011 的动机就是"看不见等于没有"）、`the_reset_button_restores_both_slots_and_flushes_them`（两个槽回默认、停靠清掉、当帧落盘、目标尺寸登记进护栏）、`the_restored_size_is_centered_when_the_area_is_known`（居中与"拿不到可用区就留在原处"两条分支）。"按了到底有没有退出"必须真机（W-2.26，配 `pgrep` 与 Dock 图标核对，与 W-2.12 那条"收起不退出"成对）。
+
+### REQ-012 实现与验证
+
+简洁窗版式的三条带从"输入行按内容长高 + 译文吃剩余"改成"两带 1:1 分摊 + 带间 ≥5px + 各自成框"，并把下限抬高。
+
+- **先让 egui 扣，再算分摊**：`show` 里 `action_row` 是 `Panel::bottom`，**先建**；两条带画在同一个 `CentralPanel` 里（`inner_margin(0.0)`），于是 `ui.available_height()` 拿到的就是"窗口内高 − 动作行自然高"那块。上一版为此准备的两件东西整个下线：跨帧量动作行高度的 `measured_bar_height` 与首帧兜底常量 `FIRST_FRAME_BAR`——动作行高度不再需要被"量"，也就没有"首帧猜错"那一帧延迟。
+- **纯函数**：`pub fn band_heights(available_h: f32) -> (f32, f32)`（一个参数，就是上面那块可用高），`BAND_GAP: f32 = 5.0`。`room = available_h − 2*BAND_GAP − 4*BAND_OUTER_PAD`，两带各取 `room/2`；`room` 小到撑不起"输入带 ≥ `INPUT_HEIGHT`(34) 且译文带 ≥ `MIN_BODY_HEIGHT`(20)"时**优先保译文带**、输入带退回 `INPUT_HEIGHT`（REQ-012 明写的退让）。`BAND_OUTER_PAD = BAND_V_PAD + 1.0 = 5.0` 是实测出来的：一条带的外框比内容高 10（内边距 4×2 + 描边 1×2），按 8 扣就会两带一起压到动作行上（320×160 下译文带底边 142 vs 动作行顶边 135）。两个 `BAND_GAP` 一个是画在两带之间的实间隔，一个留在译文带与动作行之间当余气。
+- **`MAX_INPUT_ROWS` 整条下线**（Q-017 推翻 Q-014 的高度上限）：`source_height` 那套"上一帧的自然高度 → 这一帧的高度"钳制删除，输入框高度 = 分到的带高；`desired_rows(1)`、外层 `auto_shrink([false,false])`、`min_scrolled_height(当帧行高)` 三条实现前提保留（它们解决的是"默认 4 行"与"64px 视口"两个坑，与上限无关）。`the_input_height_is_clamped_between_the_empty_row_and_three_rows` 那组断言改写成 `the_two_bands_split_equally_and_fall_back_to_one_input_line`（纯函数逐档）+ `the_input_band_keeps_its_share_when_the_source_gets_long`（320 与 460 两种宽度下两带等高，内容长高不改带高）+ `a_source_beyond_the_cap_scrolls_inside_the_input_box`。
+- **两个圆角框**：两带各包一层 `egui::Frame::group`（与全量窗源文栏同一套），带间 `BAND_GAP` 由 `add_space` 保证。断言读的是**外框**矩形（`input_band` / `translation_band`），不是内容矩形——用户看到的间隔是框与框之间的距离。译文尾部那 8px 把手（`TAIL_HEIGHT`）画在框内空白处，`MIN_BODY_HEIGHT` 那条守卫在正文不够高时直接跳过把手并 `advance_cursor_after_rect`。
+- **一条 egui 0.37 的坑（与 REQ-013 同一处）**：`Ui::allocate_ui(size, ..)` 分配的是**子级自己的 `min_rect`**，不是请求的那个尺寸；内容全画在 `new_child` 或 `Ui::interact`（把手）里的话，父级一条都没分配，带子会塌成"一个按钮那么高"（实测 26×10）。修法统一是画完 `ui.advance_cursor_after_rect(rect)`。
+- **数值联动**：`MIN_COMPACT_H` 130 → **160**、`compact_rect` 默认 → `460×160`，唯一出处仍是 `config.rs` 那四个常量，`initial_viewport` / `commands_for_mode` / `sanitize` / `clamp_compact_rect` 四处自动跟着走；`03-ui-design.md` §3 的 ASCII 图与数值同批改。
+- 验证：`band_heights` 逐档单测（够分 1:1、撑不起时输入带退到一行、付不起不给负数、极窄档求和不超过可用高）；`the_bands_are_separated_by_the_gap_and_never_overlap` 断相邻两带间距 ≥5px 且互不重叠、且不越出窗口；下限抬高由命令序列断言 + `an_undersized_configured_rect_is_clamped_before_it_reaches_the_window` 的 130→160 期望值改动 + 真机一次启动观测（简洁窗以 460×160 起）覆盖；观感（是否看得出两个框、间隔够不够）走查 W-2.27。
+
+### REQ-013 实现与验证
+
+全量窗那条动作条从"浮层盖正文"改成"自占一条底栏"，`bar_cover` 整套删除。
+
+- **删除**：`bar_cover`、`floating_actions` 里 `ui.painter().rect_filled` 那类直接画到正文矩形之上的手法，以及"预留量 ≤ 条子高度 +1px"那条断言。`translation_pane` 里那句 `ui.add_space(bar_cover(..))` 一并删掉——正文末尾不再需要假空白。字数也从源文栏脚注搬到底栏左侧，源文栏那条脚注整条收掉。
+- **新增**：`views/full.rs::bottom_bar` = `Panel::bottom("full_bottom_bar").frame(Frame::NONE.inner_margin(BAR_MARGIN))`，**在两栏之前创建**，所以两栏拿到的可用高度天生少了它；`pane_body_height` 因此只扣行距与译文栏那条定高徽标行（`PANE_FOOTER_HEIGHT`），不扣底栏。左侧一格 `CHAR_SLOT`(160px) 放 `char_count_text`（`Label::truncate`，可省略号），右侧 `right_to_left` 按 `actions.iter().rev()` 放按钮组（沿用同一套 `BarAction`，数量与语义不变，`Cmd+Shift+C` 那条路径不动），视觉顺序仍是「翻译」在最左。
+- **分栏不能用 `Ui::columns`**：它给每列的矩形用的是 `max_rect` 的底边、**不看光标**，刚从光标矩形里扣掉的底栏它看不见（实测正文底边压过条子上沿 5px）。改成 `ui.horizontal_top` + 两个 `allocate_ui_with_layout(top_down)`，列宽按 `available_width` 现算。同一条坑也出现在底栏自己身上：左右两块都画在丢弃的子 `Ui` 里，面板自己不推进光标就会塌回一个按钮的高度，所以结尾同样 `advance_cursor_after_rect(rect)`。
+- **自然高与退让顺序**（用户那句"如果不行就把按钮调整小一点"）：`bar_layout(button_area_w, count)` 是"扣掉字数那一格之后"的排布判据，返回 `(按钮尺寸, 行数)`——标准档 `BUTTON_SIZE`(84×28) 一排排得下就用它，排不下先降 `BUTTON_SIZE_NARROW`(64×28)，仍排不下才换行；`bar_height(size, rows)` 与 `bottom_bar` 用**同一个** `bar_layout` 的结果，所以"扣多少"与"画多高"是同一个数（上一版正是这两处各算各的才留出空缝）。`bar_rows` 把可用宽按下限夹一次，保证"至少一颗一排"，永远不会算出 0 行。字数可截断，按钮不行。
+- 验证：`the_bottom_bar_occupies_its_own_row_below_both_panes`（底栏在两栏之下、各自在窗内、两栏正文 >0）、`the_bar_shrinks_before_it_wraps`（先降档再换行）、`a_narrow_window_wraps_the_bar_instead_of_overflowing`、`the_last_line_stops_above_the_bottom_bar`（判据从"≤ 浮层上沿"改成"≤ 底栏上沿"，容差里含译文栏那条徽标行 + 行距 + 底栏上内边距，实测 36px）、`both_panes_get_the_same_box`（两栏等高的既有判据按新结构重算，字数不留两份）；观感与"缩小时是不是先缩按钮"走查 W-2.28。
