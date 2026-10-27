@@ -6,7 +6,14 @@
 //! `NSScreen.visibleFrame`（它的定义就是可用区），其余平台退回 `monitor_size` 并把上边界
 //! 内缩 `MENU_BAR_PX` 当近似值。
 //!
-//! 坐标换算与选屏是纯函数，可无头单测；只有 `probe()` 碰平台 API。
+//! **两个取法对应两件事**（D-8 之后的分工）：
+//! - `work_area`：某**一块屏**的可用区，只有离屏校验（`rescue_offscreen`）用它——
+//!   判"这个窗口还在不在屏上"必须按窗口所在的那块屏。
+//! - `desktop`：所有屏可用区的**并集**，停靠/吸附/唤出用它。停靠的语义是"藏到桌面外面"，
+//!   而只有并集的外缘才是桌面外缘；两块并排放的屏中间那条缝不属于任何外缘，把窗口藏进去
+//!   只是藏到另一块屏上（既盖不住、热区也回不来，`released` 还会永远算不出向内的位移）。
+//!
+//! 坐标换算、并集与选屏是纯函数，可无头单测；只有 `probe()` 碰平台 API。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -62,6 +69,23 @@ pub fn select(screens: &[RawScreen], window: Rect) -> Option<Rect> {
     Some(flip(screen.visible, main_height))
 }
 
+/// 整个桌面的边界：所有屏幕可用区的**并集**（egui 坐标系）。
+///
+/// 并集是外接矩形，两块屏之间有缝隙时它也会把缝隙圈进来——这正是停靠要的：
+/// 唯一能"藏出去"的边界是桌面的最外缘，接缝不是。屏幕列表为空返回 `None`。
+pub fn union(screens: &[RawScreen]) -> Option<Rect> {
+    let main_height = screens.first()?.frame.h;
+    screens
+        .iter()
+        .map(|s| flip(s.visible, main_height))
+        .reduce(|acc, r| {
+            Rect::from_min_max(
+                Pos2::new(acc.min.x.min(r.min.x), acc.min.y.min(r.min.y)),
+                Pos2::new(acc.max.x.max(r.max.x), acc.max.y.max(r.max.y)),
+            )
+        })
+}
+
 /// 探针不可用时的近似可用区：整块屏幕减去顶部菜单栏。
 ///
 /// `monitor_size` 不带原点，多屏下无法知道这块屏在哪，只能按 (0,0) 起算；Dock 的位置与
@@ -89,10 +113,26 @@ fn warn_fallback_once() {
 
 /// 当前窗口所在屏幕的可用区（egui 坐标系）。
 ///
-/// `window` 传窗口的外框矩形：吸附判定要的是"窗口在屏幕上的位置"，不是内容区。
+/// `window` 传窗口的外框矩形：离屏校验要的是"窗口在屏幕上的位置"，不是内容区。
 /// 探针失败或屏幕列表为空时退回近似值，并只警告一次。
+/// **停靠相关的路径不要用这个**，用 `desktop`。
 pub fn work_area(ctx: &egui::Context, window: Rect) -> Option<Rect> {
     if let Some(area) = probe().and_then(|screens| select(&screens, window)) {
+        return Some(area);
+    }
+    let area = fallback_area(ctx.input(|i| i.viewport().monitor_size))?;
+    warn_fallback_once();
+    Some(area)
+}
+
+/// 整个桌面的边界（egui 坐标系），停靠与吸附用。
+///
+/// 与 `work_area` 的区别就是不看窗口在哪块屏：停靠的边界是桌面的外缘，
+/// 而藏出去的窗口（`x = area.x − w + sliver`）中心必然在所有屏之外，
+/// 按屏选会退回主屏、把双屏用户的唤出/收回跳到另一块屏上（D-8）。
+/// 探针失败时退回 `fallback_area`，与 `work_area` 共用同一条 warn-once。
+pub fn desktop(ctx: &egui::Context) -> Option<Rect> {
+    if let Some(area) = probe().and_then(|screens| union(&screens)) {
         return Some(area);
     }
     let area = fallback_area(ctx.input(|i| i.viewport().monitor_size))?;
@@ -249,5 +289,47 @@ mod tests {
         assert_eq!(area.min, Pos2::new(0.0, MENU_BAR_PX));
         assert_eq!(area.max, Pos2::new(1440.0, 900.0));
         assert_eq!(fallback_area(None), None, "拿不到屏幕尺寸时不猜");
+    }
+
+    /// D-8 与"接缝不吸附"的共同根因：两块并排放的屏，桌面外缘是**最左与最右**，
+    /// 中间那条缝不属于任何外缘。并集给出的正是这两个外缘，
+    /// 于是 `snap` 再也看不到 x=0 这条线，藏不进另一块屏、也解不开的死状态就不会产生。
+    #[test]
+    fn the_desktop_union_spans_both_displays_and_skips_the_seam() {
+        let main_right = RawScreen {
+            frame: raw(0.0, 0.0, 1920.0, 1080.0),
+            visible: raw(0.0, 25.0, 1920.0, 1055.0),
+        };
+        let left = RawScreen {
+            frame: raw(-1920.0, 0.0, 1920.0, 1080.0),
+            visible: raw(-1920.0, 25.0, 1920.0, 1055.0),
+        };
+        let area = union(&[main_right, left]).unwrap();
+        assert_eq!(area.min.x, -1920.0, "桌面左外缘在副屏那边");
+        assert_eq!(area.max.x, 1920.0, "桌面右外缘在主屏那边");
+        assert_eq!(area.min.y, 0.0, "两块屏的顶齐平（主屏高度为翻转基准）");
+        assert_eq!(area.max.y, 1055.0);
+    }
+
+    /// 主屏更高、副屏更矮时，并集的 y 取两者之外沿：交叉轴夹取只会更松，不会把窗口夹丢
+    #[test]
+    fn a_shorter_neighbour_widens_the_union_without_losing_an_edge() {
+        let main = main_screen(); // 1440×900，可见区 egui y 25..830
+        let small = RawScreen {
+            frame: raw(1440.0, 0.0, 1024.0, 768.0),
+            visible: raw(1440.0, 0.0, 1024.0, 743.0),
+        };
+        let area = union(&[main, small]).unwrap();
+        assert_eq!(area.min.x, 0.0);
+        assert_eq!(area.max.x, 2464.0, "右外缘在那块矮屏上");
+        assert_eq!(area.min.y, 25.0);
+        assert_eq!(area.max.y, 900.0, "矮屏没有 Dock，它的底边就是主屏底边");
+    }
+
+    #[test]
+    fn a_single_display_unions_to_its_own_visible_area() {
+        let main = main_screen();
+        assert_eq!(union(&[main]), Some(flip(main.visible, 900.0)));
+        assert_eq!(union(&[]), None);
     }
 }

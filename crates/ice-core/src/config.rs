@@ -16,12 +16,16 @@ pub const KEYCHAIN_ACCOUNT: &str = "ai-api-key";
 ///
 /// 这里的四个常量是两种形态下限的唯一出处：`ice-app::mode` 用它们拼 `MinInnerSize`
 /// 交给 AppKit 逐帧执行，`Config::sanitized` 用它们在加载时夹回手改坏的配置。
-/// 两处各写一份字面量就会漂（P4 的简洁窗高度下限写成 64，与设计的 96 不一致）。
+/// 两处各写一份字面量就会漂（P4 的简洁窗高度下限写成 64，与设计的数值不一致）。
 pub const MIN_FULL_W: f32 = 640.0;
 pub const MIN_FULL_H: f32 = 420.0;
-/// 简洁窗的最小内尺寸（FR-3.2，CHG-004 REQ-001：可缩放，但不小于 320×96）
+/// 简洁窗的最小内尺寸（FR-3.2，CHG-004 REQ-001/REQ-012：可缩放，但不小于 320×160）。
+///
+/// 高度两次抬高：v0.5 从 96 抬到 130（动作行改回与全量窗同字号同内边距后，最窄窗里它要占
+/// 两行，96px 把译文区挤成零高）；v0.7 抬到 160（REQ-012 的两带 1:1 分摊要在下限处也让
+/// 两带都装得下一行字——130 高时均分只剩 (130−30−10)/2 ≈ 45px，译文带连两行都放不下）。
 pub const MIN_COMPACT_W: f32 = 320.0;
-pub const MIN_COMPACT_H: f32 = 96.0;
+pub const MIN_COMPACT_H: f32 = 160.0;
 
 /// 屏幕矩形，用于持久化窗口位置（FR-3.6）
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -72,7 +76,9 @@ pub enum DockEdge {
     Left,
     #[default]
     Right,
+    /// v0.5 起运行时不再产生（REQ-003）：只为读得动旧配置文件而保留
     Top,
+    /// v0.5 起运行时不再产生（REQ-003）：只为读得动旧配置文件而保留
     Bottom,
     /// 自由浮动
     None,
@@ -127,10 +133,10 @@ impl Default for UiConfig {
                 x: 1400.0,
                 y: 320.0,
                 w: 460.0,
-                h: 96.0,
+                h: 160.0,
             },
             docked_edge: DockEdge::None,
-            dock_sliver_px: 6.0,
+            dock_sliver_px: 3.0,
             snap_threshold_px: 40.0,
         }
     }
@@ -390,6 +396,12 @@ impl Config {
         self.ui.font_scale = self.ui.font_scale.clamp(0.8, 2.0);
         self.ui.dock_sliver_px = self.ui.dock_sliver_px.clamp(2.0, 24.0);
         self.ui.snap_threshold_px = self.ui.snap_threshold_px.clamp(8.0, 200.0);
+        // v0.5 起停靠只认左/右（Q-010）。Top/Bottom 留在枚举里只为反序列化兼容，
+        // 读到就按自由浮动处理：藏进菜单栏或 Dock 的那条边唤不出来，留着等于又弄丢一次窗口。
+        self.ui.docked_edge = match self.ui.docked_edge {
+            DockEdge::Top | DockEdge::Bottom => DockEdge::None,
+            edge => edge,
+        };
         self.ui.full_rect.w = self.ui.full_rect.w.max(MIN_FULL_W);
         self.ui.full_rect.h = self.ui.full_rect.h.max(MIN_FULL_H);
         self.ui.compact_rect.w = self.ui.compact_rect.w.max(MIN_COMPACT_W);

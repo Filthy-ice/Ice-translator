@@ -1,6 +1,6 @@
 Change: CHG-004
-Version: v0.4
-Spec-Hash: 6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f
+Version: v0.7
+Spec-Hash: 00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [x] T-001 三条 HYPOTHESIS 最小实测：无边框边缘缩放、逐帧 InnerSize 补间、with_transparent 副作用（已跑完三轮：H1/H3 成立；H2 不成立；窗内补间只能单向、双向必撞 ~1s 停摆；单发几何命令 20ms 落定 → 用户决定取消动画，FR-3.9 改为瞬时切换） | ice-translator | REQ-001, REQ-004, REQ-007
@@ -9,13 +9,30 @@ Spec-Hash: 6878ed737a5f516db826a5c9dccf7507b4a991cca59b97b77006733f15b9191f
   Code/Test: crates/ice-app/src/mode.rs, crates/ice-core/src/config.rs
 - [x] T-003 system::screen：AppKit 可用区探针、坐标翻转与选屏逻辑（非 macOS 回退） | ice-translator | REQ-003
   Code/Test: crates/ice-app/src/system/screen.rs, crates/ice-app/Cargo.toml
-- [x] T-004 views::compact：把手三处、输入行、译文定高 ScrollArea、动作行（引擎分段/停靠/置顶/设置/Esc） | ice-translator | REQ-002, REQ-005
+- [x] T-004 views::compact：把手三处、输入行、译文定高 ScrollArea、动作行（全量 · 复制 · 设置 · 机翻|AI · 置顶 · Esc）。v0.5 重做动作行：删掉停靠指示与缩减字号那套（`TextStyle::Small` + `button_padding(4,1)` + `NARROW_WIDTH` 压缩档），改为与全量窗同字号同内边距、`horizontal_wrapped` 放不下换行（Q-011），底部面板不再 `exact_size` | ice-translator | REQ-002, REQ-005
   Code/Test: crates/ice-app/src/views/compact.rs, crates/ice-app/src/views/mod.rs, crates/ice-app/src/app.rs
-- [x] T-005 吸附：snap/cycle_edge/fit_into_area 纯函数 + DragSettler 静止判定 + 松手接线 | ice-translator | REQ-003
+- [x] T-005 停靠重做（v0.5 / Q-010）：`snap` 只认左/右、`dock` 藏出去留 3px、新增 `reveal_rect` 唤出位、`released` 沿用；运行时状态机 `dock_shown`/`dock_left_at`/`dock_latched` + 每帧 `watch_dock`（悬停唤出、500ms 自动收回、按住与打字两例豁免、闸门防抖）；停靠态强制 `WindowLevel::Floating`（Q-012）；删 `cycle_edge`/`cycle_dock`/`move_to_edge`/`dock_label`；`config.rs` 默认 `dock_sliver_px` 6.0→3.0、Top/Bottom 只留反序列化兼容 | ice-translator | REQ-003
+  Code/Test: crates/ice-app/src/mode.rs, crates/ice-app/src/app.rs, crates/ice-core/src/config.rs
+- [x] T-006 形态切换瞬时化：commands_for_mode 重写（Decorations 排在 InnerSize 之前、两种形态都可缩放、全量也下发 OuterPosition）、切换后回读真实几何并立即落盘、隐藏态只改配置；无头断言命令条数与顺序 | ice-translator | REQ-004
   Code/Test: crates/ice-app/src/mode.rs, crates/ice-app/src/app.rs
-- [ ] T-006 形态切换瞬时化：commands_for_mode 重写（Decorations 排在 InnerSize 之前、两种形态都可缩放、全量也下发 OuterPosition）、切换后回读真实几何并立即落盘、隐藏态只改配置；无头断言命令条数与顺序 | ice-translator | REQ-004
-- [ ] T-007 自动反向：auto_reverse_target 纯函数 + submit 钩子 + 提示条 | ice-translator | REQ-006
-- [ ] T-008 失焦半透明：dim_alpha 四组组合 + with_transparent + 设置页开关接线 | ice-translator | REQ-007
-- [ ] T-009 剪贴板即翻：Watcher 七例判定、轮询挂点、自写回环防护、空闲 CPU 两次采样 | ice-translator | REQ-008
-- [ ] T-010 几何即时落盘、离屏夹回与插拔恢复 | ice-translator | REQ-009
+- [x] T-012 修 D-6：形态切换后 `mode::capture` 把"命令已发、窗口还没跟上"的过渡几何写进目标形态的配置槽，尺寸命令只发一次，于是简洁窗保持全量大小。加 `pending_geometry` + `MODE_GEOMETRY_GRACE`（1s）：宽限期内 capture 只写位置轴不写尺寸轴，实测尺寸命中目标 ±2px 或宽限期到期后恢复正常回写。含 `MIN_COMPACT_H` 96→130 与 `compact_rect` 默认值同源改动 | ice-translator | REQ-001
+  Code/Test: crates/ice-app/src/mode.rs, crates/ice-app/src/app.rs, crates/ice-core/src/config.rs
+- [x] T-007 自动反向：auto_reverse_target 纯函数 + submit 钩子 + 提示条 | ice-translator | REQ-006
+  Code/Test: crates/ice-app/src/state.rs
+- [x] T-008 失焦半透明：dim_alpha 四组组合 + with_transparent + 设置页开关接线 | ice-translator | REQ-007
+  Code/Test: crates/ice-app/src/mode.rs, crates/ice-app/src/views/compact.rs, crates/ice-app/src/views/settings.rs, crates/ice-app/src/app.rs
+- [x] T-009 剪贴板即翻：Watcher 七例判定、轮询挂点、自写回环防护、空闲 CPU 两次采样 | ice-translator | REQ-008
+  Code/Test: crates/ice-app/src/system/clipboard.rs, crates/ice-app/src/app.rs, crates/ice-app/src/views/settings.rs
+- [x] T-010 几何即时落盘、离屏夹回与插拔恢复 | ice-translator | REQ-009
+  Code/Test: crates/ice-app/src/app.rs, crates/ice-app/src/mode.rs
+- [x] T-013 v0.6 走查修正四件（Q-013 / Q-014 / D-8 / D-9）：① 简洁窗改带原生标题栏（Decorations(true)）、删顶部 10px 把手条、吸附与停靠改由几何跳变观测补上（app::observe_native_move + commanded 抑制自己下发的移动）；② 输入行按内容长高到三行封顶、清空退回原条高度，超过三行在框内滚（desired_rows(1) + 定高 ScrollArea + min_scrolled_height(行高)）；③ 吸附边界由单屏可用区改为桌面可见区并集（system::screen::desktop/union，接缝不是边），离屏校验仍按单屏 work_area；④ 修译文最后一行看不见：共享 scroll_area 加 min_scrolled_height(0.0)（矮栏视口不再被 64px 默认值抬出框外），全量窗正文末尾按浮层动作条等高预留（bar_cover 与画条子同一条公式）（v0.6 已落地在树；其中 ② 的三行高度上限与 ④ 的全量窗 bar_cover 预留由 v0.7 的 T-015/T-016 分别取代） | ice-translator | REQ-001, REQ-002, REQ-003, REQ-005
+  Code/Test: crates/ice-app/src/app.rs, crates/ice-app/src/mode.rs, crates/ice-app/src/system/screen.rs, crates/ice-app/src/views/compact.rs, crates/ice-app/src/views/full.rs
 - [ ] T-011 文档回写、走查取证与 P5 验收记录 | ice-translator | REQ-010
+- [x] T-014 修 D-10：PendingGeometry 从“宽限期到期无条件放行”改为三段护栏——① 第一段到期重发一次目标尺寸（take_retry 回报给 app 层，由它再走一遍 commands_for_mode 的尺寸/位置两条），② 第二段到期不采纳实测尺寸、把该帧实测值记为静默基线并只在与基线相差超容差时才写回（=用户自己拉的），记一条 WARN（仅两个槽与目标的宽高），③ 不自动改写盘上已相等的那一对槽。含 REQ-004 命令条数断言改为“正常落定各 1 条、未落定至多 2 条” | ice-translator | REQ-001, REQ-004
+  Code/Test: crates/ice-app/src/mode.rs, crates/ice-app/src/app.rs
+- [x] T-015 简洁窗两带 1:1 分摊（Q-017）：新增 band_heights 纯函数与 BAND_GAP=5.0，输入带与译文带各占可用高度一半、不足时优先保译文带、输入带退回一行高；两带各包一层圆角 Frame::group；MAX_INPUT_ROWS 与 source_height 的内容驱动钳制整条下线（desired_rows(1)、auto_shrink([false,false])、min_scrolled_height(当帧行高) 三条前提保留）；MIN_COMPACT_H 130→160 与 compact_rect 默认 460×160 同源改；the_three_bands_are_stacked_without_gaps_or_overlaps 判据改为“相邻带间距 ≥5px 且不重叠” | ice-translator | REQ-005, REQ-012
+  Code/Test: crates/ice-app/src/views/compact.rs, crates/ice-core/src/config.rs, crates/ice-app/src/mode.rs
+- [x] T-016 全量窗动作条改自占一条底栏（Q-018）：删除 bar_cover 预留与 floating_actions 的浮层画法和“预留量 ≤ 条子高度 +1px”断言；新增 bottom_bar 定高行（左字数文本可截断、右按钮组，沿用同一套 BarAction）；pane_body_height 扣掉底栏自然高；字数从源文栏脚注搬下来并重算两栏底边对齐的既有断言；窄窗退让顺序=先缩按钮一档再换行；the_last_line_stops_above_the_action_bar 判据改为“≤ 底栏上沿” | ice-translator | REQ-005, REQ-013
+  Code/Test: crates/ice-app/src/views/full.rs
+- [x] T-017 看得见的退出入口（REQ-011）：简洁窗动作行尾部加「退出」、全量窗设置页加「退出程序」并标一行“红灯/Cmd+W 是收进后台，不是退出”，两处都复用 Action::Quit 那条路径（capture → 强制落盘 → mode::quit），不开第二条实现；设置页另加「恢复默认窗口尺寸」（full_rect 回 1080×720、compact_rect 回 460×160、位置回可用区中心、立即落盘并按当前形态下发几何） | ice-translator | REQ-011
+  Code/Test: crates/ice-app/src/views/compact.rs, crates/ice-app/src/views/settings.rs, crates/ice-app/src/app.rs

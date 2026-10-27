@@ -65,19 +65,20 @@
 
 | 模块 | 关键类型 | 职责 | 需求 | 状态 |
 |---|---|---|---|---|
-| `app` | `IceApp`、`Effects`、`Prepared` | 实现 `eframe::App`；持有 `AppState`、`JobRunner`、tokio runtime、历史存储、配置路径、单实例锁、钥匙串探测回收端；帧末统一执行副作用与退避落盘 | 全部 | ✅ P4 |
+| `app` | `IceApp`、`Effects`、`Prepared` | 实现 `eframe::App`；持有 `AppState`、`JobRunner`、tokio runtime、历史存储、配置路径、单实例锁、钥匙串探测回收端；帧末统一执行副作用（含 `Effects::{quit, reset_geometry}` 两条来自设置页的意图）与退避落盘；原生标题栏拖动靠 `observe_native_move` 的几何跳变观测补上吸附判定 | 全部 | ✅ P5 |
 | `main` | `prepare()` | 启动时序：日志 → 单实例锁 → 读配置 → 导入旧术语表 → 装配引擎 → tokio → 建窗 → **后台**读钥匙串 | FR-4.1~4.3、REQ-009 | ✅ P4 |
 | `state` | `AppState`、`Failure`、`FailureAction`、`Job`、`Outcome` | 源文/译文/语言对/引擎/在飞任务/失败态/图片工作区/历史查询/提示条；`request_id` 竞态丢弃 | FR-1、FR-2 | ✅ P4 |
-| `mode` | `hide()`、`quit()`、`apply_topmost()`、`capture_rect()`、`initial_viewport()` | 模式切换的 `ViewportCommand` 编排、置顶、几何捕获与持久化；边缘吸附待 P5（FR-3.9 已于 2026-10-22 改为瞬时切换，无形变动画） | FR-3.2~3.9 | 部分（P4 只到切换与置顶） |
+| `mode` | `commands_for_mode()`、`apply()`、`toggle()`、`capture()`、`PendingGeometry`、`resend_commands()`、`snap()`、`dock()`、`reveal_rect()`、`dock_band_contains()`、`released()`、`fit_into_area()`、`DragSettler`、`RevealGuard`、`dim_alpha()`、`level_for_dock()`、`MIN_FULL_SIZE`/`MIN_COMPACT_SIZE` | 两种形态的 `ViewportCommand` 编排（**先改 `MinInnerSize` 再发 `InnerSize`**，顺序本身就是正确性）、置顶与停靠层级、几何捕获与即时落盘、左/右边缘吸附-停靠-悬停唤出-拖离的纯函数、拖动静止判定、失焦降透明度、形态切换的几何宽限期（D-6，v0.7 起是**三段**护栏，见 §3.3）。FR-3.9 已于 2026-10-22 改为瞬时切换，**无 `Morph`** | FR-3.2~3.9、FR-5.3 | ✅ P5 |
 | `theme` | `apply()` | 三态主题映射到 `ctx.set_theme`，字号缩放乘在 egui 默认值上并限幅 | NFR-4、NFR-8 | ✅ P4 |
 | `views::mod` | `Tab`、`chrome()` | 顶部工具条 + 页签 + 状态条（设计里归在 `views::full`，实现时抽出共用，简洁模式也要用同一条状态条） | FR-3.1 | ✅ P4 |
-| `views::full` | `show()`、`copy()` | 全量布局文本页：源文编辑器、译文区、翻译与两个复制按钮、失败动作按钮 | FR-1.1~1.5、FR-3.1 | ✅ P4 |
+| `views::full` | `show()`、`copy()`、`scroll_area()`、`record_scroll()`、`pane_body_height()`、`char_count_text()`、`bar_actions()`、`bar_layout()`、`bar_height()`、`bottom_bar()` | 全量布局文本页：源文编辑器、译文区两栏等高，两栏之下是**自占一行**的动作底栏（`Panel::bottom`，左边字数计数、右边三/四枚按钮，退让顺序 `84×28` → `64×28` → 换行）；失败动作按钮在同一行 | FR-1.1~1.5、FR-3.1 | ✅ P5 |
 | `views::history` | `show()` | 历史页：搜索、点选回填、时间戳本地化、坏行容错 | FR-4.4 | ✅ P4 |
-| `views::settings` | `show()`、`select_default_engine()` | 供应商预设、密钥写钥匙串、主题三态、字号、额外语言、术语分区 | FR-4.1~4.2、FR-4.5、NFR-4 | ✅ P4 |
+| `views::settings` | `show()`、`select_default_engine()` | 供应商预设、密钥写钥匙串、主题三态、字号、额外语言、术语分区；「窗口」分区（F-17）给出「恢复默认窗口尺寸」与「退出程序」两颗看得见的入口，只立意图（`Effects::{reset_geometry, quit}`），落地在 `app` | FR-4.1~4.2、FR-4.5、FR-5.2、NFR-4 | ✅ P5 |
 | `views::image` | `show()` | 图片页占位：五个区域已画好，接 OCR 在 P6 | FR-2.3、FR-2.6 | 占位 |
-| `views::compact` | — | 窄条布局：输入行 + 译文行 + 动作图标、无边框拖动（`StartDrag`） | FR-3.2 | 待 P5（P4 暂以 `app.rs` 私有函数代管切换后的窗体编排） |
+| `views::compact` | `show()`、`band_heights()`（内部：`input_row`、`translation_pane`、`action_row`、`drag_handle`、`band_frame`、`apply_dim`） | 简洁窗版式：带原生标题栏（Q-013），三带堆叠——动作行先建成 `Panel::bottom`，剩余高度由 `band_heights()` 按 **1:1 分给输入带与译文带**（REQ-012，v0.7 推翻了 v0.6 Q-014 的"输入行随内容长到三行封顶"），带间 `BAND_GAP` ≥5px，两带各自是独立圆角框；输入超一屏在框内滚，译文带定高 `ScrollArea` + 尾部 8px 把手；动作行六枚控件（全量/复制/设置/机翻\|AI/置顶/退出）与全量窗同字号同内边距，放不下换行；两处窗内把手走 `StartDrag`；失焦时窗体底色与两带圆角框一起乘 alpha | FR-3.2、FR-3.7、FR-5.2 | ✅ P5 |
 | `jobs` | `JobRunner`、`drain()`、`apply()` | `spawn` 网络任务，经 `mpsc` 回投 UI 并请求重绘；`spawn_blocking` 图像任务待 P6 | FR-2.9、NFR-1、REQ-002 | ✅ P4（文本部分） |
-| `system::clipboard` | `CopyKind`、`compose_bilingual()` | 复制译文 / 复制对照；空译文保护。`ClipboardWatcher`（剪贴板即翻）待 P5 | FR-1.5、FR-3.8 | 部分 |
+| `system::clipboard` | `CopyKind`、`compose()`、`write()`、`read()`、`Watcher` | 复制译文 / 复制对照与空译文保护；`Watcher` 是剪贴板即翻的轮询判定（纯函数：开关、可见性、在飞、自写回环、内容变化五道闸），读取本身由调用方注入闭包，因此无头可测 | FR-1.5、FR-3.8 | ✅ P5 |
+| `system::screen` | `RawScreen`、`RawRect`、`flip()`、`select()`、`union()`、`fallback_area()`、`work_area()`、`desktop()`、`probe()` | 监视器几何：objc2 读 `NSScreen`（含 `visibleFrame`，即去掉菜单栏与 Dock 的那块）、Cocoa 原点翻转、按窗口选屏；**两条口径分工**——`desktop()` 是所有屏可见区的**并集**，停靠/吸附/唤出用它（桌面外缘才是边的定义，双屏接缝不是，缺陷 D-8）；`work_area()` 是窗口所在**单屏**可用区，只给离屏夹回（FR-3.6）用。非 macOS 与探针失败时回退 `fallback_area`（warn-once，不刷屏） | FR-3.5、FR-3.6、FR-5.3 | ✅ P5 |
 | `system::hotkeys` | `action_of()` | 应用内快捷键分类：全局 / 窗口 / 需焦点；按住不重复触发 | FR-5.1 | ✅ P4 |
 | `system::secrets` | `read()`、`write()`、`delete()`、`fingerprint()` | 钥匙串读写与指纹（长度 + 哈希前 8 位）；错误文本不回显密钥字节 | FR-4.2、NFR-3 | ✅ P4 |
 | `system::single_instance` | `acquire()`、`InstanceLock`、`AcquireError` | PID 锁：陈旧锁（PID 已死/内容损坏/PID 被回收）接管，释放时只删 PID 与自己相符的那一份 | 需求 §5 第 5 条 | ✅ P4（Q-001 裁定归本阶段） |
@@ -142,23 +143,40 @@
 
 ```
 [全量] --Cmd+Shift+M / 按钮--> [简洁]
-   │                              │
-   │  ViewportCommand:            │  进入时一次性下发：
-   │  InnerSize, WindowLevel      │  Undecorated=true, AlwaysOnTop=true,
-   │  Position, Visible           │  InnerSize=(460,96), Resizable=false
+   │                              │  进入时一次性下发：
+   │  ViewportCommand:            │  Decorations(true), Resizable(true),
+   │  InnerSize, WindowLevel      │  MinInnerSize=(320,160),
+   │  Position, Visible           │  InnerSize=(460,160), OuterPosition(compact_rect)
+   │                              │  └─ 第一段宽限期到还没落定：resend_commands 只补发
+   │                              │     一组 InnerSize+OuterPosition，第二轮到期什么都不采纳
    ▼                              ▼
- 拖拽结束 ──► ModeController.snap(rect, monitors)
-                 │ 距最近边缘 < snap_threshold_px ?
-                 ├─ 是 → 贴边：位置 = 边缘 - (尺寸 - dock_sliver_px)，记录 DockEdge
-                 └─ 否 → DockEdge::None，自由浮动
+ 拖动定案 ──► ModeController.snap(rect, desktop)   ← 两条路径都要走到这里
+   ▲   ├─ 窗内把手：按下发 StartDrag（未聚焦先 Focus），松手即定案
+   │   └─ 原生标题栏：AppKit 自己搬窗口，egui 收不到 StartDrag 也收不到松手
+   │        └─ app::observe_native_move 观测几何跳变（静止几帧后出现位移）arm DragSettler，
+   │           静止满 DRAG_SETTLE 后走同一条 apply_snap + 落盘；自己下发的移动由 commanded 排除
+   │
+   └── 边界矩形 = screen::desktop()（所有屏可用区的并集，D-8）；离屏校验才用单屏 work_area()
+                 │ 距**桌面**左或右外缘 < snap_threshold_px ?（上/下不吸附，两屏接缝也不吸）
+                 ├─ 是 → 停靠：x = 边 - (+/−)dock_sliver_px，藏到边外只留 3px 热区，记录 DockEdge
+                 │        └─ 指针进入那 3px → reveal_rect 整窗唤出；离开 ≥500ms 收回（按住/打字不收回，收回后置闸门）
+                 └─ 否 → DockEdge::None，自由浮动；已停靠时按「相对停靠锚点沿停靠轴向内的位移 ≥ 阈值」解除
               ──► 写回 Config.ui.{mode,full_rect|compact_rect,docked_edge} ──► 落盘
 ```
 
-- 吸附计算是 `ice-core`/`ModeController` 的纯函数：输入（窗口矩形、监视器可用区、阈值、热区）→ 输出（目标矩形 + 边）。因此可以被单测覆盖，不需要真的拖动窗口。
-- 启动时若 `Config` 记录的窗口位置不在任何监视器内（拔屏场景），用 `WindowRect::centered_in` 回到主屏中心（FR-3.6）。
-- **无边框窗口的拖动**（FR-3.2）：简洁模式没有系统标题栏，把手区按下时下发 `ViewportCommand::StartDrag`，由窗口管理器接管移动。好处是不用在应用内自算鼠标增量、不会和吸附判定抢事件；代价是拿不到"拖动中"的连续回调，因此吸附判定放在拖完后的首个 `Moved`/`Focused` 帧上做一次。
-- **形态切换的几何下发**（FR-3.9，2026-10-22 由"形变动画"改为瞬时）：切换时在同一帧内一次性下发 `Decorations(目标形态)` → `InnerSize(目标尺寸)` → `OuterPosition(目标位置)`，没有 `Morph` 状态、没有逐帧补间、切换后不再 `request_repaint()`。`Decorations` 与 `WindowLevel` 是原生属性，本来就只能整段设一次（逐帧设会闪烁）。下发的是**请求**而非同步生效（`InnerSize` 走 `request_inner_size`，异步），因此切换完的下一帧必须用 `mode::capture` 回读真实几何再落盘，不能拿目标值当已生效值。
-- **几何持久化时机**（P1 实测：SIGTERM/强杀不走 `on_exit`，只靠退出保存会丢位置）：在①拖动结束（吸附判定完成时）②形态切换完成时③关窗/退出时 三处写盘，均为小文件（<1KB）原子替换，代价可忽略。
+- 吸附计算是 `ice-app::mode` 的纯函数：输入（窗口矩形、**边界矩形**、阈值、热区，拖离那条再加停靠边与停靠锚点，唤出那条再加指针位置与闸门状态）→ 输出（目标矩形 + 停靠状态）。因此可以被单测覆盖，不需要真的拖动窗口。**边界矩形由调用方注入**，这就是两条口径的分界点：停靠/吸附/唤出传 `system::screen::desktop()`（所有屏可见区的并集），离屏夹回传 `system::screen::work_area()`（窗口所在单屏）——按单屏算会把两块并排放的屏中间那条接缝当成可停靠边，窗口藏进接缝后热区收不到悬停、`released()` 也量不出向内位移，永远解不了停靠（缺陷 **D-8**，2026-10-27 走查）。
+- **停靠态的窗口层级**（2026-10-23 v0.5 / Q-012）：不论用户的 `always_on_top` 为何值，停靠（收起或唤出）期间一律升到置顶层级，解除停靠后交回置顶偏好决定。原因是那 3px 热区必须能收到指针事件，否则"鼠标放上去自动出来"在机制上不成立（真机实证：层级为普通窗口时藏出去的窄边被其他应用盖住，用户"再也找不到"）。**事实更正**：egui 0.37 的 `WindowLevel` 只有 `Normal | AlwaysOnBottom | AlwaysOnTop` 三个变体（`egui-0.37.0/src/viewport.rs:969-974`），**没有** `Floating`；本包用 `WindowLevel::AlwaysOnTop` 实现，`egui-winit-0.37.0/src/lib.rs:2086-2090` 把它映射成 winit 的 `WindowLevel::AlwaysOnTop`，AppKit 侧落到的正是 `NSWindow` 的 `.floating` 层级，所以行为与需求说的"浮层"一致，只是 API 名字不同。
+- **唤出/收回只是运行时状态**（`dock_shown`、`dock_left_at`、`dock_latched`），不新增配置字段、不持久化；`docked_edge` 不因唤出而改变。指针在不在窗口内取 `ctx.input(|i| i.pointer.hover_pos()).is_some()`。**事实更正**：egui 0.37 的 `RawInput` 没有 `pointer_in_window` 字段，winit 的鼠标进入/离开事件在 egui 侧就是 `Event::PointerMoved` / `Event::PointerGone`，因此"指针离开"的判据是 `hover_pos()` 变成 `None`。
+- **启动与屏幕变化的离屏校验**（FR-3.6）：分两支。**停靠态**（`docked_edge ∈ {Left, Right}`）按设计就有 `w − sliver` 在可用区外（左停靠必然 x 为负），不能拿整窗判据判它越界——那等于每次启动都替用户解了停靠；由 `watch_dock` 的第一帧 `land_dock` 按**当前**可用区重算收起到位（屏幕拔掉时自然落到还在的那块屏的边上）。**非停靠态**由 `IceApp::rescue_offscreen` 在拿到真实几何的第一帧判一次：整块在可用区外就 `fit_into_area` 夹回并立即落盘（判一次是因为 `screen::work_area` 要走 NSScreen）。`ice_core::WindowRect::centered_in` 作为兜底纯函数保留（当前生产路径未用到它）。
+- **简洁窗的拖动**（FR-3.2，2026-10-27 按 CHG-004 Q-013 重写）：简洁窗与全量窗一样带原生标题栏（`Decorations(true)`），主拖动路径就是抓标题栏，由 AppKit 搬窗口；窗内保留两处把手（动作行行尾空白、译文区尾部 8px），按下时下发 `ViewportCommand::StartDrag`，同样不自算鼠标增量。v0.5 及以前那套"无边框 + 顶部 10px 把手条"作废，把手条随装饰的引入删除（用户原话："已经有外框了，里面原来用于移动的小横岗组件就可以移除了"）。**代价与补法**：原生标题栏那条路径不产生任何 `StartDrag`，应用侧只看到几何在动，而吸附、停靠、拖离全挂在 `DragSettler` 的静止判定上——"把手按下即 arm"在这条路径上根本不会发生。因此 `app::observe_native_move` 补上 arm：连续 `STILL_BEFORE_DRAG` 帧静止后出现位移即 arm，静止满 `DRAG_SETTLE` 后走与松手同一条 `apply_snap` + 落盘；armed 而未静止时续一帧 `request_repaint_after(DRAG_SETTLE)`，否则原生拖完后事件循环没有再画的理由。**误判的代价比漏判大**（把程序自己的移动当成用户拖动，会把刚唤出到贴边位的窗口又吸回藏起来），所以四道闸门排除自发移动：`commanded`（自己下发过位置，到达目标点或连续静止前不 arm）、`pending_geometry`（形态切换的几何宽限期）、全量模式、隐藏态。原生拖拽期间 egui 收不到 pointer 事件（控制权交给 AppKit，macOS 那边进的是嵌套事件循环），这也是"只能靠静止判定"的另一半原因。
+- **形态切换的几何下发**（FR-3.9，2026-10-22 由"形变动画"改为瞬时）：切换时在同一帧内一次性下发 `Decorations(目标形态)` → `InnerSize(目标尺寸)` → `OuterPosition(目标位置)`，没有 `Morph` 状态、没有逐帧补间，只有一组一次性命令。`Decorations` 与 `WindowLevel` 是原生属性，本来就只能整段设一次（逐帧设会闪烁）。下发的是**请求**而非同步生效（`InnerSize` 走 `request_inner_size`，异步），因此切换完的下一帧必须用 `mode::capture` 回读真实几何再落盘，不能拿目标值当已生效值。**但 capture 在"命令已发、窗口还没跟上"的过渡期里读到的仍是旧形态的尺寸**（缺陷 **D-6**，2026-10-23 走查取证）：那条过渡几何会被写进目标形态的配置槽，而尺寸命令只在切换那一刻发一次，于是简洁窗永远保持全量的大小。修法不是不写，而是加一个宽限期：切换时记下 `pending_geometry`（目标尺寸 + 时刻），`MODE_GEOMETRY_GRACE`（1s）内 capture 只写位置轴、不写尺寸轴，直到实测尺寸命中目标（±2px）或宽限期到期为止。
+  - **三段护栏**（2026-10-27 由缺陷 **D-10** 升级为三段，v0.7 / REQ-004）：只有"宽限期到期即放行"是不够的——原生窗口没跟上的那次切换，到期后会把大窗尺寸照抄进 `compact_rect`，而尺寸命令此后再无来源，`measured == target` 每帧命中，坏状态**自我维持**（盘上两槽四项全等 984×632 就是它的指纹）。三段是：① **宽限期内**（第一段）尺寸轴静默，位置轴照写；② **第一段到期**不再直接放行，`mode::resend_commands` 只补发一组 `InnerSize` + `OuterPosition`（`take_retry` 保证恰好一次），把护栏交回给第二轮；③ **第二段到期**采纳**什么都不写**——把当时实测尺寸存为 `baseline` 并 WARN（只报两个尺寸，不报路径），此后尺寸轴只在"与 `baseline` 的欧氏距离 > `PENDING_SIZE_TOLERANCE`（2px）"时才写回，也就是"用户真的手动改过尺寸"，一次抖动或同一尺寸反复上报都保持静默。`PendingGeometry::set()`（新一轮切换）无条件清 `baseline`。两段加起来的判据由测试 `the_two_slots_never_end_up_equal_after_a_failed_switch` 锁住。
+  - **与 Spec 的两处实现偏离**（2026-10-23 记，均已在 `features/CHG-004/evidence.md` 取证）：① 切换那一帧仍然调用一次 `ctx.request_repaint()`。Spec 写的是"切换后不再 `request_repaint()`"，针对的是**逐帧续期**的补间；但目标内尺寸若恰好等于当前尺寸，winit 不会发 `Resized`，没有这一次显式重绘，当前帧画的还是上一形态的布局（切换后第一眼就是错的）。补间已取消，因此这里只有**一次**重绘，之后回到"提示条到期与结果到达才重绘"的空闲策略，NFR-2 不受影响。② `capture` 在几何变化时立一个 `CONFIG_SAVE_INTERVAL`（500ms）的延时重绘，这是 REQ-009 要求的落盘钟，不属于切换的续期。
+  - **窗口收起时触发切换**（`state.hidden`）只把目标形态记进配置，一条几何命令都不发，也不把窗口叫回来；从 Dock 恢复时 `reveal` 会按 `config.ui.mode` 整套重发几何。
+  - **「恢复默认窗口尺寸」不走 `mode::apply`**（REQ-011）：那颗按钮的语义是把两个尺寸槽改回默认值并立即落盘，而 `mode::apply` 开头会 `capture` 当前真实几何——坏尺寸正是用户要点按钮清除的东西，用它等于把污染又抄一遍。实现是纯函数 `app::reset_window_sizes`：写默认尺寸 + 清停靠、发**一组**几何命令、给 `pending_geometry` 立护栏。位置轴由 `restored_rect` 决定——已知可用区时在其内居中，取不到（首帧还没走 NSScreen）时保留原 x/y，不为了一次复位把窗口甩到屏幕外。
+- **滚动容器与动作栏的边界**（2026-10-27 按缺陷 **D-9** 补，v0.7 按 **REQ-013** 改法，两窗共用）：`views::full::scroll_area()` 是两栏与简洁窗译文的同一个构造，里面必须 `.min_scrolled_height(0.0)`——egui 的 `ScrollArea` 有个默认 64px 的 `min_scrolled_size`（`scroll_area.rs:469`，在 `:856` 以 `inner_size[d].max(…)` 生效），矮栏里它把视口抬到 64px 并画到框外，而最大滚动偏移按这个虚高视口算，结果**最后十几像素怎么滚都滚不进来**（简洁窗 130px 高时实测视口底边 115.9 越出译文框底边 103.0、压在动作行顶边 108.0 之上）。"滚不动"的风险不由这条默认值兜，由调用方的栏高守卫兜（`views::compact::MIN_BODY_HEIGHT`）。全量窗这边 v0.7 起换了结构：右下角那条动作条原本是**浮层**、不参与布局，正文末尾得按 `bar_cover()` 预留一条与条子等高的空白带，而"预留公式"与"实画公式"一旦不同步就又把最后一行盖住——现在它是 `Panel::bottom("full_bottom_bar")`，**自占一行**，两栏的可用高在构造时就已被它扣掉，所以这条不再需要任何预留，`bar_cover()` 与它的断言整套作废。保证从"算得准"变成"结构上盖不到"（实测余量 36px，由 `the_last_line_stops_above_the_bottom_bar` 断言"可视区底边在底栏上沿之上"锁住）。
+  - 两条一起画的教训（v0.7 踩过的坑，写进 `05-dev-guide.md`）：① 自占高度的面板里必须 `ui.advance_cursor_after_rect(rect)`，否则 `Panel` 量到 26×10 直接塌成一条；② `Ui::columns` 不看光标、按整行宽度均分，和上面的定高行会重叠 5px，要用 `horizontal_top` + `allocate_ui_with_layout`。**凡是不参与布局的覆盖式浮层，优先考虑改成自占一条带**——预留公式与绘制公式分处两地，就是下一次同类缺陷的来源。
+- **几何持久化时机**（P1 实测：SIGTERM/强杀不走 `on_exit`，只靠退出保存会丢位置）：在①拖动结束（吸附判定完成时）②形态切换的命令**落定**的那一帧③关窗/退出时 三处强制写盘，另加④`capture` 每次几何变化都续一帧 500ms 的重绘钟，保证用户最后停下的位置一定会落盘。均为小文件（<1KB）原子替换，代价可忽略。
 
 ## 4. 并发模型
 
@@ -249,5 +267,5 @@ main() ──► Config::load_at() ──► (cfg, Option<reason>)
 | 已实现并有单测 | `ice-core` 的 7 个业务模块（45 项，含 `config` 的供应商预设与有效值规则）；`ice-providers` 的 `engine`/`request`/`cache`/`dispatcher`/`error`/`machine`/`ai`/`protect`（51 项，HTTP 行为由本地假服务覆盖；`dispatcher` 用 mock 引擎覆盖选路、缓存与可用性）；`ice-app` 的窗口形态与置顶控制（3 项无头断言） |
 | 已实现、靠 `#[ignore]` 实测 | `ice-providers/tests/live.rs`（3 项：机翻短文本、机翻长文本切块、AI 真实通道）——需要真实网络与钥匙串里的 Key，不进默认测试集 |
 | 只有接口与桩，尚无单测 | `ice-vision` 的 `ocr`/`composite`/`error`（P6/P7 填充并补测） |
-| P4/P5 落地 | `state`、`mode`、`views::*`、`jobs`、`system` |
+| P4/P5 落地（P5 = CHG-004，2026-10-27 收口） | `state`、`mode`（含吸附/停靠/悬停唤出/拖动静止判定/失焦降透明）、`views::{mod,full,history,settings,compact}`、`jobs`、`system::{clipboard（含 `Watcher`）,hotkeys,secrets,single_instance,screen}`；`views::image` 仍是占位，接 OCR 在 P6 |
 | P6/P7 落地 | `vision_sys`、`layout`、`bg`、`font` |

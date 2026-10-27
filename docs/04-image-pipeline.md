@@ -14,7 +14,7 @@
 | S3 行合并 | 行观察 | `OcrDocument{ Vec<TextBlock> }` | 合并错误由用户在列表里拆分纠正（FR-2.3） |
 | S4 翻译 | `TextBlock.text` 集合 | 填充 `translation` 字段 | 单块失败不影响其它块；失败块标红并可单独重试 |
 | S5 背景/前景估计 | 块框 ± 边缘采样 | `BackgroundEstimate{ bg, fg, variance, kind }` | 采样区不足（贴边块）→ 缩小采样带 |
-| S6 版式计划 | 块框 + 译文 + 字体度量 | `BlockPlan{ InPlace | Overlay | Skip, font_size, lines }` | 超容量且不允许覆盖 → 标 `degraded` |
+| S6 版式计划 | 块框 + 译文 + 字体度量 | `BlockPlan{ InPlace \| Overlay \| Skip, font_size, lines }` | 超容量且不允许覆盖 → 标 `degraded` |
 | S7 合成 | 源图 + 计划 | `CompositeOutput` | 字体缺失 → 回退并记录警告（R-6） |
 | S8 导出 | 结果图 | PNG/JPEG 文件 或 剪贴板图片 | 写文件失败 → 保留结果图在内存，提示重试 |
 

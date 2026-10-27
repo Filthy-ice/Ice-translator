@@ -21,7 +21,7 @@ pub mod settings;
 pub const TOOLBAR_HEIGHT: f32 = 56.0;
 pub const STATUS_HEIGHT: f32 = 28.0;
 
-/// 全量模式提示条离窗口顶部的距离（简洁窗自己算，见 `compact::TOAST_OFFSET`）
+/// 全量模式提示条离窗口顶部的距离（简洁窗按输入行的实际底边算，见 `compact::toast_offset`）
 pub const TOAST_OFFSET: f32 = 12.0;
 
 /// 一帧里 view 想让外部世界做的事。
@@ -50,10 +50,12 @@ pub struct Effects {
     pub start_drag: bool,
     /// 简洁窗的"设置"：切回全量并打开设置页（REQ-005）
     pub open_settings: bool,
-    /// 点了停靠指示：停靠边循环到下一条并立刻把窗口移过去（K-07、REQ-003）
-    pub cycle_dock: bool,
     /// 切换置顶（K-09）。快捷键那条路径直接在 `app.rs::run` 里做，这里给界面按钮用
     pub toggle_topmost: bool,
+    /// 退出程序（REQ-011）：两种形态各有一颗看得见的按钮，走的都是 `Action::Quit` 那一条路径
+    pub quit: bool,
+    /// 把两个尺寸槽恢复成默认值（REQ-011 落点②：尺寸被历史版本写坏了，程序不自动改，用户显式恢复）
+    pub reset_geometry: bool,
 }
 
 impl Effects {
@@ -169,12 +171,15 @@ fn target_language(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effect
 
 /// 引擎分段（F-04）。全量工具条与简洁窗动作行共用同一套：`Button::selectable` 的选中态、
 /// AI 未配置时禁用并给说明，简洁窗不再新造一份（REQ-005）。
+///
+/// 返回两个分段按钮合起来的矩形：简洁窗的布局断言要拿它确认把手没压在分段上。
 pub(crate) fn engine_picker(
     ui: &mut egui::Ui,
     state: &mut AppState,
     effects: &mut Effects,
     ai_available: bool,
-) {
+) -> egui::Rect {
+    let mut rect = egui::Rect::NOTHING;
     for kind in EngineKind::all() {
         let enabled = kind != EngineKind::Ai || ai_available;
         let mut button = ui.add_enabled(
@@ -185,10 +190,12 @@ pub(crate) fn engine_picker(
             button =
                 button.on_disabled_hover_text("AI 未配置：请在设置页填地址、模型并保存 API Key");
         }
+        rect = rect.union(button.rect);
         if button.clicked() {
             effects.request(state.set_engine(kind));
         }
     }
+    rect
 }
 
 /// D 区：状态条（F-11）。三态——就绪 / 翻译中 / 错误；错误态带"去设置"入口。
@@ -216,8 +223,8 @@ fn status_bar(ui: &mut egui::Ui, state: &mut AppState, ai_available: bool) {
 
 /// 提示条：顶部居中，最多三条，四秒自动消失，也可以点掉。
 ///
-/// `offset_y` 是离窗口顶部的距离：全量窗给 `TOAST_OFFSET`，简洁窗要越过把手条与输入行
-/// （REQ-005 的"位置不遮住输入行文字"）。
+/// `offset_y` 是离窗口顶部的距离：全量窗给 `TOAST_OFFSET`，简洁窗要越过输入行——
+/// 那一行会随内容长高（REQ-005 的"位置不遮住输入行文字"）。
 pub(crate) fn toasts(ctx: &egui::Context, state: &mut AppState, offset_y: f32) {
     if state.toasts.is_empty() {
         return;
@@ -359,7 +366,6 @@ mod tests {
         assert!(!effects.toggle_mode);
         assert!(!effects.start_drag);
         assert!(!effects.open_settings);
-        assert!(!effects.cycle_dock);
         assert!(!effects.toggle_topmost);
     }
 
