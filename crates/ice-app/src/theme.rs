@@ -2,7 +2,10 @@
 //!
 //! 颜色只在这里定义，各 view 不自带色值，免得改一次主题要翻四个文件。
 
-use egui::{Color32, FontId, Stroke, ThemePreference};
+use std::sync::Arc;
+
+use egui::text::LayoutJob;
+use egui::{Color32, FontId, Galley, RichText, Stroke, ThemePreference, Ui};
 use ice_core::config::{Theme, UiConfig};
 
 use crate::state::Tone;
@@ -175,7 +178,81 @@ pub fn apply_widget_contrast(style: &mut egui::Style) {
 pub fn apply(ctx: &egui::Context, ui: &UiConfig) {
     ctx.set_theme(preference(ui.theme));
     apply_font_scale(ctx, ui.font_scale);
-    ctx.all_styles_mut(apply_widget_contrast);
+    let line_spacing = ui.line_spacing;
+    ctx.all_styles_mut(move |style| {
+        apply_widget_contrast(style);
+        // 赋值不是累加：`apply` 每帧都跑，`+=` 会每帧加一遍（和字号那个坑同一个）。
+        // 这一项只被 TextEdit 那条路读（`text_edit/builder.rs:563`），`Label` 不认，
+        // 所以译文那一侧由 [`PaneText`] 补挂同样的行高。
+        style.spacing.extra_text_line_spacing = line_spacing;
+    });
+}
+
+/// 一栏正文（源文 / 译文）的排版参数：字号倍率、字间距、行间距。
+///
+/// 三个数分别落在三个不同的地方，这是 egui 0.37 的实情，不是这里绕圈子：
+/// 字号走 `FontId`；行间距在 `Spacing::extra_text_line_spacing`（只有 TextEdit 自动吃），
+/// 对 `Label` 必须换成每个 section 上的绝对 `format.line_height`；字间距则两边都要手工挂
+/// `format.extra_letter_spacing`——`Spacing` 里根本没有这一项。
+///
+/// 抽成一个类型是为了让**源文框和译文框长得一样**：两处各算各的，改一个忘另一个，
+/// 就会出现"同样的行距，一个框松一个框挤"（用户 2026-10-28 那句"字间距和行间距太小了，
+/// 看起来有点乱"，两栏不一致会比一致更乱）。
+pub struct PaneText {
+    pub font: FontId,
+    pub letter_spacing: f32,
+    pub line_height: f32,
+}
+
+impl PaneText {
+    /// `pane_scale` 是这一栏自己的倍率，乘在**已经乘过界面 `font_scale`** 的 Body 字号上。
+    ///
+    /// 取 `ui.style()` 里当前的 Body，而不是取 `default_text_styles()` 的基准：界面缩放那一步
+    /// 每帧已经做完了，这里再乘基准就等于把 `font_scale` 丢掉。
+    pub fn new(ui: &Ui, config: &UiConfig, pane_scale: f32) -> Self {
+        let base = &ui.style().text_styles[&egui::TextStyle::Body];
+        let font = FontId::new(base.size * pane_scale, base.family.clone());
+        let line_height = {
+            let extra = ui.spacing().extra_text_line_spacing;
+            ui.fonts_mut(|fonts| fonts.row_height(&font)) + extra
+        };
+        Self {
+            font,
+            letter_spacing: config.letter_spacing,
+            line_height,
+        }
+    }
+
+    /// 译文 / 错误提示这类 `Label` 正文。颜色留给调用方决定（错误红、普通正文各不同）。
+    pub fn rich(&self, text: &str) -> RichText {
+        RichText::new(text)
+            .font(self.font.clone())
+            .extra_letter_spacing(self.letter_spacing)
+            .line_height(Some(self.line_height))
+    }
+
+    /// 源文 `TextEdit` 的自定义排版器：在 egui 默认那份之上多挂字间距。
+    ///
+    /// 默认那份（`text_edit/builder.rs:576-588`）的每个字段都得照抄，少一个就是新 bug：
+    /// `keep_trailing_whitespace` 掉了打字时光标会跳，`halign` 掉了居中栏会左对齐，
+    /// `line_height` 用绝对值，漏挂就等于把行间距设置作废。
+    /// 颜色故意留 `PLACEHOLDER`——TextEdit 绘制时会替换成主题的正文色（`painter.rs:525`），
+    /// 写死色值会让深色模式下第一行译文变黑底黑字。
+    pub fn layout(&self, ui: &Ui, text: &str, wrap_width: f32) -> Arc<Galley> {
+        let mut job = LayoutJob::simple(
+            text.to_owned(),
+            self.font.clone(),
+            Color32::PLACEHOLDER,
+            wrap_width,
+        );
+        job.halign = ui.layout().align2().x();
+        job.keep_trailing_whitespace = true;
+        for section in &mut job.sections {
+            section.format.line_height = Some(self.line_height);
+            section.format.extra_letter_spacing = self.letter_spacing;
+        }
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    }
 }
 
 #[cfg(test)]
@@ -435,6 +512,111 @@ mod tests {
             ),
             once,
             "每帧重跑把控件颜色越改越深了"
+        );
+    }
+
+    /// 行间距也是每帧同步的一项：`apply` 里必须是赋值。写成 `+=` 的话跑三帧就变成三倍，
+    /// 悬浮窗那两条带会被顶穿（用户 2026-10-28 之后这条设置真的进了排版）。
+    #[test]
+    fn line_spacing_is_applied_once_per_frame() {
+        let ctx = egui::Context::default();
+        let config = UiConfig {
+            line_spacing: 5.0,
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            apply(&ctx, &config);
+        }
+        assert_eq!(style(&ctx).spacing.extra_text_line_spacing, 5.0);
+    }
+
+    /// 在跑起来的帧里造一份 `PaneText`：它的三个数分别取自 style、spacing 和字体度量，
+    /// 手搓一个 `Style` 就测不到"每帧同步之后正文到底读到什么"。
+    fn pane_text(config: &UiConfig, pane_scale: f32) -> PaneText {
+        let ctx = egui::Context::default();
+        apply(&ctx, config);
+        let mut made = None;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            made = Some(PaneText::new(ui, config, pane_scale));
+        })
+        .drop_without_applying_deltas();
+        made.expect("那一帧没跑出 PaneText")
+    }
+
+    /// 正文倍率乘在**已经乘过界面字号**的 Body 上：两档是相乘关系，不是二选一。
+    /// 用户要的是"原文和译文字体大小也需要能调整"，而整界面缩放那档（FR-2.3）不能因此失效。
+    #[test]
+    fn pane_font_multiplies_the_ui_scale_rather_than_replacing_it() {
+        let config = UiConfig {
+            font_scale: 1.6,
+            ..Default::default()
+        };
+        let pane = pane_text(&config, 1.5);
+        assert!(
+            (pane.font.size - 13.0 * 1.6 * 1.5).abs() < 0.01,
+            "正文应当是界面字号 × 分栏倍率，实际 {}",
+            pane.font.size
+        );
+        assert_eq!(pane.letter_spacing, config.letter_spacing);
+    }
+
+    /// 行间距真的进到行高里，而且加的是"这一栏字号"的行高之上
+    #[test]
+    fn pane_line_height_follows_spacing_and_font_size() {
+        let tight = UiConfig {
+            line_spacing: 0.0,
+            ..Default::default()
+        };
+        let loose = UiConfig {
+            line_spacing: 10.0,
+            ..Default::default()
+        };
+        let base = pane_text(&tight, 1.0).line_height;
+        let with_gap = pane_text(&loose, 1.0).line_height;
+        assert!(
+            (with_gap - base - 10.0).abs() < 0.01,
+            "行间距应当正好多出 10px，实际 {base} → {with_gap}"
+        );
+        assert!(
+            base > 13.0,
+            "行高比字号还小，说明取的不是字体度量而是字号本身：{base}"
+        );
+        let big = pane_text(&tight, 2.0).line_height;
+        assert!(big > base, "正文放大两倍行高却没变：{base} → {big}");
+    }
+
+    /// 字间距必须进到排版结果里。`Spacing` 没有这一项，只能靠 `format.extra_letter_spacing`，
+    /// 挂错了 egui 也不报错——所以这里量同一句话排出来的宽度，非零字间距必须更宽。
+    #[test]
+    fn letter_spacing_reaches_the_laid_out_line() {
+        let width_at = |spacing: f32| {
+            let config = UiConfig {
+                letter_spacing: spacing,
+                ..Default::default()
+            };
+            let ctx = egui::Context::default();
+            apply(&ctx, &config);
+            let mut width = None;
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                let pane = PaneText::new(ui, &config, 1.0);
+                // 不换行地排一句中文，宽度就是所有字的推进量之和
+                width = Some(pane.layout(ui, "中文翻译测试", f32::INFINITY).size().x);
+            })
+            .drop_without_applying_deltas();
+            width.expect("那一帧没排出文字")
+        };
+        let tight = width_at(0.0);
+        let loose = width_at(3.0);
+        assert!(tight > 0.0, "没排版出任何东西");
+        assert!(
+            loose > tight,
+            "字间距 3px 之后一句六个字还是一样宽：{tight} → {loose}"
+        );
+        // 6 个字之间 5 个缝隙，每个 3px：多出来的宽度应当接近 15px
+        let extra = loose - tight;
+        assert!(
+            extra > 10.0 && extra < 20.0,
+            "多出的宽度不像按缝隙算的：{extra}"
         );
     }
 }

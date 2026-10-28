@@ -37,10 +37,12 @@ Ice-translator/
 │      │   ├── app.rs           # `IceApp`：eframe::App 实现、副作用执行、钥匙串探测回收
 │      │   ├── state.rs         # `AppState`：唯一一份界面状态
 │      │   ├── mode.rs theme.rs jobs.rs stub.rs
-│      │   ├── system/          # clipboard、hotkeys、screen、secrets、single_instance、alpha（整窗不透明度）
+│      │   ├── fonts.rs          # 黑体-简字体表装配（`definitions()`/`install()`），建窗第一帧之前调用
+│      │   ├── system/          # clipboard、hotkeys、screen、secrets、single_instance、alpha（整窗不透明度）、window/titlebar（原生标题栏那颗绿灯）
 │      │   └── views/           # mod（工具条+状态条）、full、compact、history、settings、image
 │      └── examples/
-│          └── viewport_probe.rs  # 真机几何探针（`cargo run -p ice-app --example viewport_probe`）
+│          ├── viewport_probe.rs  # 真机几何探针（`cargo run -p ice-app --example viewport_probe`）
+│          └── heiti_probe.rs     # 字体缺字探针：逐面打印候选字体缺哪些常用汉字（`cargo run -p ice-app --example heiti_probe`）
 ├── docs/                      # 本文档所在目录（顶层 document/ 是它的软链）
 │   ├── adr/                   # 不可逆决策记录
 │   ├── evidence/              # 各阶段验收证据：截图、样图、命令输出
@@ -83,10 +85,10 @@ ice-app  ──►  ice-providers  ──►  ice-core
 
 ```bash
 cargo check --workspace                 # 快速全量类型检查
-cargo test  --workspace                 # 全部单元测试（2026-10-28 变更 G 起 401 项通过 + 4 项 ignore）
-cargo test  -p ice-core                 # 只测领域层（54 项）
+cargo test  --workspace                 # 全部单元测试（2026-10-28 变更 H 起 410 项通过 + 4 项 ignore）
+cargo test  -p ice-core                 # 只测领域层（55 项）
 cargo test  -p ice-providers            # 只测引擎层（61 项，HTTP 走本地假服务，不联网）
-cargo test  -p ice-app                  # 只测界面层（286 项，无头跑帧，不碰网络/剪贴板/钥匙串）
+cargo test  -p ice-app                  # 只测界面层（294 项，无头跑帧，不碰网络/剪贴板/钥匙串）
 cargo test  --workspace -- --ignored    # 跑需要真实网络/真机的集成测试
 cargo test  -p ice-providers --test live -- --ignored --nocapture machine
                                         # 只验机翻真实端点（MyMemory，无需 Key）
@@ -150,7 +152,7 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 - **两类"问不出答案"的问题，P5 定了固定解法**：
   - **带时间/外部世界的行为**（剪贴板轮询、停靠的悬停唤出与 500ms 自动收回）不能靠 egui 内省断言：`ctx.run_ui(...).drop_without_applying_deltas()` 不提交这一帧的 repaint 记账，`has_requested_repaint()` 在无头 `Context` 上恒真。做法是把外部世界**注入成闭包**再数调用次数——`poll_clipboard(ctx, read)` 收剪贴板读取函数、`watch_dock(ctx, area_for)` 收可用区探针，测试给计数闭包、真机给 `clipboard::read` 与 `screen::desktop`（吸附/停靠/唤出用的**桌面并集**；`screen::work_area` 只给离屏夹回用，两者按缺陷 D-8 分工）。顺带把隐私要求也一起锁住：`clipboard_watch` 关闭或窗口收起时断言 `reads == 0`。
   - **"画到哪"的问题**（控件溢出、把手压住按钮）靠 `views::compact::record(ctx, salt, rect)` 把控件矩形记进 `Context` 临时数据，然后在**最小窗口尺寸**（`MIN_COMPACT_SIZE`）下断言各带不重叠、不越界、行尾把手不被挤成零宽。P4 的 D-1/D-4 都是"断言 `Effects` 全绿而界面已经烂了"，所以版式测试必须量几何，不能只看副作用队列。
-  - **"一行装不装得下"不许无头量**（2026-10-28 定，`the_action_row_stays_on_one_line_at_the_minimum_width`）。egui 自带字体里没有中文字形（`epaint/src/text/text_layout.rs` 就写着 "No bundled font has CJK glyphs"），真机的汉字是 eframe 现找的系统字体（macOS 上 PingFang）：无头量一个汉字 6.5px，真机 13.0px，在窄窗里照样"一行装得下"，断言锁不住任何东西。判据改成按度量算——字号、`button_padding`、`item_spacing` 全取当帧 `Style` 真值，汉字 `1em`、其余 `0.6em`（往宽里偏），每颗按钮**还要抬到 `interact_size.x` 这个下限**（`Button::min_size` 与样式下限取大，"AI" 那颗实际 40px 而不是算出来的 31.6px），再加上面板左右各 8px 的 `Margin::symmetric(8,2)`（egui 写死，不在 `Spacing` 里）与把手两头各 `GAP_PADDING`。按钮清单从**这一帧真的画出来的** `Shape::Text` 里取（`!galley.text().is_empty()`——空内容的按钮也会留下一个空 galley，不过滤会把图标位当成第 0 颗按钮），文案一改这条跟着变。两个方向都要断言，各挡一种复发方式：`> 曾经会换行的那个宽度`（2026-10-28 是 320，否则"这个下限是为了消掉换行"这个结论没被锁住）且 `≤ MIN_COMPACT_W`（否则真机又会换行）。**下限不是只往上走的**：删掉一颗按钮它应当跟着降回去——变更 G 砍掉「全量」后同一套度量给出 364px，下限随之 420 → 400（默认宽 460 不动）；这时第一条断言仍然写 `> 320`，不要顺手改成 `> 400`，那等于把"历史上为什么会换行"这条证据擦掉。
+  - **"一行装不装得下"不许无头量**（2026-10-28 定，`the_action_row_stays_on_one_line_at_the_minimum_width`）。egui 自带字体里没有中文字形（`epaint/src/text/text_layout.rs` 就写着 "No bundled font has CJK glyphs"），真机的汉字由 `fonts::install` 装进去的黑体-简负责（2026-10-28 变更 H 之前是 eframe 现找的系统字体，本机解析到苹方）：**无头的 `Context::default()` 不跑这一步**，量一个汉字仍是 6.5px，真机 13.0px，在窄窗里照样"一行装得下"，断言锁不住任何东西。写这条测试时不要顺手在测试里调 `fonts::install`——量出来的数会跟着变，判据就不再是可复算的度量了。判据改成按度量算——字号、`button_padding`、`item_spacing` 全取当帧 `Style` 真值，汉字 `1em`、其余 `0.6em`（往宽里偏），每颗按钮**还要抬到 `interact_size.x` 这个下限**（`Button::min_size` 与样式下限取大，"AI" 那颗实际 40px 而不是算出来的 31.6px），再加上面板左右各 8px 的 `Margin::symmetric(8,2)`（egui 写死，不在 `Spacing` 里）与把手两头各 `GAP_PADDING`。按钮清单从**这一帧真的画出来的** `Shape::Text` 里取（`!galley.text().is_empty()`——空内容的按钮也会留下一个空 galley，不过滤会把图标位当成第 0 颗按钮），文案一改这条跟着变。两个方向都要断言，各挡一种复发方式：`> 曾经会换行的那个宽度`（2026-10-28 是 320，否则"这个下限是为了消掉换行"这个结论没被锁住）且 `≤ MIN_COMPACT_W`（否则真机又会换行）。**下限不是只往上走的**：删掉一颗按钮它应当跟着降回去——变更 G 砍掉「全量」后同一套度量给出 364px，下限随之 420 → 400（默认宽 460 不动）；这时第一条断言仍然写 `> 320`，不要顺手改成 `> 400`，那等于把"历史上为什么会换行"这条证据擦掉。
   - **滚动容器必须断言"可视区不越出给它的矩形"**（P5 缺陷 D-9 定的硬规则）。只断言"滚轮 N 帧后偏移增长"测不出越界：`ScrollArea` 的 `min_scrolled_size` 默认 64px，矮栏里它把可视区抬到 64px 并画到框外，而最大偏移按这个虚高视口计算，**最后十几像素怎么滚都滚不进来**——偏移在涨、内容也在动，测试全绿，用户看不见最后一行。写法：`full::record_scroll(ctx, 栏名, &output)` 记下（可视矩形、内容尺寸、当前偏移）三个数，断言 `inner.max.y <= 栏矩形.max.y`、`inner.max.y <= 压在它下面的那条带.min.y`、且 `offset >= content - inner.height`（真能滚到底）。`min_scrolled_height(0.0)` 是修法，这四条断言是防它被悄悄改回去的锁。
   - **凡是不参与布局的覆盖式浮层，优先考虑改成"自占一条带"**（P5 v0.7 / REQ-013 定的第二条硬规则）。全量窗右下角的动作条原本是浮层，正文末尾要按 `bar_cover()` 预留一条与它等高的空白带；预留公式与绘制公式分处两地，一边改了另一边没改，D-9 就以同样的症状复发一次。改成 `Panel::bottom` 自占一行之后，两栏的可用高在构造时就被扣掉，"盖住"在结构上不再可能，断言也从"预留量 ≤ 浮层高 +1px"换成一条更简单的"可视区底边在底栏上沿之上"（`the_last_line_stops_above_the_bottom_bar`）。同一条原则也用在简洁窗：动作行先建成 `Panel::bottom`，两带再分 `CentralPanel` 的剩余高度，分摊由纯函数 `views::compact::band_heights()` 决定，所以 1:1 与"矮窗口回落到输入带一行"两套结果都能脱离字体度量单独断言。
   - **"自占一条带"必须建在窗口层，不能建在带内边距的 `CentralPanel` 里面**（P5 v0.7 落地时的缺陷 D-11，2026-10-28 用户"按钮上下留白距离不同"）。`egui::CentralPanel::default()` 用的框架是 `Frame::central_panel`，四边各 8px 内边距（egui `containers/frame.rs:191`）；把 `Panel::bottom` 建在它内部，这条栏就同时吃到"自己的留白 + 那层的 8px"，下边被顶离窗口底边 8px、左右也各少 8px，而**上边只少一份留白**——留白常量写得再对称也没用。正确做法：像工具条、状态条一样由 `views::show` 建（顺序 toolbar → status → 这条栏 → `CentralPanel`，`CentralPanel` 会吃掉剩余矩形，排到它后面的 `Panel` 收不到位置，P4 缺陷 D-1 就是这么把整条动作行裁出窗口的）。写无头骨架测试时也要照这个顺序排——只调页面函数（`full::show`）的骨架里根本没有那 8px，缺陷测不出来。**这条对四个页签一视同仁**：`settings::tests::Harness` 2026-10-28 之前也是直接调 `settings::show`，白送约 120px（工具条 + 状态条 + `CentralPanel` 内边距），换成 `crate::views::show` 后 640×420 下「退出程序」当场测出下沿压出可视区 1px。判据因此分两档，别写成一条：默认尺寸（`UiConfig::default()`）断言**不滚动就看见**（`panel.contains_rect`，可视矩形由 `settings::show` 开头那行 `record(..., "panel", ui.max_rect())` 记下），最小尺寸只断言**仍在窗口内、允许滚到**——把折叠区内够得着的控件也当缺陷锁死，就会诱使去做用户没要的改版（比如把「窗口」组挪到首组）。**并且这条栏必须自己画底色**：`Frame::NONE` 挪到窗口层就是在窗口上开个洞，eframe 默认 `App::clear_color` 是 `rgba(12,12,12,180)`（半透明深灰，`eframe/src/epi.rs:251`），没被任何 `Frame` 画到的区域直接透出桌面（2026-10-28 用户第二次报的"这颜色怎么回事"）。工具条与状态条看不出来，是因为它们用的 `Frame::side_top_panel` 自带 `panel_fill`；`full::bottom_bar` 因此显式 `.fill(ui.visuals().panel_fill)`，并把底色与矩形一起记进 `bottom_bar_id`，由 `the_text_page_bottom_bar_hugs_the_status_bar` 断言两者相等。
@@ -158,6 +160,9 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
   - **自占高度面板里的两个 egui 坑**（v0.7 踩过）：① 手动 `allocate` 出来的行必须 `ui.advance_cursor_after_rect(rect)`，不然 `Panel` 量到的还是它自己那一小条，整条栏会塌成 26×10；② `Ui::columns` 完全不看光标，按整行宽度均分，和上面那种定高行叠在一起就重合 5px——要左右两半各自对齐就用 `horizontal_top` + `allocate_ui_with_layout`。
   - **窗口行为也要能无头接线**：抓原生标题栏那条拖动路径不产生 `StartDrag`（AppKit 自己搬窗口），吸附只能靠"几何跳变后归于静止"来认。测法是喂一串 `outer_rect`（静止若干帧 → 跳变 → 再静止）断言 `DragSettler` 被 arm 并完成吸附，再用同一串几何配合 `commanded` 目标点断言"自己下发的移动不 arm"——这两条把"程序把用户的拖动判错了"这类只有真机才看得见的问题锁在了单测里。
   - **改原生控件的行为：每帧从控件现状读，不缓存"我接过了"**（2026-10-28 变更 G 定的硬规则，`system::titlebar::sync`）。接管绿灯那颗 `NSButton` 的 target/action 时，"我是不是改过它"这个状态**不能只存在自己的字段里**：eframe / winit 会在运行期重设标题栏按钮（红绿灯位置随 `always_on_top`、全屏态、缩放变化重建），也可能被用户在系统里触发重建。做法是每帧先 `target()` / `action()` 读**控件上当前的值**，和"应当是什么"比：该挂而没挂就挂、该还而没还就还，两边都幂等。三条派生约束：① `NSControl.target` 是 `unsafe_unretained`， objc2 交给你的是裸指针语义，**必须自己把 `Retained` 存在线程局部（`WIRED`）里持有**，否则闭包对象一释放，绿灯点下去就打到了野地址；② 原始的 target/action 要和改道前那一对一起存，`release()` 时**原样交回**——两种形态共用同一个 `NSWindow`，回到全量窗还挂着就是界面在撒谎（绿灯在全量里仍是最大化，#25 双击标题栏铺满还要靠它）；③ 悬停提示（`setToolTip`）跟着行为一起改，那颗按钮的 hover 原本是唯一教用户 `Cmd+Shift+M` 的地方，删了可见按钮不能把知识一起删。这条路径**无头测不到**（拿不到真 `NSWindow`），能锁的只有"一次点击只交接一次"（`one_click_is_handed_over_exactly_once`）和"帧循环把点击认成同一条 `Effects::toggle_mode`"（`a_title_bar_click_toggles_through_the_same_effect_as_the_shortcut`）；系统到底听不听，只有走查 W-2.31 判得了，日志里那条 `标题栏绿键改道` 只证明我们发过命令。
+
+- **一处观感设置要同时喂给 egui 的三个不同入口**（2026-10-28 变更 H 定的硬规则，`theme::PaneText`）。字号是 `FontId`；行间距在 `Spacing::extra_text_line_spacing`，**只有 TextEdit 那条路会自动吃**（`text_edit/builder.rs:563`），`Label` 完全不认，得换成每个 section 上的**绝对** `format.line_height`（`text_layout.rs:534` 是 `unwrap_or(row_height)`，不取较大值，所以传小了会切字）；字间距两边都要手工挂 `format.extra_letter_spacing`——`Spacing` 里根本没有这一项，TextEdit 只能通过 `.layouter(...)` 这个自定义排版器塞进去。四个调用点（全量源文、全量译文、简洁输入带、简洁译文带）都走同一个 `PaneText`，就是为了不让"一个框松一个框挤"这种半改完的状态出现。回归锁分两层：`theme::tests` 量 `PaneText` 自己（字号是 `font_scale × 分栏倍率`、行高正好多出设置值、字间距让同一句话变宽），`views::full::tests` 量**真的跑完两帧之后栏目内容的高度**——只有后者能证明 view 真的用了它。**跑帧必须补 `theme::apply`**：`spacing` 那一步是 `app.rs` 每帧做的，测试里不补就永远读到 egui 出厂的 0，正文再松也量不出来（第一版就栽在这儿，源文栏 629→629 一动不动）。还有一个同类陷阱：`full` 的源文框被 `min_size` 拉到满栏高，字数太少时量到的是栏目高不是内容高，测行距要用 2400 字以上。
+- **默认档不许是"用户抱怨的那个样子"**。变更 H 之前字距/行距是 0，用户抱怨"太挤"；只把滑杆加上而默认仍是 0，等于把同一个毛病留给用户自己去设置里翻。`config::DEFAULT_LETTER_SPACING`（0.5px）与 `DEFAULT_LINE_SPACING`（3px）因此写死成非零，并由 `letter_and_line_spacing_act_on_both_body_columns` 的第一条断言锁住"默认必须比全 0 松"。**但默认值不许顺手扩成配色改动**（用户 2026-10-28 说"发灰"，根因是中文落到了偏细的苹方，改的是字体族，一处颜色都没动）。
 
 ## 7. 提交规范
 
@@ -183,7 +188,7 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 | 钥匙串授权框 | 条目不是本程序写入的（例如用 `security add-generic-password` 手工加的）且本程序未签名时，`get_password()` 会**阻塞**到用户点完授权框。所以读取必须离开建窗路径、放 `spawn_blocking` | 无此行为，但读取仍按同一异步路径走，省得分平台两套时序 |
 | 窗口隐藏 | eframe 0.37 在 macOS 上**不投递** `Reopen`，`Visible(false)` 之后点 Dock 图标叫不回来；改用 `CancelClose` + `Minimized(true)` | 各自的"最小化到托盘"语义不同，P5 复核 |
 | 时区 | `libc::localtime_r` 拿本地偏移 | 同一份代码可用；`time_t`/`tm_gmtoff` 在 32 位平台是 `i32`，转换要留着（对本平台的 `useless_conversion` 告警放行） |
-| 字体 | 系统 PingFang.ttc 等，Core Text 枚举 | 需自带字体文件，v1 不覆盖 |
+| 字体 | **界面正文不再走系统解析**（2026-10-28 变更 H）：`fonts::install` 在建窗闭包里把 `/System/Library/Fonts/STHeiti Medium.ttc` 读进内存、`ctx.set_fonts` 装成 `Proportional` 族第 0 位，中文才落到黑体-简上。三条不显然的约束：① 这个 `.ttc` 有两面，**第 1 面才是黑体-简**（第 0 面是黑体-繁，两面都覆盖常用简体字，选错不崩不缺字，只有肉眼看得出）；② `Monospace` 族里黑体排在 Hack **之后**，否则对照页的拉丁列不再等宽；③ `set_fonts` 是整体替换，只在启动调一次（每帧调会把字形图集作废），eframe 的 `egui_system_font_provider` 仍挂在 provider 上兜底生僻字（它排在我们的清单之后）。代价：55MB 字体常驻内存（`FontData` 没有文件映射入口）。文件读不到就什么都不做、中文回落系统解析并记一条 debug——不能因为缺字体让界面空白 | Windows / Linux 无这一份文件：`install` 返回 `false`，沿用 eframe 的系统字体回退；真要跨平台一致需自带字体文件，v1 不覆盖 |
 | 应用形态 | 需打包 `.app` 才有 Dock 图标与正常生命周期 | 直接 exe |
 
 ## 9. 常见故障
@@ -196,6 +201,7 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 | 白屏/黑屏 | GPU 后端与远程桌面/虚拟显卡组合 | 切换 `ice-app` 里 eframe 的后端 feature（glow ↔ wgpu） |
 | 启动后没有窗口，日志停在 `取得单实例锁` | 钥匙串授权框把 `get_password()` 阻塞住了，而读取排在建窗之前 | 已修：读取挪到 `app::spawn_key_probe`（建窗之后、`spawn_blocking` 里）。若复现，先确认 `main.rs` 的时序没被改回去 |
 | 配置改了不生效 | 落盘是脏标记 + 退避 500ms，不是逐帧写 | 等半秒再看 `config.toml`；Cmd+Q 会强制落盘。真不落盘时查 `config_dirty` 有没有被置上 |
+| 中文还是"发灰"、没变成黑体（变更 H） | `fonts::install` 没生效：文件不在那个路径、或面索引被改回 0（黑体-繁）、或 `install` 调用被挪到了第一帧排版之后 | 看日志有没有 `没找到黑体字体文件`；`cargo test -p ice-app fonts::` 两条断言（族顺序 + 汉字覆盖）会指出是哪一种；`cargo run -p ice-app --example heiti_probe` 直接打印每个候选面缺了哪些字 |
 | 拖动/缩放后位置丢了（尤其被强杀） | `on_exit` 只在正常退出跑，`kill -TERM` 不触发它 | 已修：拖动定案、形态切换定案、关窗/退出三处各强制写一次（`app.rs::flush_config(true)`），几何变化本身还会续一个 500ms 的重绘闹钟。若又丢，查这三处调用点 |
 | 切到简洁窗后仍是全量大小（缺陷 D-6） | `InnerSize` 是**异步请求**（winit `request_inner_size`），切换后头几帧 `mode::capture` 量到的还是旧几何，会把过渡尺寸写进目标形态的配置槽，而尺寸命令只发一次、没人重发 | 已修：`PendingGeometry` + `MODE_GEOMETRY_GRACE`（1s）——宽限期内 capture 只写位置轴，实测尺寸命中目标 ±2px 才恢复写尺寸。若再出现，查是否有代码绕过 `pending_geometry` 直接回写 `compact_rect` |
 | 盘上 `full_rect` 与 `compact_rect` 四项全等，简洁窗缩不回去（缺陷 D-10） | D-6 的修法只做了"到期即放行"：原生那次没跟上的切换，到期时把大窗尺寸照抄进 `compact_rect`，而 `measured == target` 此后每帧命中，坏状态**自我维持**——程序自己再也不会改它 | 已修成**三段护栏**：第一段到期由 `mode::resend_commands` 只补发一组 `InnerSize`+`OuterPosition`（`take_retry` 保证恰好一次）；第二段到期什么都不采纳，把当时实测尺寸存为 `baseline` 并 WARN（只报两个尺寸）；此后尺寸轴只在与 `baseline` 的欧氏距离 >2px（用户真的手动缩放过）时才写回。**已经写坏的用户配置怎么救**：设置页「窗口」分区的「恢复默认窗口尺寸」按钮（`app::reset_window_sizes`，不走 `mode::apply`——它开头先 `capture`，会把正要清掉的坏值再抄一遍） |

@@ -24,7 +24,7 @@
 
 use egui::{
     self, Align, CentralPanel, CursorIcon, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Rect,
-    RichText, Sense, Vec2,
+    Sense, Vec2,
 };
 
 use crate::state::AppState;
@@ -175,8 +175,15 @@ fn drag_handle(ui: &egui::Ui, salt: &str, rect: Rect, effects: &mut Effects) {
 /// Shift+Enter 才是换行——多行 `TextEdit` 里 `return_key` 命中的那一下由 egui 自己
 /// 插入 `"\n"`，未命中的 Enter 它不理会，所以两条都不需要改正本快捷键。
 fn input_row(ui: &mut egui::Ui, state: &mut AppState, band: f32) {
-    // 与 `TextEdit` 自己算行高用的同一条公式（`row_height + extra_text_line_spacing`）
-    let line = ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().extra_text_line_spacing;
+    // 字号/字间距/行间距三个设置都从这里进正文框（变更 H），与全量窗同一个类型
+    let pane = theme::PaneText::new(ui, &state.config.ui, state.config.ui.source_font_scale);
+    // 与 `TextEdit` 自己算行高用的同一条公式（`row_height + extra_text_line_spacing`），
+    // 但取的是**正文框那一档字号**的行高：正文可以比界面其它文字大，按 Body 算会少留一行，
+    // 字就顶在带的底边上（179 行原本用 `text_style_height(Body)`，正文一放大就不成立了）
+    let line = pane.line_height;
+    let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+        pane.layout(ui, buf.as_str(), wrap_width)
+    };
     let ctx = ui.ctx().clone();
 
     let framed = band_frame(ui, |ui| {
@@ -190,6 +197,8 @@ fn input_row(ui: &mut egui::Ui, state: &mut AppState, band: f32) {
                     egui::TextEdit::multiline(&mut state.source)
                         .id(egui::Id::unique(SOURCE_EDITOR_ID))
                         .frame(egui::Frame::NONE)
+                        .font(pane.font.clone())
+                        .layouter(&mut layouter)
                         .desired_rows(1)
                         .desired_width(f32::INFINITY)
                         .hint_text("输入或粘贴，Enter 翻译，Esc 清空")
@@ -477,9 +486,10 @@ fn translation_pane(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effec
 /// 边框上就看的到"）：动作行那颗「机翻|AI」分段按钮写的就是当前引擎，同一件事不说两遍，
 /// 而且那两个字还占掉译文的一行宽度。
 fn body(ui: &mut egui::Ui, state: &AppState) {
+    let pane = theme::PaneText::new(ui, &state.config.ui, state.config.ui.translation_font_scale);
     if let Some(failure) = &state.failure {
         ui.add(
-            egui::Label::new(RichText::new(&failure.message).color(theme::ERROR))
+            egui::Label::new(pane.rich(&failure.message).color(theme::ERROR))
                 .selectable(true)
                 .wrap(),
         );
@@ -487,7 +497,7 @@ fn body(ui: &mut egui::Ui, state: &AppState) {
     }
     if let Some(result) = &state.translation {
         ui.add(
-            egui::Label::new(RichText::new(&result.text))
+            egui::Label::new(pane.rich(&result.text))
                 .selectable(true)
                 .wrap(),
         );

@@ -21,6 +21,7 @@ use crate::system::secrets;
 use crate::system::single_instance::{self, AcquireError, InstanceLock};
 
 mod app;
+mod fonts;
 mod jobs;
 mod mode;
 mod state;
@@ -234,6 +235,8 @@ fn main() {
         "Ice Translator",
         options,
         Box::new(move |cc| {
+            // 中文要落在黑体上，必须赶在第一帧排版之前换掉字体表（变更 H）
+            fonts::install(&cc.egui_ctx);
             let key_probe = spawn_key_probe(&runtime, &cc.egui_ctx);
             Ok(Box::new(IceApp::new(
                 state,

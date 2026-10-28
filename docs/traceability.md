@@ -50,7 +50,7 @@
 
 | 需求 | 级 | 设计 | 实现 | 验证 | 结果 |
 |---|---|---|---|---|---|
-| FR-4.1 设置页各项持久化 | M | 02 §6 | `ice-core::config`、`ice-app::views::settings` | TC-4.1-a/b | ✅ P4：设置页改任一项即标脏、退避 500ms 落盘（`config_writes_are_debounced_but_a_forced_save_always_happens`、`a_failed_save_keeps_the_dirty_flag_for_the_next_try`）；供应商预设与手填值互不覆盖（`provider_preset_fills_the_edit_buffers`、`manual_values_survive_a_preset_selection_and_still_win`） |
+| FR-4.1 设置页各项持久化 | M | 02 §6 | `ice-core::config`、`ice-app::views::settings` | TC-4.1-a/b/c | ✅ P4：设置页改任一项即标脏、退避 500ms 落盘（`config_writes_are_debounced_but_a_forced_save_always_happens`、`a_failed_save_keeps_the_dirty_flag_for_the_next_try`）；供应商预设与手填值互不覆盖（`provider_preset_fills_the_edit_buffers`、`manual_values_survive_a_preset_selection_and_still_win`）；**2026-10-28 变更 H 起再加四项排版（两档正文倍率 / 字间距 / 行间距），越界夹取与非有限数退默认见 TC-4.1-c** |
 | FR-4.2 密钥入钥匙串且不入日志 | M | ADR-005 | `ice-app::system::secrets`、`ice-app::app::spawn_key_probe` | TC-4.2-a/b、TC-4.3-d | ✅ P4：明文只交出一次并随即清空缓冲（`saving_a_key_hands_over_the_plaintext_once_and_clears_the_buffer`），空 Key 永不写出，界面只显示位数不显示任何片段（`a_configured_key_shows_only_its_length`），错误文本不回显密钥字节（`describe_error_never_echoes_payload_bytes`）。**启动时读钥匙串挪到后台线程**：macOS 会弹授权框阻塞 `get_password()`，放在建窗之前表现为"启动卡死"（见 `07-acceptance.md` 变更行） |
 | FR-4.3 配置目录规范与损坏容错 | M | 02 §6 | `ice-core::config::load_at` | TC-4.3-a/b | ✅ 单测 `load_at_falls_back_to_defaults_with_reason` 等 3 条 |
 | FR-4.4 历史 500 条可搜可回显 | S | 02 §2 history | `ice-core::history` + `ice-app::views::history` | TC-4.4-a..d、TC-6.1-a/b | ✅ P4 补齐界面：点一行只回填文本页、不自动翻译（`picking_a_row_fills_the_text_page_without_translating`）；渲染本身不提交请求；坏行跳过整页仍可用，读不出来给可读原因（TC-6.1-b 两条） |
@@ -71,7 +71,7 @@
 | NFR-5 资源占用 | S | 05 §1 | release 构建 | TC-P-6 | 待 P8（P4 已做到空闲帧不请求重绘，30s CPU 采样见 W-1.20） |
 | NFR-6 分层依赖 | M | ADR-006 | workspace | `cargo tree` 检查 | 部分 ✅ P1 已核（core 依赖树无 egui/eframe/reqwest/image），P8 三目标复核。P4 未引入反向依赖：`ice-app` 单向依赖 `ice-core`/`ice-providers` |
 | NFR-7 跨平台可用与降级 | S | ADR-002 | `ice-vision::native_ocr_supported` | TC-P-7 | 待 P8。P4 有一处跨平台取舍已就地标注：历史页的本地时区格式化在 unix 走 `localtime_r`、其他平台退回 UTC，`i64`/`i32` 的 `time_t` 差异保留转换并对本平台的 `useless_conversion` 告警放行 |
-| NFR-8 可访问性：字号缩放与键盘可达 | C | 03 §1、§5 | `ice-app::theme`（字号）+ `system::hotkeys`（键盘） | 走查 W-1、§5 第 5 步 | 部分 ✅ P4：字号缩放 0.85–1.6 倍可调并落盘；全部快捷键不依赖鼠标（TC-5.1-a）；等宽字体族在缩放后仍是等宽（`monospace_keeps_its_font_family`）。Tab 顺序与读屏需真机走查 |
+| NFR-8 可访问性：字号缩放与键盘可达 | C | 03 §1、§5 | `ice-app::theme`（字号 + `PaneText`）、`ice-app::fonts`（黑体族）、`system::hotkeys`（键盘） | 走查 W-1、W-2.32、§5 第 5 步 | 部分 ✅ P4：字号缩放 0.85–1.6 倍可调并落盘；全部快捷键不依赖鼠标（TC-5.1-a）；等宽字体族在缩放后仍是等宽（`monospace_keeps_its_font_family`）。**2026-10-28 变更 H 补两处**：正文两栏在整体字号之上各再乘一档（`0.8..=2.0`，两栏互不牵连，TC-N-3），界面中文固定落在黑体-简而不是交给系统逐字符解析（TC-N-2；`Monospace` 里仍排在 Hack 之后，所以等宽那条旧断言继续成立）。Tab 顺序与读屏需真机走查 |
 
 ## 统计
 
