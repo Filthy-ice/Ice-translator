@@ -9,9 +9,7 @@
 //! 边框、标题栏、按钮全都跟着；代价是文字也一并变淡（`apply_dim` 当年特意只改底色）。
 //! 这笔交换值不值由用户判，所以同一批把"透多少"做成了设置页里的滑杆。
 //!
-//! 拿窗口的路数与 eframe 自己定位红绿灯时用的完全一致（`eframe/src/native/macos.rs`）：
-//! `Frame::winit_window()` → `HasWindowHandle::window_handle()` →
-//! `AppKitWindowHandle.ns_view`（**指的是 NSView，不是窗口**）→ `NSView::window()`。
+//! 取窗口本身在 `super::window::ns_window`（与 `system::titlebar` 共用一条路）。
 //! 非 macOS 平台没有等价且安全的"整窗 alpha"命令（`ViewportCommand` 里没有这一项），
 //! 一律返回 false，由调用方退回 `apply_dim`。
 
@@ -22,29 +20,7 @@
 /// 这个函数每帧都可能被调，噪声留给调用方按"值变了"去记。
 #[cfg(target_os = "macos")]
 pub fn set(frame: &eframe::Frame, alpha: f32) -> bool {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::NSView;
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-    // 只在主线程上碰 AppKit。`ui` 回调本身就在主线程，拿不到 marker 说明调用点错了。
-    if MainThreadMarker::new().is_none() {
-        return false;
-    }
-
-    let Some(window) = frame.winit_window() else {
-        return false;
-    };
-    let Ok(handle) = window.window_handle() else {
-        return false;
-    };
-    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-        return false;
-    };
-
-    // SAFETY: `ns_view` 由 winit 从 `NSWindow.contentView` 取出，指针在窗口存活期内有效；
-    // 上面刚确认过在主线程上。与 eframe `native/macos.rs` 的 `ns_view_from_handle` 同一个取法。
-    let ns_view: &NSView = unsafe { &*appkit.ns_view.as_ptr().cast::<NSView>() };
-    let Some(ns_window) = ns_view.window() else {
+    let Some(ns_window) = super::window::ns_window(frame) else {
         return false;
     };
     // `setAlphaValue:` 是安全方法（无所有权转移，参数是 CGFloat）。

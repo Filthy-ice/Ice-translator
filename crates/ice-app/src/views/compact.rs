@@ -319,8 +319,13 @@ fn theme_toggle(ui: &mut egui::Ui, state: &mut AppState) -> Rect {
     response.rect
 }
 
-/// 动作行：「☀/☾/自动 / 全量 / 复制 / 设置 / 机翻|AI / 置顶 —— 退出（钉右）」，
+/// 动作行：「☀/☾/自动 / 复制 / 设置 / 机翻|AI / 置顶 —— 退出（钉右）」，
 /// 正常字号、正常按钮内边距，左排与「退出」之间剩下的真空白是第三块把手。
+///
+/// 「全量」那颗按钮按用户 2026-10-28 的原话删掉了（"悬浮窗更换全量的按钮可以不要，
+/// 将标题栏最大化功能替换为切换全量"）。切回全量现在只有两个入口：标题栏那颗绿灯
+/// （`system::titlebar`，只在简洁窗改道）与 `Cmd+Shift+M`——**删的是按钮，不是能力**，
+/// hover 提示里那句快捷键也因此不能丢。
 ///
 /// 「退出」为什么单独钉到行的右边缘（用户 2026-10-28："悬浮窗退出放在右下角"）：它是这一行
 /// 唯一的"离开"动作，跟在 `置顶` 后面时和开关挤在一起。它在一条 `right_to_left` 子带里，
@@ -336,8 +341,8 @@ fn theme_toggle(ui: &mut egui::Ui, state: &mut AppState) -> Rect {
 /// "永不超出可用宽度"，与字体度量无关——代价是最窄的窗里这一行可能占两行高，所以
 /// 宽度下限按**度量**锁住（`the_action_row_stays_on_one_line_at_the_minimum_width`：
 /// 320 那一档「退出」掉到第二行，用户 2026-10-28 要求"按钮不允许换行"，抬到 400；
-/// 同日加了主题切换框后又抬到 420），高度下限抬到 160（REQ-012 两带 1:1 摊开后，
-/// 130 那一档译文带连两行字都放不下）。
+/// 同日加了主题切换框后一度抬到 420，删掉「全量」那颗又回到 400），高度下限抬到 160
+/// （REQ-012 两带 1:1 摊开后，130 那一档译文带连两行字都放不下）。
 fn action_row(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_available: bool) {
     let panel = egui::Panel::bottom("compact_bar").show(ui, |ui| {
         let available = ui.max_rect();
@@ -352,15 +357,6 @@ fn action_row(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai
             let theme_box = theme_toggle(ui, state);
             record(&ctx, "btn_theme", theme_box);
             left = left.union(theme_box);
-
-            let full_mode = ui
-                .button("全量")
-                .on_hover_text("切回全量界面（Cmd+Shift+M）");
-            record(&ctx, "btn_full", full_mode.rect);
-            left = left.union(full_mode.rect);
-            if full_mode.clicked() {
-                effects.toggle_mode = true;
-            }
 
             let copy = ui.button("复制").on_hover_text("复制译文（Cmd+Shift+C）");
             record(&ctx, "btn_copy", copy.rect);
@@ -522,7 +518,7 @@ mod tests {
     use ice_core::language::EngineKind;
     use ice_providers::request::TranslationResult;
 
-    /// 最小简洁窗（`MIN_COMPACT_SIZE`，2026-10-28 起 420×160）：所有布局断言都在这个尺寸下做，
+    /// 最小简洁窗（`MIN_COMPACT_SIZE`，删掉「全量」那颗后 400×160）：所有布局断言都在这个尺寸下做，
     /// 装得下就一定装得下更大的。数值取自唯一出处，测试里不写字面量
     fn window() -> Rect {
         Rect::from_min_size(Pos2::ZERO, Vec2::new(MIN_COMPACT_W, MIN_COMPACT_H))
@@ -863,7 +859,7 @@ mod tests {
         );
     }
 
-    /// 最小窗（`MIN_COMPACT_SIZE`，2026-10-28 晚间起 420×160）里两条带、动作行、所有按钮
+    /// 最小窗（`MIN_COMPACT_SIZE`，删掉「全量」那颗后回到 400×160）里两条带、动作行、所有按钮
     /// 与把手都必须待在窗口内，且互不重叠。
     /// 这条锁的是 REQ-005 的"不溢出、不重叠"与 REQ-011 的"退出按钮也在窗内"：
     /// v0.5 起动作行按默认字号排，装不下靠换行而不是压小
@@ -884,7 +880,6 @@ mod tests {
             "actions",
             "bar_gap",
             "btn_theme",
-            "btn_full",
             "btn_copy",
             "btn_settings",
             "btn_top",
@@ -906,7 +901,6 @@ mod tests {
         // 同一行里的控件两两不重叠（把手更不能压住按钮，否则点按钮会变成拖窗）
         let row = [
             rect(&h.ctx, "btn_theme"),
-            rect(&h.ctx, "btn_full"),
             rect(&h.ctx, "btn_copy"),
             rect(&h.ctx, "btn_settings"),
             rect(&h.ctx, "engine"),
@@ -934,14 +928,7 @@ mod tests {
         let mut state = state();
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, true);
-        for salt in [
-            "btn_theme",
-            "btn_full",
-            "btn_copy",
-            "btn_settings",
-            "btn_top",
-            "engine",
-        ] {
+        for salt in ["btn_theme", "btn_copy", "btn_settings", "btn_top", "engine"] {
             let r = rect(&h.ctx, salt);
             assert!(
                 r.height() >= 20.0 - 0.5,
@@ -1061,7 +1048,7 @@ mod tests {
         let (input, tail, button) = (
             rect(&h.ctx, "input"),
             rect(&h.ctx, "handle_tail"),
-            rect(&h.ctx, "btn_full"),
+            rect(&h.ctx, "btn_copy"),
         );
         let size = window().size();
 
@@ -1072,7 +1059,7 @@ mod tests {
         );
         assert!(
             !drag_probe(size, button.center()),
-            "把手压住了按钮，点\"全量\"会变成拖窗"
+            "把手压住了按钮，点\"复制\"会变成拖窗"
         );
     }
 
@@ -1383,14 +1370,7 @@ mod tests {
             actions.max.x <= 560.0 + 0.5,
             "宽窗里动作行溢出：{actions:?}"
         );
-        for salt in [
-            "btn_theme",
-            "btn_full",
-            "btn_copy",
-            "btn_settings",
-            "btn_top",
-            "engine",
-        ] {
+        for salt in ["btn_theme", "btn_copy", "btn_settings", "btn_top", "engine"] {
             let r = rect(&h.ctx, salt);
             assert!(r.height() >= 20.0 - 0.5, "{salt} 在宽窗里被压小了：{r:?}");
         }
@@ -1444,7 +1424,7 @@ mod tests {
     /// 所以宽度需求比"行尾留 4px"那一版又多 4px。
     ///
     /// 按钮文字从**这一帧真的画出来的**文字形状里取：改了文案、加了按钮，这条跟着变。
-    /// 跑在 `Theme::Light`（图案档，框内没有文字）下，文字清单才仍然是那七颗按钮。
+    /// 跑在 `Theme::Light`（图案档，框内没有文字）下，文字清单才仍然是那六颗按钮。
     #[test]
     fn the_action_row_stays_on_one_line_at_the_minimum_width() {
         let mut h = Harness::new(window().size());
@@ -1469,7 +1449,7 @@ mod tests {
             .collect();
         assert_eq!(
             labels,
-            ["全量", "复制", "设置", "机翻", "AI", "置顶", "退出"],
+            ["复制", "设置", "机翻", "AI", "置顶", "退出"],
             "动作行的按钮与文档记的不一致，下面的宽度就得重算"
         );
 
@@ -1492,11 +1472,13 @@ mod tests {
             + 2.0 * PANEL_X_MARGIN
             + 2.0 * GAP_PADDING;
 
-        // 先自校：这套算法必须能解释用户看到的那次换行，并且解释"为什么下限要从 400 抬走"
+        // 先自校：这套算法必须能解释用户看到的那次换行（320 那一档「退出」掉到了第二行），
+        // 也必须解释"为什么下限停在 400、不跟着主题框那次抬到 420"——「全量」那颗删掉了，
+        // 一行的需求比加了主题框那一版少了整整一颗按钮。
         assert!(
-            needed > 400.0,
-            "按度量算加了主题框的这一行在 400 那一档还放得下（{needed} ≤ 400），\
-             那'下限要抬'这件事就没被锁住"
+            needed > 320.0,
+            "按度量算这一行在 320 那一档还放得下（{needed} ≤ 320），\
+             那'用户看到的换行'就没被这套算法解释住"
         );
         assert!(
             needed <= window().width(),

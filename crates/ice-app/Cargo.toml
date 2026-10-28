@@ -42,12 +42,27 @@ tempfile = "3"
 # `default-features = false` 是必须的：objc2-app-kit 的 default 会打开 ~283 个模块，
 # 连带把 objc2-cloud-kit / core-video / core-text / metal 等六个 Apple 绑定 crate 拖进
 # 编译图（实测：不设它，`cargo build` 会多出这六个 rlib）。这里只需要读 `NSScreen`，
-# 外加 `NSView`/`NSWindow` 两个模块——失焦半透明要改整窗不透明度（FR-3.7，见 `system::alpha`）。
+# 外加 `NSView`/`NSWindow` 两个模块——失焦半透明要改整窗不透明度（FR-3.7，见 `system::alpha`）；
+# 再加 `NSButton`/`NSControl` 两个模块——标题栏绿键的 target-action 挂在 NSButton 上，
+# 而 `standardWindowButton:` 的返回类型、`setTarget:`/`setAction:` 分别要这两个模块才存在
+# （`NSWindow.rs:1642` 的 cfg 就是这两个 + `NSView`）。
 # `objc2-core-foundation` 不是可选项：`NSWindow::setAlphaValue:` 的参数类型是 `CGFloat`，
 # objc2-app-kit 把带 CGFloat 的方法整体关在这个 feature 后面，不开就连方法都看不到。
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSScreen", "NSView", "NSWindow", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "NSScreen",
+    "NSView",
+    "NSWindow",
+    "NSButton",
+    "NSControl",
+    "objc2-core-foundation",
+] }
+# `NSObject` 是运行时那个改道 target 的父类，`NSString` 是绿键的悬停提示文案
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "NSGeometry",
+    "NSObject",
+    "NSString",
+] }
 # 从 eframe 拿到原生窗口句柄：`AppKitWindowHandle.ns_view` 指的是 NSView（不是窗口），
 # 再问它要 `window`。只取句柄，不引 winit 本身。
 raw-window-handle = "0.6"
