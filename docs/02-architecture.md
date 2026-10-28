@@ -67,14 +67,15 @@
 | 模块 | 关键类型 | 职责 | 需求 | 状态 |
 |---|---|---|---|---|
 | `app` | `IceApp`、`Effects`、`Prepared` | 实现 `eframe::App`；持有 `AppState`、`JobRunner`、tokio runtime、历史存储、配置路径、单实例锁、钥匙串探测回收端；帧末统一执行副作用（含 `Effects::{quit, reset_geometry}` 两条来自设置页的意图）与退避落盘；原生标题栏拖动靠 `observe_native_move` 的几何跳变观测补上吸附判定；每帧按当前形态调 `system::{alpha, titlebar}::set/sync`（`apply_native_alpha`、`apply_zoom_hook`，只在结果变了才记日志），并在帧首 `poll_titlebar_click` 把绿键那次点击兑成 `Effects::toggle_mode` | 全部 | ✅ P5 |
-| `main` | `prepare()` | 启动时序：日志 → 单实例锁 → 读配置 → 导入旧术语表 → 装配引擎 → tokio → 建窗 → **后台**读钥匙串 | FR-4.1~4.3、REQ-009 | ✅ P4 |
+| `main` | `prepare()`、`main()` | 启动时序：日志 → 单实例锁 → 读配置 → 导入旧术语表 → 装配引擎 → tokio → 建窗（`main()` 里 `run_native` 的创建闭包第一件事是 `fonts::install`，中文落在黑体上必须赶在第一帧排版之前）→ **后台**读钥匙串 | FR-4.1~4.3、REQ-009 | ✅ P4 |
 | `state` | `AppState`、`Failure`、`FailureAction`、`Job`、`Outcome` | 源文/译文/语言对/引擎/在飞任务/失败态/图片工作区/历史查询/提示条；`request_id` 竞态丢弃 | FR-1、FR-2 | ✅ P4 |
 | `mode` | `commands_for_mode()`、`apply()`、`toggle()`、`capture()`、`PendingGeometry`、`resend_commands()`、`snap()`、`dock()`、`reveal_rect()`、`dock_band_contains()`、`released()`、`fit_into_area()`、`DragSettler`、`RevealGuard`、`dim_alpha()`、`level_for_dock()`、`MIN_FULL_SIZE`/`MIN_COMPACT_SIZE` | 两种形态的 `ViewportCommand` 编排（**先改 `MinInnerSize` 再发 `InnerSize`**，顺序本身就是正确性）、置顶与停靠层级、几何捕获与即时落盘、左/右边缘吸附-停靠-悬停唤出-拖离的纯函数、拖动静止判定、失焦降透明度、形态切换的几何宽限期（D-6，v0.7 起是**三段**护栏，见 §3.3）。FR-3.9 已于 2026-10-22 改为瞬时切换，**无 `Morph`** | FR-3.2~3.9、FR-5.3 | ✅ P5 |
-| `theme` | `apply()` | 三态主题映射到 `ctx.set_theme`，字号缩放乘在 egui 默认值上并限幅 | NFR-4、NFR-8 | ✅ P4 |
+| `theme` | `apply()`、`apply_font_scale()`、`PaneText`、`title_color()`、`surface_fill()` | 三态主题映射到 `ctx.set_theme`，字号缩放乘在 egui 默认值上并限幅；`apply()` 每帧重赋 `Spacing::extra_text_line_spacing`（赋值不是累加，帧循环会跑几百次）；**变更 H 新增 `PaneText`——把「字号 + 字距 + 行距」三件事一次性收成一处**，四个正文调用点（全量源文/译文、简洁输入带/译文带）共用，避免 egui 0.37 那三个不同入口（`FontId`、`extra_text_line_spacing` 只喂 TextEdit、section 上的**绝对** `line_height` + `extra_letter_spacing` 要手工挂）各写一份漂掉 | NFR-4、NFR-8 | ✅ P5 |
+| `fonts` | `definitions()`、`install()`、`HEITI_PATH`、`HEITI_SC_FACE_INDEX` | 赶在第一帧排版之前（`run_native` 的创建闭包里）把 `/System/Library/Fonts/STHeiti Medium.ttc` 装成字体族：`Proportional` 第 **0** 位、`Monospace` 里排在 Hack **之后**（拉丁列要继续保持等宽）。**面索引 1 才是黑体-简**（第 0 面是黑体-繁，选错不崩不缺字，只有肉眼看得出）；读不到文件返回 `false` 并回落系统解析，**不许因缺字体让界面空白** | NFR-8 | ✅ P5 |
 | `views::mod` | `Tab`、`chrome()` | 顶部工具条 + 页签 + 状态条（设计里归在 `views::full`，实现时抽出共用，简洁模式也要用同一条状态条） | FR-3.1 | ✅ P4 |
 | `views::full` | `show()`、`copy()`、`scroll_area()`、`record_scroll()`、`pane_body_height()`、`char_count_text()`、`bar_actions()`、`bar_layout()`、`bar_height()`、`bottom_bar()` | 全量布局文本页：源文编辑器、译文区两栏等高，两栏之下是**自占一行**的动作底栏（`Panel::bottom`，左边字数计数、右边三/四枚按钮，退让顺序 `84×28` → `64×28` → 换行）；失败动作按钮在同一行 | FR-1.1~1.5、FR-3.1 | ✅ P5 |
 | `views::history` | `show()` | 历史页：搜索、点选回填、时间戳本地化、坏行容错 | FR-4.4 | ✅ P4 |
-| `views::settings` | `show()`、`select_default_engine()` | 供应商预设、密钥写钥匙串、主题三态、字号、额外语言、术语分区；「窗口」分区（F-17）给出「恢复默认窗口尺寸」与「退出程序」两颗看得见的入口，只立意图（`Effects::{reset_geometry, quit}`），落地在 `app` | FR-4.1~4.2、FR-4.5、FR-5.2、NFR-4 | ✅ P5 |
+| `views::settings` | `show()`、`select_default_engine()` | 供应商预设、密钥写钥匙串、主题三态、字号、额外语言、术语分区；外观分区（变更 H）在整体字号之下再给四条滑杆——原文字号 / 译文字号（各 `0.8..=2.0`）、字间距（`0..=4px`）、行间距（`0..=16px`），每根只写 `config.ui` + 标脏；「窗口」分区（F-17）给出「恢复默认窗口尺寸」与「退出程序」两颗看得见的入口，只立意图（`Effects::{reset_geometry, quit}`），落地在 `app` | FR-4.1~4.2、FR-4.5、FR-5.2、NFR-4、NFR-8 | ✅ P5 |
 | `views::image` | `show()` | 图片页占位：五个区域已画好，接 OCR 在 P6 | FR-2.3、FR-2.6 | 占位 |
 | `views::compact` | `show()`、`band_heights()`（内部：`input_row`、`translation_pane`、`action_row`、`drag_handle`、`band_frame`、`apply_dim`） | 简洁窗版式：带原生标题栏（Q-013），三带堆叠——动作行先建成 `Panel::bottom`，剩余高度由 `band_heights()` 按 **1:1 分给输入带与译文带**（REQ-012，v0.7 推翻了 v0.6 Q-014 的"输入行随内容长到三行封顶"），带间 `BAND_GAP` ≥5px，两带各自是独立圆角框；输入超一屏在框内滚，译文带定高 `ScrollArea` + 尾部 8px 把手；动作行按左→右排七项（主题切换框/复制/设置/机翻\|AI/置顶 + 钉在行右边缘的退出；**「全量」那颗已于 2026-10-28 变更 G 删除**，切回全量改由标题栏绿键与 `Cmd+Shift+M` 承担，见 `system::titlebar`），与全量窗同字号同内边距，左排放不下换行、`退出` 由一条 `right_to_left` 子带单独钉右（子带竖向范围取左排实测那一格，行高仍由左排决定）；主题切换框三态画太阳/月亮/「自动」，只写 `config.ui.theme` + 标脏；两处窗内把手走 `StartDrag`（左排与退出之间那块空白、译文带尾部 8px）；失焦时窗体底色与两带圆角框一起乘 alpha | FR-3.2、FR-3.7、FR-5.2 | ✅ P5 |
 | `jobs` | `JobRunner`、`drain()`、`apply()` | `spawn` 网络任务，经 `mpsc` 回投 UI 并请求重绘；`spawn_blocking` 图像任务待 P6 | FR-2.9、NFR-1、REQ-002 | ✅ P4（文本部分） |
@@ -232,6 +233,8 @@ main() ──► Config::load_at() ──► (cfg, Option<reason>)
 ```
 
 `recent_targets` 在切换目标语言时更新（`remember_target`），最多 5 条（FR-1.4）。
+
+变更 H 那四个排版字段（`source_font_scale`、`translation_font_scale`、`letter_spacing`、`line_spacing`）全部 `#[serde(default)]`，所以用户已经在用的 `config.toml` 不会因为多字段而读失败；`sanitized()` 只对**有限数**接受越界夹取，NaN/Inf 退回默认档——手改配置文件不许把界面熬成看不见的字。
 
 **与封存设计的两处偏差**：① 设计写"当帧结束就 save"，实现改为退避 500ms——字号滑块这类连续控件每帧都会标脏，逐帧写盘会把原子替换变成每帧一次 rename；② 设计没有"钥匙串探测回来再对齐 `key_configured`"这一步，因为当时假定 Key 在建窗前就读到了（该假定已被 P4 真机推翻，见第 4 节）。两者都不改任何 REQ。
 

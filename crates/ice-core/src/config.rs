@@ -46,6 +46,27 @@ pub const MAX_UNFOCUSED_ALPHA: f32 = 1.00;
 /// 默认不透明度：即 v0.6 起写死的 `DIM_ALPHA`，2026-10-28 改成可调后保留原值当默认档
 pub const DEFAULT_UNFOCUSED_ALPHA: f32 = 0.85;
 
+/// 正文区字号倍率的默认档（相对界面字号 `font_scale` 之后再乘，2026-10-28 变更 H）。
+pub const DEFAULT_PANE_FONT_SCALE: f32 = 1.0;
+/// 正文区字号倍率的区间。上下限刻意与界面字号那档（`theme::MIN/MAX_FONT_SCALE`）同值，
+/// 但数值写在这里而不是引用过来——`ice-core` 不能反向依赖 `ice-app`，滑杆那头来读这一份。
+pub const MIN_PANE_FONT_SCALE: f32 = 0.8;
+pub const MAX_PANE_FONT_SCALE: f32 = 2.0;
+/// 字间距默认档：用户 2026-10-28"字间距和行间距太小了，看起来有点乱"，
+/// 所以默认就不是 0——把"太挤"当成出厂状态而不是用户没调。
+pub const DEFAULT_LETTER_SPACING: f32 = 0.5;
+/// 行间距默认档（px，加在一行自然高度之上）。3px 在 12.5px 正文上约等于 1.24 倍行高，
+/// 中文两行之间终于有呼吸，又不至于让悬浮窗那两条带装不下两行。
+pub const DEFAULT_LINE_SPACING: f32 = 3.0;
+/// 字间距可调区间：0 = 完全贴排的旧观感，上限见下
+pub const MIN_LETTER_SPACING: f32 = 0.0;
+/// 字间距可调上限：再大就不像同一种文字了（一个汉字宽 12.5px，+4px 已是 32% 的空白）
+pub const MAX_LETTER_SPACING: f32 = 4.0;
+/// 行间距可调区间：下限 0 就是改动前的行为，留给"我就喜欢挤一点"
+pub const MIN_LINE_SPACING: f32 = 0.0;
+/// 行间距可调上限：悬浮窗最小 160 高，两条带各只有一行余地，再松就顶穿
+pub const MAX_LINE_SPACING: f32 = 16.0;
+
 /// 屏幕矩形，用于持久化窗口位置（FR-3.6）
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct WindowRect {
@@ -132,6 +153,15 @@ pub struct UiConfig {
     pub theme: Theme,
     /// 界面缩放，合法区间 [0.8, 2.0]
     pub font_scale: f32,
+    /// 正文区（源文框）相对界面字号的倍率（2026-10-28 变更 H，用户"原文和译文字体大小也需要能调整"）。
+    /// 与 `font_scale` 相乘而不是替代它：整界面一起放大时，正文仍然跟着走。
+    pub source_font_scale: f32,
+    /// 正文区（译文框）相对界面字号的倍率，同上
+    pub translation_font_scale: f32,
+    /// 字间距，单位 px（加在 egui 算好的字形前进量之后）。合法区间 [`MIN_LETTER_SPACING`]..=[`MAX_LETTER_SPACING`]
+    pub letter_spacing: f32,
+    /// 行间距，单位 px（加在一行的自然高度之上，与 egui 的 `extra_text_line_spacing` 同一口径）
+    pub line_spacing: f32,
     /// 简洁模式失焦时半透明（FR-3.7）
     pub dim_when_unfocused: bool,
     /// 失焦半透明降到的不透明度（FR-3.7，2026-10-28 起可调）。
@@ -155,6 +185,10 @@ impl Default for UiConfig {
             always_on_top: false,
             theme: Theme::System,
             font_scale: 1.0,
+            source_font_scale: DEFAULT_PANE_FONT_SCALE,
+            translation_font_scale: DEFAULT_PANE_FONT_SCALE,
+            letter_spacing: DEFAULT_LETTER_SPACING,
+            line_spacing: DEFAULT_LINE_SPACING,
             dim_when_unfocused: true,
             unfocused_alpha: DEFAULT_UNFOCUSED_ALPHA,
             clipboard_watch: false,
@@ -468,6 +502,20 @@ impl Config {
             DEFAULT_UNFOCUSED_ALPHA
         };
         self.ui.dock_sliver_px = self.ui.dock_sliver_px.clamp(2.0, 24.0);
+        // 排版四项（2026-10-28 变更 H）：NaN 会一路传到 egui 的字号与行高上，
+        // 版面直接塌掉，所以与 alpha 同法——先挡 NaN 再夹取，NaN 退回默认档。
+        let finite_or = |value: f32, fallback: f32| {
+            if value.is_finite() { value } else { fallback }
+        };
+        self.ui.source_font_scale = finite_or(self.ui.source_font_scale, DEFAULT_PANE_FONT_SCALE)
+            .clamp(MIN_PANE_FONT_SCALE, MAX_PANE_FONT_SCALE);
+        self.ui.translation_font_scale =
+            finite_or(self.ui.translation_font_scale, DEFAULT_PANE_FONT_SCALE)
+                .clamp(MIN_PANE_FONT_SCALE, MAX_PANE_FONT_SCALE);
+        self.ui.letter_spacing = finite_or(self.ui.letter_spacing, DEFAULT_LETTER_SPACING)
+            .clamp(MIN_LETTER_SPACING, MAX_LETTER_SPACING);
+        self.ui.line_spacing = finite_or(self.ui.line_spacing, DEFAULT_LINE_SPACING)
+            .clamp(MIN_LINE_SPACING, MAX_LINE_SPACING);
         self.ui.snap_threshold_px = self.ui.snap_threshold_px.clamp(8.0, 200.0);
         // v0.5 起停靠只认左/右（Q-010）。Top/Bottom 留在枚举里只为反序列化兼容，
         // 读到就按自由浮动处理：藏进菜单栏或 Dock 的那条边唤不出来，留着等于又弄丢一次窗口。
@@ -619,6 +667,43 @@ mod tests {
             cfg.sanitized().ui.unfocused_alpha,
             0.6,
             "区间内的值不该被动过"
+        );
+    }
+
+    /// 排版四项（2026-10-28 变更 H）的加载侧护栏。NaN 是这里唯一会"静默毁版面"的值：
+    /// 它一路传到 egui 的字号与行高上，界面不是夹到边界而是整块塌掉，所以先挡 NaN 再夹。
+    #[test]
+    fn sanitize_keeps_the_typography_fields_inside_their_bands() {
+        let mut cfg = Config::default();
+        cfg.ui.source_font_scale = 9.0;
+        cfg.ui.translation_font_scale = 0.1;
+        cfg.ui.letter_spacing = -2.0;
+        cfg.ui.line_spacing = 500.0;
+        let ui = cfg.sanitized().ui;
+        assert_eq!(ui.source_font_scale, MAX_PANE_FONT_SCALE);
+        assert_eq!(ui.translation_font_scale, MIN_PANE_FONT_SCALE);
+        assert_eq!(ui.letter_spacing, MIN_LETTER_SPACING);
+        assert_eq!(ui.line_spacing, MAX_LINE_SPACING);
+
+        let mut cfg = Config::default();
+        cfg.ui.source_font_scale = f32::NAN;
+        cfg.ui.translation_font_scale = f32::INFINITY;
+        cfg.ui.letter_spacing = f32::NAN;
+        cfg.ui.line_spacing = f32::NAN;
+        let ui = cfg.sanitized().ui;
+        assert_eq!(ui.source_font_scale, DEFAULT_PANE_FONT_SCALE);
+        assert_eq!(ui.translation_font_scale, DEFAULT_PANE_FONT_SCALE);
+        assert_eq!(ui.letter_spacing, DEFAULT_LETTER_SPACING);
+        assert_eq!(ui.line_spacing, DEFAULT_LINE_SPACING);
+
+        // 出厂默认本身必须在区间内，且"太挤"不能是默认档（用户 2026-10-28 的原话）
+        let ui = Config::default().ui;
+        assert_eq!(ui.source_font_scale, DEFAULT_PANE_FONT_SCALE);
+        assert!(
+            ui.letter_spacing > 0.0 && ui.line_spacing > 0.0,
+            "默认档还是挤的：字间距 {}、行间距 {}",
+            ui.letter_spacing,
+            ui.line_spacing
         );
     }
 

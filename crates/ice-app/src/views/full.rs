@@ -7,7 +7,7 @@
 //! 动作按钮住在这条自占一行的底栏里（REQ-013，v0.7）：上一版它浮在译文栏右下角，正文末尾要
 //! 预留一条等高空白才不被压住，预留算错一点，长译文滚到底最后一行就看不见（D-9）。
 
-use egui::{self, Align, Key, KeyboardShortcut, Layout, Modifiers, RichText};
+use egui::{self, Align, Key, KeyboardShortcut, Layout, Modifiers};
 
 use crate::state::{AppState, FailureAction, Tone};
 use crate::system::clipboard::{self, CopyKind, EMPTY_TRANSLATION_HINT};
@@ -242,10 +242,23 @@ fn source_pane(ui: &mut egui::Ui, state: &mut AppState) {
             ui.allocate_ui(
                 egui::vec2(ui.available_width(), body - 2.0 * GROUP_INNER_PAD),
                 |ui| {
+                    // 字号、字间距、行间距三个设置都从这里进正文框（变更 H）。
+                    // `layouter` 是唯一能把字间距塞进 TextEdit 的入口——`Spacing` 里没这项。
+                    let text = theme::PaneText::new(
+                        ui,
+                        &state.config.ui,
+                        state.config.ui.source_font_scale,
+                    );
+                    let mut layouter =
+                        |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+                            text.layout(ui, buf.as_str(), wrap_width)
+                        };
                     let output = scroll_area("source").show(ui, |ui| {
                         egui::TextEdit::multiline(&mut state.source)
                             .id(egui::Id::unique(SOURCE_EDITOR_ID))
                             .frame(egui::Frame::NONE)
+                            .font(text.font.clone())
+                            .layouter(&mut layouter)
                             .desired_width(f32::INFINITY)
                             .min_size(egui::vec2(0.0, body - 2.0 * GROUP_INNER_PAD))
                             .hint_text("输入或粘贴文本（Enter 翻译，Shift+Enter 换行）")
@@ -492,10 +505,11 @@ pub(crate) fn bottom_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut 
 }
 
 fn translation_body(ui: &mut egui::Ui, state: &AppState) {
+    let pane = theme::PaneText::new(ui, &state.config.ui, state.config.ui.translation_font_scale);
     if let Some(failure) = &state.failure {
         // 失败时译文区改红字显示原因；源文一个字符都不动（FR-1.7）
         ui.add(
-            egui::Label::new(RichText::new(&failure.message).color(theme::ERROR))
+            egui::Label::new(pane.rich(&failure.message).color(theme::ERROR))
                 .selectable(true)
                 .wrap(),
         );
@@ -503,7 +517,7 @@ fn translation_body(ui: &mut egui::Ui, state: &AppState) {
     }
     if let Some(result) = &state.translation {
         ui.add(
-            egui::Label::new(RichText::new(&result.text))
+            egui::Label::new(pane.rich(&result.text))
                 .selectable(true)
                 .wrap(),
         );
@@ -552,7 +566,7 @@ pub fn failure_action(state: &mut AppState, effects: &mut Effects, action: Failu
 mod tests {
     use super::*;
     use crate::state::{Failure, KeyState};
-    use ice_core::config::Config;
+    use ice_core::config::{Config, MAX_LETTER_SPACING, MAX_LINE_SPACING};
     use ice_core::glossary::Glossary;
     use ice_core::language::{EngineKind, Language};
     use ice_providers::error::ProviderError;
@@ -1287,6 +1301,104 @@ mod tests {
         assert!(
             elapsed.as_millis() < 100,
             "20k 字符单帧布局用了 {elapsed:?}，超过 100ms 预算（REQ-002 的 HYPOTHESIS 不成立）"
+        );
+    }
+
+    /// 按给定配置跑两帧文本页，量两栏**内容**的高度（源文 / 译文）。
+    ///
+    /// 用"同样一段文字排出来占多高"当尺子，是因为这是唯一能证明 view 真的用了
+    /// `PaneText` 的观测量：设置项读得到、字段也存得住，但要是排版那一步没接上，
+    /// 界面看起来完全正常、单测也全绿——正是用户这次抱怨的那类"改了个寂寞"。
+    ///
+    /// `theme::apply` 这一步不能省：真实程序里它每帧都跑（`app.rs`），行间距就是在那里
+    /// 写进 `Spacing` 的。这里不调，测到的永远是 egui 的出厂 0，正文栏再松也量不出来
+    /// （第一版就栽在这儿，源文栏 629→629 一动不动）。
+    fn body_heights(config: Config) -> (f32, f32) {
+        let mut state = AppState::new(config, Glossary::default(), KeyState::Missing, None);
+        // 源文要有 2400 个字：正文栏被 `min_size` 拉到满栏高，字太少时量到的是栏目高而不是
+        // 内容高，行间距加多少都不会动（第一版用 800 字就卡在这，629→629 一动不动）
+        state.source = "中文".repeat(1_200);
+        state.translation = Some(translated(&"译文".repeat(400)));
+        let mut effects = Effects::default();
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, &state.config.ui);
+        for time in 0..2 {
+            let mut raw = raw_input(640.0, 720.0);
+            raw.time = Some(time as f64 / 60.0);
+            ctx.run_ui(raw, |ui| run_text_ui(ui, &mut state, &mut effects))
+                .drop_without_applying_deltas();
+        }
+        (
+            scroll_metrics(&ctx, "source").content,
+            scroll_metrics(&ctx, "translation").content,
+        )
+    }
+
+    /// 分栏字号各调各的：放大原文不许顺带把译文也放大（用户要的是"原文和译文"分别可调）。
+    #[test]
+    fn each_pane_font_scale_moves_only_its_own_column() {
+        let (source_base, body_base) = body_heights(Config::default());
+        assert!(source_base > 0.0 && body_base > 0.0, "两栏都没排出内容");
+
+        let mut big_source = Config::default();
+        big_source.ui.source_font_scale = 2.0;
+        let (source, body) = body_heights(big_source);
+        assert!(
+            source > source_base * 1.5,
+            "原文字号放大一倍，源文栏内容高度几乎没变：{source_base} → {source}"
+        );
+        assert!(
+            (body - body_base).abs() < 0.01,
+            "只调原文字号却动了译文栏：{body_base} → {body}"
+        );
+
+        let mut big_body = Config::default();
+        big_body.ui.translation_font_scale = 2.0;
+        let (source, body) = body_heights(big_body);
+        assert!(
+            body > body_base * 1.5,
+            "译文字号放大一倍，译文栏内容高度几乎没变：{body_base} → {body}"
+        );
+        assert!(
+            (source - source_base).abs() < 0.01,
+            "只调译文字号却动了源文栏：{source_base} → {source}"
+        );
+    }
+
+    /// 字间距与行间距都要真的作用在正文上（用户 2026-10-28："字间距和行间距太小了，看起来有点乱"）。
+    /// 出厂默认还必须比"全 0"松，否则抱怨的就是默认档本身。
+    #[test]
+    fn letter_and_line_spacing_act_on_both_body_columns() {
+        let (source_base, body_base) = body_heights(Config::default());
+        let (source_flat, body_flat) = body_heights({
+            let mut cfg = Config::default();
+            cfg.ui.letter_spacing = 0.0;
+            cfg.ui.line_spacing = 0.0;
+            cfg
+        });
+        assert!(
+            source_base > source_flat && body_base > body_flat,
+            "默认档并不比字距/行距全 0 更松：源文 {source_flat}→{source_base}，译文 {body_flat}→{body_base}"
+        );
+
+        let (source_wide, body_wide) = body_heights({
+            let mut cfg = Config::default();
+            cfg.ui.letter_spacing = MAX_LETTER_SPACING;
+            cfg
+        });
+        assert!(
+            source_wide > source_base && body_wide > body_base,
+            "字间距拉满也没让正文变高（换行没吃到它）：源文 {source_base}→{source_wide}，译文 {body_base}→{body_wide}"
+        );
+
+        let (source_loose, body_loose) = body_heights({
+            let mut cfg = Config::default();
+            cfg.ui.line_spacing = MAX_LINE_SPACING;
+            cfg
+        });
+        assert!(
+            source_loose > source_base && body_loose > body_base,
+            "行间距拉满也没让正文变高：源文 {source_base}→{source_loose}，译文 {body_base}→{body_loose}"
         );
     }
 }

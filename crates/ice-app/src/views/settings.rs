@@ -7,7 +7,10 @@
 //! 输入框是 `password`，界面**不回显任何片段**（连后 4 位也不给），长度与哈希前缀只进日志。
 
 use egui::{self, Align, Layout, RichText};
-use ice_core::config::{AiProvider, MAX_UNFOCUSED_ALPHA, MIN_UNFOCUSED_ALPHA, Theme};
+use ice_core::config::{
+    AiProvider, MAX_LETTER_SPACING, MAX_LINE_SPACING, MAX_PANE_FONT_SCALE, MAX_UNFOCUSED_ALPHA,
+    MIN_LETTER_SPACING, MIN_LINE_SPACING, MIN_PANE_FONT_SCALE, MIN_UNFOCUSED_ALPHA, Theme,
+};
 use ice_core::history::HistoryStore;
 use ice_core::language::{EngineKind, Language};
 
@@ -413,6 +416,68 @@ fn appearance_group(ui: &mut egui::Ui, state: &mut AppState) {
                     .ui
                     .font_scale
                     .clamp(MIN_FONT_SCALE, MAX_FONT_SCALE);
+                state.mark_config_dirty();
+            }
+        });
+        row(ui, "正文 · 原文", |ui| {
+            if ui
+                .add(
+                    egui::Slider::new(
+                        &mut state.config.ui.source_font_scale,
+                        MIN_PANE_FONT_SCALE..=MAX_PANE_FONT_SCALE,
+                    )
+                    .text("字号")
+                    .fixed_decimals(1),
+                )
+                .changed()
+            {
+                state.mark_config_dirty();
+            }
+        });
+        row(ui, "正文 · 译文", |ui| {
+            if ui
+                .add(
+                    egui::Slider::new(
+                        &mut state.config.ui.translation_font_scale,
+                        MIN_PANE_FONT_SCALE..=MAX_PANE_FONT_SCALE,
+                    )
+                    .text("字号")
+                    .fixed_decimals(1),
+                )
+                .changed()
+            {
+                state.mark_config_dirty();
+            }
+        });
+        // 字间距/行间距各一条：分成两项而不是合成一个"排版"滑杆，因为用户给的原话是
+        // "字间距和行间距太小了"——两件事，分别调才调得出来（默认档已不是 0，见 config.rs）
+        row(ui, "排版", |ui| {
+            if ui
+                .add(
+                    egui::Slider::new(
+                        &mut state.config.ui.letter_spacing,
+                        MIN_LETTER_SPACING..=MAX_LETTER_SPACING,
+                    )
+                    .text("字间距")
+                    .suffix("px")
+                    .fixed_decimals(1),
+                )
+                .changed()
+            {
+                state.mark_config_dirty();
+            }
+            if ui
+                .add(
+                    egui::Slider::new(
+                        &mut state.config.ui.line_spacing,
+                        MIN_LINE_SPACING..=MAX_LINE_SPACING,
+                    )
+                    .text("行间距")
+                    .suffix("px")
+                    .fixed_decimals(1),
+                )
+                .changed()
+            {
                 state.mark_config_dirty();
             }
         });

@@ -6,7 +6,9 @@
 
 | 项 | 规定 |
 |---|---|
-| 基准字号 | 14px；`font_scale` 乘以全局缩放（0.8~2.0） |
+| 基准字号 | 14px；`font_scale` 乘以全局缩放（0.8~2.0）。**2026-10-28 变更 H 起，两栏正文在 `font_scale` 之上再各乘一档**：`source_font_scale` / `translation_font_scale`（各 0.8~2.0，默认 1.0），设置页外观分区各有滑杆；实现集中在 `theme::PaneText`，全量源文/译文与简洁输入带/译文带四个调用点共用同一处 |
+| 中文字形（2026-10-28 补，变更 H） | 界面中文**固定落在黑体-简**（`/System/Library/Fonts/STHeiti Medium.ttc` 的第 **1** 面，`fonts::install` 装成 `Proportional` 首族、在 `Monospace` 里排在 Hack 之后以保持拉丁等宽）。此前由系统逐字符解析，本机落到苹方，用户原话"字看上去有点发灰不舒服"——**这一条只换族，一个颜色都没动**（配色属尚未开工的主题包 #28）。文件读不到时回落系统解析并记 debug，界面照常可用 |
+| 字距与行距（2026-10-28 补，变更 H） | `config.ui.letter_spacing`（0~4px，默认 **0.5**）与 `config.ui.line_spacing`（0~16px，默认 **3.0**）作用于四个正文调用点，**默认档不许是用户抱怨的那个样子**，所以两项出厂非零。egui 0.37 没有单一入口：行距走 `Spacing::extra_text_line_spacing`（只有 TextEdit 自动吃）+ 每个 section 上的**绝对** `line_height`（传小了字形会被裁），字距要手工挂 `format.extra_letter_spacing`，TextEdit 那边只能经 `.layouter(...)` 塞进去 |
 | 栅格 | 8px 基准间距；容器内边距 16px；控件间 8px；分组间 16px |
 | 对齐 | 标签左对齐，数值/状态右对齐，按钮文字居中 |
 | 焦点环 | 键盘焦点可见（1px 描边），Tab 顺序与视觉顺序一致 |
