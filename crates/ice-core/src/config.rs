@@ -133,18 +133,6 @@ pub enum Theme {
     Dark,
 }
 
-impl Theme {
-    /// 悬浮窗那颗切换框单点循环的下一档（用户 2026-10-28：「浅色/深色/自动三种状态，
-    /// 自动在深色后」）。起点是默认值 `System`，所以「自动」点下去回到「浅色」。
-    pub const fn next(self) -> Self {
-        match self {
-            Theme::System => Theme::Light,
-            Theme::Light => Theme::Dark,
-            Theme::Dark => Theme::System,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -547,20 +535,6 @@ mod tests {
         assert!(cfg.ui.always_on_top);
         assert_eq!(cfg.ui.font_scale, 1.0);
         assert_eq!(cfg.translation.target, Language::ZhHans);
-    }
-
-    /// 悬浮窗切换框的单点循环：浅色 → 深色 → 自动 → 浅色（用户 2026-10-28 指定的顺序，
-    /// 「自动在深色后」）。三次点完必须回到原点，否则循环会漂到某一档出不去。
-    #[test]
-    fn theme_cycles_light_dark_system_and_back() {
-        assert_eq!(Theme::Light.next(), Theme::Dark);
-        assert_eq!(Theme::Dark.next(), Theme::System);
-        assert_eq!(Theme::System.next(), Theme::Light);
-        assert_eq!(
-            Theme::default().next().next().next(),
-            Theme::default(),
-            "默认档连点三次要回到默认档"
-        );
     }
 
     #[test]

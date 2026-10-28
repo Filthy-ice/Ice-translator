@@ -32,7 +32,7 @@ use crate::system::clipboard::CopyKind;
 use crate::system::hotkeys::SOURCE_EDITOR_ID;
 use crate::theme;
 
-use super::{Effects, engine_picker, full, toasts};
+use super::{Effects, engine_picker, full, theme_switch, toasts};
 
 /// 输入带的最小内容高度：一行 `TextEdit` 加上下内边距。
 /// REQ-012 里它是"两带均分不够时"的退让值——宁可译文带多拿，也不把输入框压到一行字以下。
@@ -223,102 +223,8 @@ fn band_frame<R>(
         .show(ui, add)
 }
 
-/// 主题切换框的宽度。`13px` 字号下"两个汉字 + 左右内边距"正好是这个数，于是三态
-/// （太阳 / 月亮 / 「自动」）占位一致——点到哪一档，右边那一排按钮都不会左右跳。
-/// 字号缩放时带文字的档位会更宽一些，`min_size` 只保证不会更窄。
-const THEME_TOGGLE_W: f32 = 42.0;
-
-/// 一段圆弧采样成折线（epaint 0.37 没有圆弧图元，只能自己按角度取点）
-fn arc_points(center: Pos2, radius: f32, from: f32, to: f32, steps: usize) -> Vec<Pos2> {
-    (0..=steps)
-        .map(|i| {
-            let angle = from + (to - from) * i as f32 / steps as f32;
-            center + Vec2::new(angle.cos(), angle.sin()) * radius
-        })
-        .collect()
-}
-
-/// 太阳：一圈描边的圆 + 八道光芒。全是线稿，与月亮同一套笔画粗细。
-///
-/// 不用 `☀` 这类字符：egui 自带字体里没有这些字形，真机上落成豆腐块
-/// （P4 缺陷 D-5 就是装饰字符 `⌗` 把界面画花的）。
-fn draw_sun(painter: &egui::Painter, at: Pos2, stroke: egui::Stroke) {
-    painter.circle_stroke(at, 3.6, stroke);
-    for index in 0..8 {
-        let angle = std::f32::consts::TAU * index as f32 / 8.0;
-        let dir = Vec2::new(angle.cos(), angle.sin());
-        painter.line_segment([at + dir * 5.4, at + dir * 7.6], stroke);
-    }
-}
-
-/// 月亮：月牙轮廓 = 外弧 + 内弧，两段弧共用两个尖端。
-///
-/// 只描边不填充：`PathShape` 的 `fill` 只支持凸多边形（`path_shape.rs:16`），月牙不是凸的，
-/// 填出来会画歪。外弧取整圆的左侧 230°，内弧的圆心右移 `BIAS`、半径取到同样穿过那两个
-/// 尖端，两弧之间剩下的就是月牙。
-fn draw_moon(painter: &egui::Painter, at: Pos2, stroke: egui::Stroke) {
-    const TIP: f32 = 65.0_f32.to_radians();
-    const R: f32 = 7.0;
-    const BIAS: f32 = 3.2;
-    const STEPS: usize = 20;
-    let inner_center = at + Vec2::new(BIAS, 0.0);
-    // `+y` 朝下，所以这是月牙朝下的那个尖端；它的极角就是内弧的端点角
-    let tip = at + Vec2::new(R * TIP.cos(), R * TIP.sin());
-    let offset = tip - inner_center;
-    let mut points = arc_points(at, R, TIP, std::f32::consts::TAU - TIP, STEPS);
-    points.extend(arc_points(
-        inner_center,
-        offset.length(),
-        std::f32::consts::TAU - offset.angle(),
-        offset.angle(),
-        STEPS,
-    ));
-    painter.add(egui::Shape::Path(egui::epaint::PathShape::closed_line(
-        points, stroke,
-    )));
-}
-
-/// 主题切换框（用户 2026-10-28：「左边加上 太阳/月亮 小图标切换框，标识浅色/深色模式…
-/// 点击三次自动切换为自动两个字」）。三态就是 `Theme::{Light, Dark, System}`，
-/// 单点顺序由 `config::Theme::next` 给出（浅色 → 深色 → 自动）；「自动」这一档
-/// 按用户的要求隐去图案、只显示「自动」两个字。
-///
-/// 写的是 `state.config.ui.theme` + 脏标记，与设置页同一个通道：生效在 `theme::apply`
-/// （`app.rs` 每帧调），view 不碰 `Context`。
-fn theme_toggle(ui: &mut egui::Ui, state: &mut AppState) -> Rect {
-    use ice_core::config::Theme;
-    let current = state.config.ui.theme;
-    let response = ui.add(
-        egui::Button::new(if current == Theme::System {
-            "自动"
-        } else {
-            ""
-        })
-        .min_size(Vec2::new(THEME_TOGGLE_W, 0.0)),
-    );
-    let response = match current {
-        Theme::Light => response.on_hover_text("当前：浅色（点一下切到深色）"),
-        Theme::Dark => response.on_hover_text("当前：深色（点一下切到自动）"),
-        Theme::System => response.on_hover_text("当前：自动跟随系统（点一下切到浅色）"),
-    };
-    if current != Theme::System {
-        let stroke = egui::Stroke::new(1.5, ui.visuals().widgets.inactive.fg_stroke.color);
-        let painter = ui.painter_at(response.rect);
-        match current {
-            Theme::Light => draw_sun(&painter, response.rect.center(), stroke),
-            Theme::Dark => draw_moon(&painter, response.rect.center(), stroke),
-            Theme::System => {}
-        }
-    }
-    if response.clicked() {
-        state.config.ui.theme = current.next();
-        state.mark_config_dirty();
-    }
-    response.rect
-}
-
-/// 动作行：「☀/☾/自动 / 复制 / 设置 / 机翻|AI —— 退出（钉右）」，
-/// 正常字号、正常按钮内边距，左排与「退出」之间剩下的真空白是第三块把手。
+/// 动作行：「复制 / 设置 / 机翻|AI —— 主题滑块（钉右）」，
+/// 正常字号、正常按钮内边距，左排与滑块之间剩下的真空白是第三块把手。
 ///
 /// 「置顶」那颗文字开关按用户 2026-10-28 的原话删掉了（"置顶不应该是文字，应该和大部分软件
 /// 一样，可以在标题栏最右侧有一个类似于钉子的图标"）。这一格现在由标题栏那颗图钉承担
@@ -331,10 +237,15 @@ fn theme_toggle(ui: &mut egui::Ui, state: &mut AppState) -> Rect {
 /// （`system::titlebar`，只在简洁窗改道）与 `Cmd+Shift+M`——**删的是按钮，不是能力**，
 /// hover 提示里那句快捷键也因此不能丢。
 ///
-/// 「退出」为什么单独钉到行的右边缘（用户 2026-10-28："悬浮窗退出放在右下角"）：它是这一行
-/// 唯一的"离开"动作，跟在左排最后一颗后面时和开关挤在一起（那次它后面还站着「置顶」）。
-/// 它在一条 `right_to_left` 子带里，子带的竖向范围取左排**实测**出来的那一格，
-/// 所以行高仍由左排决定。
+/// 「退出」这颗按钮同样按用户 2026-10-28 的原话删掉了（"悬浮时右下角也没必要有退出按钮，
+/// 我既然用悬浮窗了，大概率是长期使用了"）。**这一条删的确实是能力**，和上面两条不同：
+/// 悬浮窗上从此没有看得见的退出入口，剩下的路是设置页那颗 `退出`（REQ-011 的另一半）与
+/// `Cmd+Q`。变更 F 那次刚把它钉到右下角，这次那个位置让给了主题滑块。
+///
+/// 主题滑块钉在行的右边缘（用户 2026-10-28："悬浮时放在右下做成一个类似于开关左右推动的效果…
+/// 也在右下角"）。它和左排那些按钮不是一类东西——按钮按下去就变，滑块停在哪儿就是哪儿——
+/// 所以单独占一条 `right_to_left` 子带：子带的竖向范围取左排**实测**出来的那一格，
+/// 行高仍由左排决定；子带与左排之间那段空白留给把手。
 ///
 /// 高度不再 `exact_size`：这一行是自然高度，一行装得下就一行，装不下换行成两行。
 /// 它是 `Panel::bottom`，占掉的高度由 egui 从中央区里扣，`band_heights` 拿到的可用高
@@ -348,6 +259,8 @@ fn theme_toggle(ui: &mut egui::Ui, state: &mut AppState) -> Rect {
 /// 320 那一档「退出」掉到第二行，用户 2026-10-28 要求"按钮不允许换行"，抬到 400；
 /// 同日加了主题切换框后一度抬到 420，删掉「全量」那颗又回到 400），高度下限抬到 160
 /// （REQ-012 两带 1:1 摊开后，130 那一档译文带连两行字都放不下）。
+/// **下限不跟着控件数往下收**：这次又少了一颗按钮、多了一块更窄的滑块，按度量的需求宽度
+/// 降到 262px，`MIN_COMPACT_W` 仍按用户那句"按钮不允许换行"留在 400。
 fn action_row(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_available: bool) {
     let panel = egui::Panel::bottom("compact_bar").show(ui, |ui| {
         let available = ui.max_rect();
@@ -358,11 +271,6 @@ fn action_row(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai
         // 会恒得零宽（实测 560px 宽的窗里内容只到 x=220，min_rect 却报到 552）。
         let mut left = Rect::NOTHING;
         ui.horizontal_wrapped(|ui| {
-            // 行首的主题切换框（三态循环，见 `theme_toggle`）
-            let theme_box = theme_toggle(ui, state);
-            record(&ctx, "btn_theme", theme_box);
-            left = left.union(theme_box);
-
             let copy = ui.button("复制").on_hover_text("复制译文（Cmd+Shift+C）");
             record(&ctx, "btn_copy", copy.rect);
             left = left.union(copy.rect);
@@ -379,18 +287,15 @@ fn action_row(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai
 
             // 引擎分段与全量工具条共用同一个实现（REQ-005：AI 未配置时同样禁用并给说明）。
             // 不包 `ui.horizontal`：那种子 `Ui` 会把行尾剩下的宽度整个吃掉，
-            // 左排末尾就贴到面板右边、与钉右的「退出」之间不再有空白，把手没有立足之地。
+            // 左排末尾就贴到面板右边、与钉右的滑块之间不再有空白，把手没有立足之地。
             let engine = engine_picker(ui, state, effects, ai_available);
             record(&ctx, "engine", engine);
             left = left.union(engine);
         });
 
-        // REQ-011：退出要看得见。红灯/`Cmd+W` 是收进后台（FR-5.2），不是退出，
-        // 老用户在悬浮窗上找不到"到底怎么关干净"。点击走 `Action::Quit` 同一条路径。
-        //
         // 与 `full::bottom_bar` 同一手法：一块 `right_to_left` 子带钉住右边缘，子带只吃
-        // 左排那一格的高度，所以它不会把面板撑出第二行；两颗字也不允许被截断，故不给它
-        // `truncate`。子带的左端取左排的起点，中间那段空白留给把手。
+        // 左排那一格的高度，所以它不会把面板撑出第二行。子带的左端取左排的起点，
+        // 中间那段空白留给把手。
         let band = Rect::from_min_max(
             Pos2::new(left.min.x.max(available.min.x), left.min.y),
             Pos2::new(available.max.x, left.max.y),
@@ -400,21 +305,16 @@ fn action_row(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai
                 .max_rect(band)
                 .layout(Layout::right_to_left(Align::Center)),
         );
-        let quit = right
-            .button("退出")
-            .on_hover_text("退出程序（收进后台请用红灯，Cmd+W）");
-        record(&ctx, "btn_quit", quit.rect);
-        if quit.clicked() {
-            effects.quit = true;
-        }
+        let switch = theme_switch(&mut right, state, "compact");
+        record(&ctx, "btn_theme", switch);
 
-        let used = left.union(quit.rect);
+        let used = left.union(switch);
         record(&ctx, "actions", used);
-        // 把手吃的是左排与「退出」之间那段真的空白：两头各让开 4px，否则点按钮边缘
+        // 把手吃的是左排与滑块之间那段真的空白：两头各让开 4px，否则点按钮边缘
         // 会变成拖窗；挤到零宽时 `drag_handle` 自己跳过（宁少一块把手，也不压住按钮）
         let gap = Rect::from_min_max(
             Pos2::new(left.max.x + GAP_PADDING, used.min.y),
-            Pos2::new(quit.rect.min.x - GAP_PADDING, used.max.y),
+            Pos2::new(switch.min.x - GAP_PADDING, used.max.y),
         );
         record(&ctx, "bar_gap", gap);
         drag_handle(ui, "compact_handle_bar", gap, effects);
@@ -510,6 +410,7 @@ mod tests {
     use super::*;
     use crate::state::{Failure, KeyState};
     use crate::views::Effects;
+    use crate::views::{KNOB_RADIUS, theme_at, theme_slot};
     use ice_core::config::{Config, MIN_COMPACT_H, MIN_COMPACT_W, Theme};
     use ice_core::glossary::Glossary;
     use ice_core::language::EngineKind;
@@ -858,7 +759,7 @@ mod tests {
 
     /// 最小窗（`MIN_COMPACT_SIZE`，删掉「全量」那颗后回到 400×160）里两条带、动作行、所有按钮
     /// 与把手都必须待在窗口内，且互不重叠。
-    /// 这条锁的是 REQ-005 的"不溢出、不重叠"与 REQ-011 的"退出按钮也在窗内"：
+    /// 这条锁的是 REQ-005 的"不溢出、不重叠"与变更 J 的"右下角那颗主题滑块也在窗内"：
     /// v0.5 起动作行按默认字号排，装不下靠换行而不是压小
     /// （P4 的 D-1 是"断言全绿而按钮被裁出窗口"）。
     #[test]
@@ -879,7 +780,6 @@ mod tests {
             "btn_theme",
             "btn_copy",
             "btn_settings",
-            "btn_quit",
             "engine",
             "translation",
             "handle_tail",
@@ -900,7 +800,6 @@ mod tests {
             rect(&h.ctx, "btn_copy"),
             rect(&h.ctx, "btn_settings"),
             rect(&h.ctx, "engine"),
-            rect(&h.ctx, "btn_quit"),
             rect(&h.ctx, "bar_gap"),
         ];
         for (i, a) in row.iter().enumerate() {
@@ -934,12 +833,15 @@ mod tests {
     }
 
     /// 换行机制本身：宽度收到连"每个按钮的最小可点宽度"都放不下时，动作行要**换成两行**
-    /// 而不是溢出窗口。这条量的是 200px（低于合法下限，用户拉不到，但机制得在极端下也成立），
+    /// 而不是溢出窗口。这条量的是 150px（低于合法下限，用户拉不到，但机制得在极端下也成立），
     /// 只依赖与字体无关的 `interact_size.x`（40px）下限；合法下限处放不放得下一整行，
     /// 由 `the_action_row_stays_on_one_line_at_the_minimum_width` 按度量另锁一条。
+    ///
+    /// 那一格从 200px 降到 150px 是变更 J 的连带结果：左排少了一颗 `退出`（它原来钉在右边缘，
+    /// 换进来的滑块只有 40px），四颗按钮的最小可点宽 160 加间距在 200 里已经放得下一整行了。
     #[test]
     fn a_row_that_cannot_fit_wraps_instead_of_overflowing() {
-        let size = Vec2::new(200.0, 200.0);
+        let size = Vec2::new(150.0, 200.0);
         let mut h = Harness::new(size);
         let mut state = state();
         let mut effects = Effects::default();
@@ -1040,10 +942,11 @@ mod tests {
         let mut state = state();
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
-        let (input, tail, button) = (
+        let (input, tail, button, switch) = (
             rect(&h.ctx, "input"),
             rect(&h.ctx, "handle_tail"),
             rect(&h.ctx, "btn_copy"),
+            rect(&h.ctx, "btn_theme"),
         );
         let size = window().size();
 
@@ -1056,29 +959,33 @@ mod tests {
             !drag_probe(size, button.center()),
             "把手压住了按钮，点\"复制\"会变成拖窗"
         );
+        assert!(
+            !drag_probe(size, switch.center()),
+            "右下角那格滑块被当成把手，横向推它就变成拖窗了"
+        );
     }
 
-    /// 左排与「退出」中间那段空白才是把手（「退出」钉右之后行尾没有空位了）。
+    /// 左排与主题滑块中间那段空白才是把手（滑块钉右之后行尾没有空位了）。
     /// 只有在真的有空位时它才存在：窗口被压到连一整行按钮都放不下时
     /// （`the_action_row_stays_on_one_line_at_the_minimum_width` 管的就是不让这件事发生在合法
     /// 下限处），那里就没有把手，靠译文尾部那一块也还能拖。
     #[test]
-    fn the_blank_between_the_row_and_the_quit_button_is_a_handle() {
+    fn the_blank_between_the_row_and_the_theme_switch_is_a_handle() {
         let size = Vec2::new(560.0, 160.0);
         let mut h = Harness::new(size);
         let mut state = state();
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
         let gap = rect(&h.ctx, "bar_gap");
-        let quit = rect(&h.ctx, "btn_quit");
+        let switch = rect(&h.ctx, "btn_theme");
         let engine = rect(&h.ctx, "engine");
         assert!(
             gap.width() >= 20.0,
             "宽窗下中间那段空白应当留下把手：{gap:?}"
         );
         assert!(
-            gap.min.x >= engine.max.x && gap.max.x <= quit.min.x,
-            "把手跑出了\"左排之后、退出之前\"那一段：{gap:?}（引擎分段 {engine:?}、退出 {quit:?}）"
+            gap.min.x >= engine.max.x && gap.max.x <= switch.min.x,
+            "把手跑出了\"左排之后、滑块之前\"那一段：{gap:?}（引擎分段 {engine:?}、滑块 {switch:?}）"
         );
         assert!(drag_probe(size, gap.center()), "动作行中间的把手拖不动");
 
@@ -1156,83 +1063,123 @@ mod tests {
         );
     }
 
-    /// REQ-011：退出在悬浮窗上看得见、点得动。它只置一个意图，怎么落盘怎么关窗是 `app.rs` 的事
+    /// 变更 J（用户 2026-10-28："悬浮时右下角也没必要有退出按钮，我既然用悬浮窗了，
+    /// 大概率是长期使用了"）：悬浮窗那颗看得见的退出按钮下线。
+    ///
+    /// 这条量的是**没有**——那颗按钮的矩形根本不该被记下来。与变更 I 那条同构。
+    /// 与那两条"删的是文字不是能力"不同，这一条确实缩掉了悬浮窗上的可见入口：
+    /// 剩下的退出路径是设置页那颗 `退出`（REQ-011 的另一半）与 `Cmd+Q`。
     #[test]
-    fn the_quit_button_is_in_the_action_row() {
+    fn the_action_row_has_no_quit_button() {
         let mut h = Harness::new(window().size());
         let mut state = state();
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
-        h.click(
-            &mut state,
-            &mut effects,
-            false,
-            rect(&h.ctx, "btn_quit").center(),
+        assert!(
+            h.ctx
+                .data_mut(|d| d.get_temp::<Rect>(rect_id("btn_quit")))
+                .is_none(),
+            "悬浮窗动作行里还画着退出按钮——变更 J 要那个位置让给主题滑块"
         );
-        assert!(effects.quit, "点了\"退出\"没有置退出意图");
+        assert!(!effects.quit, "没有按钮却置了退出意图，退出通道被别处误触");
     }
 
-    /// 用户 2026-10-28："悬浮窗退出放在右下角"。右下角 = 行的右边缘（这一行就是窗口的最底一块），
-    /// 所以钉住的是两条：横向贴到内容区右边、纵向落在动作行那一格内。
+    /// 用户 2026-10-28 变更 J："悬浮时放在右下…也在右下角"。右下角 = 行的右边缘
+    /// （这一行就是窗口的最底一块），所以钉住的是两条：横向贴到内容区右边、
+    /// 纵向落在动作行那一格内。
     #[test]
-    fn the_quit_button_is_pinned_to_the_bottom_right() {
+    fn the_theme_switch_is_pinned_to_the_bottom_right() {
         let mut h = Harness::new(window().size());
         let mut state = state();
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
-        let quit = rect(&h.ctx, "btn_quit");
+        let switch = rect(&h.ctx, "btn_theme");
         let bar = rect(&h.ctx, "bar");
         let engine = rect(&h.ctx, "engine");
 
         assert!(
-            (bar.max.x - PANEL_X_MARGIN - quit.max.x).abs() <= 0.5,
-            "\"退出\"没贴到行的右边缘：{quit:?}（行 {bar:?}）"
+            (bar.max.x - PANEL_X_MARGIN - switch.max.x).abs() <= 0.5,
+            "主题滑块没贴到行的右边缘：{switch:?}（行 {bar:?}）"
         );
         assert!(
-            quit.min.y >= bar.min.y - 0.5 && quit.max.y <= bar.max.y + 0.5,
-            "\"退出\"跑出了动作行那一格，不在右下角：{quit:?}（行 {bar:?}）"
+            switch.min.y >= bar.min.y - 0.5 && switch.max.y <= bar.max.y + 0.5,
+            "主题滑块跑出了动作行那一格，不在右下角：{switch:?}（行 {bar:?}）"
         );
         assert!(
-            quit.min.x > engine.max.x,
-            "\"退出\"还跟在左排后面挨着，没有钉到右边：{engine:?} → {quit:?}"
+            switch.min.x > engine.max.x,
+            "主题滑块还跟在左排后面挨着，没有钉到右边：{engine:?} → {switch:?}"
         );
     }
 
-    /// 用户 2026-10-28："浅色/深色/自动三种状态，但是自动在深色后"——单点三次回到原点，
-    /// 每次点下去都置脏标记（生效与落盘由 `app.rs` 按脏标记做，view 不碰 `Context`）。
+    /// 主题滑块按指针落在轨道的哪一段选档（用户 2026-10-28："开关盖住太阳，露出月亮，就是暗色，
+    /// 如果盖住月亮，露出太阳就是浅色，在中间就是自动"）。三档写的是同一个 `config.ui.theme`，
+    /// 每次换档都要置脏标记（生效与落盘由 `app.rs` 按脏标记做，view 不碰 `Context`）。
     #[test]
-    fn the_theme_toggle_cycles_light_dark_auto_and_back() {
+    fn the_theme_switch_picks_the_slot_under_the_pointer() {
         let mut h = Harness::new(window().size());
         let mut state = state();
-        state.config.ui.theme = Theme::Light;
+        state.config.ui.theme = Theme::System;
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
-        let at = rect(&h.ctx, "btn_theme").center();
+        let track = rect(&h.ctx, "btn_theme");
 
-        let mut cycle = Vec::new();
-        for _ in 0..3 {
+        for (x, want) in [
+            (track.min.x + 2.0, Theme::Dark),
+            (track.center().x, Theme::System),
+            (track.max.x - 2.0, Theme::Light),
+        ] {
             state.config_dirty = false;
-            h.click(&mut state, &mut effects, false, at);
-            cycle.push(state.config.ui.theme);
+            h.click(
+                &mut state,
+                &mut effects,
+                false,
+                Pos2::new(x, track.center().y),
+            );
+            assert_eq!(
+                state.config.ui.theme, want,
+                "点轨道 {x:?} 那处没有落到 {want:?}"
+            );
             assert!(state.config_dirty, "改了主题没置脏标记，配置不会落盘");
         }
-        assert_eq!(
-            cycle,
-            [Theme::Dark, Theme::System, Theme::Light],
-            "单点顺序不是 浅色→深色→自动→浅色"
-        );
     }
 
-    /// 「自动」这一档隐去图案、只显示"自动"两个字（用户 2026-10-28 原话），
-    /// 另两档画的是矢量图案——图案一律不用 `☀`/`☾` 这类字符，egui 自带字体没有那些字形
+    /// 档位映射是纯函数，两条口径都在此锁住：
+    /// ① 三档对应轨道上的三个位置（0 = 左端盖住太阳、1 = 右端盖住月亮、中间自动）；
+    /// ② 换档要越过 0.25 / 0.75 那道线才发生——拖动途中指针在两档边界附近来回不会抖。
+    #[test]
+    fn the_slot_mapping_has_three_positions_with_hysteresis() {
+        assert_eq!(theme_slot(Theme::Dark), 0.0);
+        assert_eq!(theme_slot(Theme::System), 0.5);
+        assert_eq!(theme_slot(Theme::Light), 1.0);
+
+        for t in [0.0, 0.1, 0.24] {
+            assert_eq!(theme_at(t), Theme::Dark, "{t} 该算深色");
+        }
+        for t in [0.25, 0.4, 0.5, 0.6, 0.75] {
+            assert_eq!(theme_at(t), Theme::System, "{t} 该算自动");
+        }
+        for t in [0.76, 0.9, 1.0] {
+            assert_eq!(theme_at(t), Theme::Light, "{t} 该算浅色");
+        }
+        // 滑块位置与档位互逆：从任一档出发按它自己的位置取点，回来的还是它
+        for theme in [Theme::Light, Theme::Dark, Theme::System] {
+            assert_eq!(theme_at(theme_slot(theme)), theme, "{theme:?} 自相矛盾");
+        }
+    }
+
+    /// 三档都画太阳 + 月亮两枚矢量图案、都不带任何文字（用户 2026-10-28 变更 J：
+    /// "不需要提示，看到的人都懂"——变更 F 那档「自动」两字随之作废）。
+    /// 变的只有滑块圆心：左端 / 中间 / 右端。
+    ///
+    /// 图案一律不用 `☀`/`☾` 这类字符，egui 自带字体没有那些字形
     /// （P4 缺陷 D-5 就是装饰字符 `⌗` 落成豆腐块）。
     #[test]
-    fn the_auto_state_shows_two_characters_and_the_other_two_show_icons() {
+    fn all_three_states_show_both_icons_and_no_text() {
         let painted = |h: &mut Harness,
                        state: &mut AppState,
                        effects: &mut Effects,
                        theme: Theme|
-         -> (Vec<String>, Vec<String>) {
+         -> (Vec<String>, Vec<f32>, usize, usize) {
             state.config.ui.theme = theme;
             let bar = rect(&h.ctx, "bar");
             let shapes = h.step(state, effects, false, vec![]);
@@ -1245,47 +1192,63 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            let icons: Vec<String> = shapes
+            // 只认滑块**自己那一格**里的形状：整条动作行上还有一根横贯窗口的分隔线，
+            // 拿它当图案就算亮了。太阳那圈半径 3.6、月亮是折线 `Path`，所以半径 > 7 的
+            // 只有滑块那枚实心圆（它同时有一道描边，两条都算同一个圆心）。
+            let switch = rect(&h.ctx, "btn_theme");
+            let inside =
+                |shape: &egui::Shape| switch.contains(shape.visual_bounding_rect().center());
+            let circles: Vec<f32> = shapes
                 .iter()
                 .filter(|clipped| {
-                    // 只认切换框**自己那一格**里的矢量图形：整条动作行上还有一根横贯窗口的
-                    // 分隔线（`LineSegment`），拿它当图案就算亮了
-                    rect(&h.ctx, "btn_theme")
-                        .contains(clipped.shape.visual_bounding_rect().center())
-                        && matches!(
-                            &clipped.shape,
-                            egui::Shape::Circle(_)
-                                | egui::Shape::Path(_)
-                                | egui::Shape::LineSegment { .. }
-                        )
+                    inside(&clipped.shape)
+                        && matches!(&clipped.shape, egui::Shape::Circle(c) if c.radius > 7.0)
                 })
-                .map(|clipped| format!("{:?}", clipped.shape))
+                .map(|clipped| match &clipped.shape {
+                    egui::Shape::Circle(c) => c.center.x,
+                    _ => unreachable!(),
+                })
                 .collect();
-            (text, icons)
+            let suns = shapes
+                .iter()
+                .filter(|c| {
+                    inside(&c.shape)
+                        && matches!(&c.shape, egui::Shape::Circle(k) if (k.radius - 3.6).abs() < 0.1)
+                })
+                .count();
+            let moons = shapes
+                .iter()
+                .filter(|c| inside(&c.shape) && matches!(&c.shape, egui::Shape::Path(_)))
+                .count();
+            (text, circles, suns, moons)
         };
 
         let mut h = Harness::new(window().size());
         let mut state = state();
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
+        let switch = rect(&h.ctx, "btn_theme");
 
-        let (text, icons) = painted(&mut h, &mut state, &mut effects, Theme::Light);
-        assert!(!icons.is_empty(), "浅色档没画出太阳图案");
-        assert!(!text.iter().any(|t| t == "自动"), "浅色档还带着\"自动\"");
-
-        let (text, icons) = painted(&mut h, &mut state, &mut effects, Theme::Dark);
-        assert!(
-            icons.iter().any(|shape| shape.starts_with("Path(")),
-            "深色档没画出月亮图案：{icons:?}"
-        );
-        assert!(!text.iter().any(|t| t == "自动"), "深色档还带着\"自动\"");
-
-        let (text, icons) = painted(&mut h, &mut state, &mut effects, Theme::System);
-        assert!(icons.is_empty(), "自动档按用户要求要隐去图案：{icons:?}");
-        assert!(
-            text.iter().any(|t| t == "自动"),
-            "自动档没显示\"自动\"两个字：{text:?}"
-        );
+        for (theme, knob_x) in [
+            (Theme::Dark, switch.min.x + KNOB_RADIUS),
+            (Theme::System, switch.center().x),
+            (Theme::Light, switch.max.x - KNOB_RADIUS),
+        ] {
+            let (text, circles, suns, moons) = painted(&mut h, &mut state, &mut effects, theme);
+            assert!(
+                !text.iter().any(|t| t == "自动"),
+                "{theme:?} 档还带着\"自动\"两个字"
+            );
+            assert_eq!(
+                (suns, moons),
+                (1, 1),
+                "{theme:?} 档该同时画出太阳与月亮两枚图案，只是被盖住的那一枚看不出来"
+            );
+            assert!(
+                circles.iter().any(|x| (x - knob_x).abs() <= 0.6),
+                "{theme:?} 档的滑块没在 {knob_x:?}：实测圆心 {circles:?}（格 {switch:?}）"
+            );
+        }
     }
 
     #[test]
@@ -1415,16 +1378,15 @@ mod tests {
     ///   估成 15.6px 是往宽里偏，宁可把下限要求算高）
     /// - 每颗按钮加左右 `button_padding.x`，再抬到 egui 的 `interact_size.x` 下限上
     ///   （`Button` 的 `min_size` 与样式下限取大，"AI" 那颗实际是 40px 而不是 31.6px）
-    /// - 主题切换框量**实测**宽度，再与"两个汉字 + 内边距"取大：这一档显示的是「自动」，
-    ///   无头量不到中文字形，真机上它比 `THEME_TOGGLE_W` 更宽就要靠这个 `max` 兜住
+    /// - 主题滑块量**实测**宽度（`THEME_SWITCH_W` 是定值，控件里没有文字，字号缩放不影响它；
+    ///   变更 F 那一版还要跟"两个汉字 + 内边距"取大，是因为「自动」那两个字，现在没了）
     /// - 相邻两项加 `item_spacing.x`，面板再加左右各 8
     ///
-    /// 「退出」钉在右边缘之后，把手挪到左排与它中间那段空白，两头各要 `GAP_PADDING`，
-    /// 所以宽度需求比"行尾留 4px"那一版又多 4px。
+    /// 滑块钉在右边缘之后，把手挪到左排与它中间那段空白，两头各要 `GAP_PADDING`。
     ///
     /// 按钮文字从**这一帧真的画出来的**文字形状里取：改了文案、加了按钮，这条跟着变。
-    /// 跑在 `Theme::Light`（图案档，框内没有文字）下，文字清单才仍然是那五颗按钮
-    ///（变更 I 之前是六颗：那颗「置顶」换成标题栏图钉后从这一行消失了）。
+    /// 变更 J 之后是四颗——`退出` 也从这一行消失了，它原来那个位置让给了滑块，
+    /// 而滑块自己不产文字（变更 I 之前是六颗：那颗「置顶」换成标题栏图钉后先少了一颗）。
     #[test]
     fn the_action_row_stays_on_one_line_at_the_minimum_width() {
         let mut h = Harness::new(window().size());
@@ -1438,7 +1400,7 @@ mod tests {
         let labels: Vec<String> = shapes
             .iter()
             .filter_map(|clipped| match &clipped.shape {
-                // 空文字也要滤掉：主题框在图案档是"没有内容的按钮"，egui 仍然为它排了一个空 galley
+                // 空文字也要滤掉：滑块那一格里 egui 仍可能排一个空 galley
                 egui::Shape::Text(text)
                     if text.pos.y >= bar.min.y && !text.galley.text().is_empty() =>
                 {
@@ -1449,7 +1411,7 @@ mod tests {
             .collect();
         assert_eq!(
             labels,
-            ["复制", "设置", "机翻", "AI", "退出"],
+            ["复制", "设置", "机翻", "AI"],
             "动作行的按钮与文档记的不一致，下面的宽度就得重算"
         );
 
@@ -1463,21 +1425,20 @@ mod tests {
             (text + 2.0 * style.spacing.button_padding.x).max(style.spacing.interact_size.x)
         };
         let items: Vec<f32> = labels.iter().map(|label| per_button(label)).collect();
-        let toggle_px = rect(&h.ctx, "btn_theme")
-            .width()
-            .max(2.0 * px + 2.0 * style.spacing.button_padding.x);
+        let switch_px = rect(&h.ctx, "btn_theme").width();
         let needed = items.iter().sum::<f32>()
-            + toggle_px
+            + switch_px
             + items.len() as f32 * style.spacing.item_spacing.x
             + 2.0 * PANEL_X_MARGIN
             + 2.0 * GAP_PADDING;
 
         // 两头自校：① 这套按度量的算法是**往宽里偏**的估计（汉字算满 1em、拉丁按 0.6em 估），
-        // 所以它只能证明"合法下限放得下"，不能反过来说"比它窄一像素就该换行"——
-        // 真布局在 313 那一档照样装得下一行。换行机制本身由
-        // `a_row_that_cannot_fit_wraps_instead_of_overflowing` 在 200px 那里锁住。
-        // ② 原来那条"必须解释 320 那一档那次换行"的历史判据跟着置顶按钮一起退休了：
-        // 少了一整颗按钮之后一行只要 314px，320 已经装得下，再拿它当溢出证据就成了假话。
+        // 所以它只能证明"合法下限放得下"，不能反过来说"比它窄一像素就该换行"。
+        // 换行机制本身由 `a_row_that_cannot_fit_wraps_instead_of_overflowing` 在 150px 那里锁住。
+        // ② 原来那条"必须解释 320 那一档那次换行"的历史判据跟着置顶按钮一起退休了。
+        // ③ 需求宽度从变更 I 那一版的 314px 降到这里（少一整颗 `退出`，右边缘那块滑块只有
+        //    定值的 40px），但 `MIN_COMPACT_W` **不跟着收**——用户 2026-10-28 那句
+        //    "按钮不允许换行"要的是真机上中文变宽也仍然放得下一行；控件数变少不是收回下限的理由。
         let row = rect(&h.ctx, "actions");
         assert!(
             row.height() < 40.0,
@@ -1488,6 +1449,11 @@ mod tests {
             needed <= window().width(),
             "最窄简洁窗放不下动作行：需要 {needed}，可用 {:?}",
             window().width()
+        );
+        assert!(
+            (needed - 262.0).abs() <= 1.0,
+            "按度量的需求宽度变了：{needed}（文档 03 §3 末段与 `07-acceptance.md` 记的是 262px）——\
+             改了文案、加减了控件或动了间距就要把那两处一起改"
         );
     }
 }
