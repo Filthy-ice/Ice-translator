@@ -21,6 +21,10 @@ pub const KEY_INPUT_ID: &str = "ai_key_input";
 const FIELD_WIDTH: f32 = 320.0;
 
 pub fn show(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_available: bool) {
+    // 记下页面真正分到的可视矩形，供 `tests` 判断按钮是否躲进了折叠区：
+    // `ScrollArea` 会把超出的内容照排在下面，控件矩形因此可以合法地跑出窗口，
+    // 光看"在不在窗口里"测不出这个。
+    record(ui.ctx(), "panel", ui.max_rect());
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -613,10 +617,16 @@ mod tests {
     }
 
     /// 点击要跨帧：命中测试用的是**上一帧**的控件矩形，所以 `ctx` 得留着连跑几帧，
-    /// 不能像 `render` 那样一帧一个新建的 Context
+    /// 不能像 `render` 那样一帧一个新建的 Context。
+    ///
+    /// 画的是 `crate::views::show` 那条真机路径（工具条 + 状态条 + `CentralPanel`），
+    /// 不是直接调 `settings::show`：这两颗按钮的契约是"在窗口里找得到"，而真实窗口在
+    /// 页面之前先扣掉工具条、状态条和 `CentralPanel` 上下各 8px 内边距。直接调页函数
+    /// 等于白送这一百来像素，高度不够导致按钮躲进折叠区这件事就永远测不出来。
     struct Harness {
         ctx: egui::Context,
         size: egui::Vec2,
+        history: HistoryStore,
     }
 
     impl Harness {
@@ -624,16 +634,30 @@ mod tests {
             Self {
                 ctx: egui::Context::default(),
                 size,
+                // 只借它的 `path` 显示用：设置页不读不写历史，`at` 也不碰磁盘
+                history: HistoryStore::at(std::env::temp_dir().join("ice-app-settings-test.jsonl")),
             }
         }
 
+        /// 页面在窗口里实际分到的矩形：真机扣掉工具条 + 状态条 + `CentralPanel` 内边距之后
+        /// 剩下的那块，由 `settings::show` 自己记下，测试只负责读。
+        fn panel(&self) -> egui::Rect {
+            self.ctx
+                .data_mut(|d| d.get_temp::<egui::Rect>(rect_id("panel")))
+                .unwrap_or_else(|| panic!("没有记下 CentralPanel 的矩形"))
+        }
+
         fn step(&mut self, state: &mut AppState, effects: &mut Effects, events: Vec<egui::Event>) {
+            state.tab = crate::state::Tab::Settings;
             let raw = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.size)),
                 events,
                 ..Default::default()
             };
-            let output = self.ctx.run_ui(raw, |ui| show(ui, state, effects, false));
+            let history = &self.history;
+            let output = self.ctx.run_ui(raw, |ui| {
+                crate::views::show(ui, state, effects, history, false);
+            });
             output.drop_without_applying_deltas();
         }
 
@@ -689,8 +713,34 @@ mod tests {
         );
     }
 
-    /// 全量窗最小宽度（640×420，`config::MIN_FULL_*`）下两颗按钮仍要在窗内。
-    /// REQ-011 的动机就是"看不见等于没有"，被裁出窗口的那颗和没有是同一回事。
+    /// 默认尺寸（`UiConfig::default()` 那个 1080×720，也就是「恢复默认窗口尺寸」按下去的落点）
+    /// 下两颗按钮要在**不滚动**就能看到的区域里。
+    /// REQ-011 的动机就是"看不见等于没有"，用户 2026-10-28 那句"设置里也没有啊，还有回复
+    /// 默认窗口尺寸也没有啊"找的正是这个：日常尺寸不该要人先滚一段才知道有退出入口。
+    #[test]
+    fn the_window_group_buttons_are_visible_without_scrolling_at_the_default_size() {
+        let defaults = Config::default();
+        let mut h = Harness::new(egui::vec2(defaults.ui.full_rect.w, defaults.ui.full_rect.h));
+        let mut state = state();
+        let mut effects = Effects::default();
+        h.warm(&mut state, &mut effects);
+
+        let panel = h.panel();
+        for salt in ["btn_reset", "btn_quit"] {
+            let rect = h.rect(salt);
+            assert!(
+                panel.contains_rect(rect),
+                "{salt} 躲在下半页：{rect:?} 不在可视区 {panel:?} 内"
+            );
+        }
+    }
+
+    /// 全量窗最小尺寸（640×420，`config::MIN_FULL_*`）下两颗按钮仍要留在窗口里。
+    /// 这一档**允许**靠滚动够到（`ScrollArea` 就是为此存在），不许的是像缺陷 D-1 那样
+    /// 被某个面板整个裁掉：出了窗口的控件连命中测试都没有，点不到也滚不到。
+    ///
+    /// 可视区在这里已经不够装下整页（实测「退出程序」的下沿差 1px 出界），所以这条
+    /// 断言刻意用窗口矩形而不是可视区——默认尺寸那条负责"不滚动就看见"。
     #[test]
     fn the_window_group_buttons_survive_the_narrowest_full_window() {
         let size = egui::vec2(640.0, 420.0);
