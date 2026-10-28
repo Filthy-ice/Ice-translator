@@ -83,10 +83,10 @@ ice-app  ──►  ice-providers  ──►  ice-core
 
 ```bash
 cargo check --workspace                 # 快速全量类型检查
-cargo test  --workspace                 # 全部单元测试（2026-10-28 起 394 项通过 + 4 项 ignore）
+cargo test  --workspace                 # 全部单元测试（2026-10-28 起 395 项通过 + 4 项 ignore）
 cargo test  -p ice-core                 # 只测领域层（53 项）
 cargo test  -p ice-providers            # 只测引擎层（61 项，HTTP 走本地假服务，不联网）
-cargo test  -p ice-app                  # 只测界面层（280 项，无头跑帧，不碰网络/剪贴板/钥匙串）
+cargo test  -p ice-app                  # 只测界面层（281 项，无头跑帧，不碰网络/剪贴板/钥匙串）
 cargo test  --workspace -- --ignored    # 跑需要真实网络/真机的集成测试
 cargo test  -p ice-providers --test live -- --ignored --nocapture machine
                                         # 只验机翻真实端点（MyMemory，无需 Key）
@@ -170,6 +170,7 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 
 | 主题 | macOS | Windows / Linux |
 |---|---|---|
+| 应用图标（Dock / 任务栏） | macOS **没有"窗口图标"**：winit 的 `set_window_icon` 是空实现（`platform_impl/macos/window_delegate.rs:1541`）。能改 Dock 磁贴的只有 `NSApplication.setApplicationIconImage`，而 eframe 0.37 已经帮你调了——前提是 `NativeOptions::viewport.icon` 有值；**不设就退回 eframe 自带的 egui logo**（`native/epi_integration.rs:506`），这就是"图标定稿了但 Dock 还是不对"的根因。见 `main::app_icon`：`include_bytes!` 编进二进制 + 启动时降采样到 256（Dock 磁贴最大约 128pt，视网膜 2x 到顶；不解这一下会在启动帧多占约 8MB RGBA）。**Dock 上那行名字改不了**（eframe 注释明确），要连名字、Finder 图标、`.icns` 一起解决就得做真正的 `.app` bundle。 | Windows 走同一项：eframe 用 `WM_SETICON` 设大小两枚 HICON；Linux 靠窗口图标 |
 | OCR | Vision 框架，本地零下载 | v1 不提供，界面明确提示 |
 | 置顶窗口 | `NSWindow.setLevel` / egui `always_on_top` | 各自 API，egui 已封装 |
 | 监视器可用区 | egui 的 `ctx.available_rect` 不够（不含菜单栏/Dock 的扣除），走 `system/screen.rs`：objc2 直取 `NSScreen.visibleFrame` 再翻坐标。依赖刻意关掉 default features（`objc2-app-kit` 的 default 会打开 ~283 个模块、拖进六个 Apple 绑定 crate），只开 `NSScreen`/`NSGeometry`。**两条口径不要用混**：停靠/吸附/唤出要的是所有屏可见区的**并集**（`desktop()`，桌面的外缘才是"边"，两块屏中间的接缝不是——按单屏算会把窗口藏进接缝，缺陷 D-8）；离屏夹回要的是窗口所在**单屏**（`work_area()`）。 | 非 macOS 编译不到这段：`screen.rs` 有回退路径，取不到可用区时**不做夹回**（宁可不动，也不把窗口甩到别处） |

@@ -133,6 +133,34 @@ fn config_dir() -> Result<PathBuf, CoreError> {
     Config::config_dir()
 }
 
+/// 应用图标（2026-10-28 定稿的 `assets/icon/icon-1024.png`），随二进制一起编进来。
+const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/icon/icon-1024.png");
+
+/// 交给 Dock 的边长。Dock 磁贴最大约 128pt，视网膜下 256px 就到顶，再大只是白占内存。
+const APP_ICON_PX: u32 = 256;
+
+/// 把图标解成 eframe 要的 RGBA，并降采样到 [`APP_ICON_PX`]。
+///
+/// 为什么非要这一项：**不设的话 eframe 退回它自己 `data/icon.png`——那张黑底白 `e`
+/// 是 egui 的 logo**（`native/epi_integration.rs:506`），这就是"图标定下了但 Dock 还是不对"
+/// 的根因。macOS 上没有"窗口图标"这个东西（winit 的 `set_window_icon` 是空实现，
+/// `platform_impl/macos/window_delegate.rs:1541`），能改 Dock 磁贴的只有
+/// `NSApplication.setApplicationIconImage`，而 eframe 只在 `viewport.icon` 有值时去调它。
+///
+/// 为什么不直接把 1024 那张交出去：`from_png_bytes` 会解成 4MB RGBA，而 eframe 下发时
+/// `IconDataExt::to_image` 又 clone 一份，启动那一帧白占约 8MB。降采样后是 256KB。
+fn app_icon() -> Option<egui::IconData> {
+    let image = image::load_from_memory(APP_ICON_PNG).ok()?.into_rgba8();
+    let size = APP_ICON_PX.min(image.width().min(image.height()));
+    let resized =
+        image::imageops::resize(&image, size, size, image::imageops::FilterType::Lanczos3);
+    Some(egui::IconData {
+        width: resized.width(),
+        height: resized.height(),
+        rgba: resized.into_raw(),
+    })
+}
+
 /// 拿不到锁就退出：不建窗口、不写文件（REQ-009）
 fn acquire_lock(dir: &Path) -> InstanceLock {
     match single_instance::acquire(dir) {
@@ -182,7 +210,9 @@ fn main() {
         prepared.key,
         prepared.notice,
     );
-    let viewport = mode::initial_viewport(&state.config.ui);
+    let mut viewport = mode::initial_viewport(&state.config.ui);
+    // Dock 磁贴（macOS）/ 任务栏（Windows）走这一项，缺省会显示成 egui 的 logo，见 `app_icon`
+    viewport.icon = app_icon().map(std::sync::Arc::new);
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -235,6 +265,22 @@ mod tests {
     /// 测试一律用临时目录里的历史文件：`open_default()` 会碰到用户真实的历史
     fn history_in(dir: &Path) -> Result<HistoryStore, CoreError> {
         Ok(HistoryStore::at(dir.join("history.jsonl")))
+    }
+
+    #[test]
+    fn the_embedded_app_icon_survives_decode_and_is_downscaled_for_the_dock() {
+        let icon = app_icon().expect("assets/icon/icon-1024.png 解不出来");
+        assert_eq!(icon.width, icon.height, "Dock 磁贴是方的，源图也得是方的");
+        assert_eq!(icon.width, APP_ICON_PX);
+        assert_eq!(
+            icon.rgba.len(),
+            (APP_ICON_PX * APP_ICON_PX * 4) as usize,
+            "RGBA 缓冲必须与边长吻合，否则 eframe 建 NSBitmapImageRep 会错位"
+        );
+        assert!(
+            icon.rgba.iter().step_by(4).skip(200).any(|&a| a == 0),
+            "图标四角本该是透明的；整张不透明说明源图被换成了带底色的方图"
+        );
     }
 
     #[test]
