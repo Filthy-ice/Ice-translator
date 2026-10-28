@@ -123,3 +123,27 @@ Spec-Hash: 00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
 
 - 2026-10-28T07:25:31+00:00 V-008 **passed** VERIFIED_CODE/local
   argv=["bash", "-c", "! grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates"] exit=0；附件：evidence/0040-V-008.txt；Spec：00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
+
+- 2026-10-28T08:04:18+00:00 V-001 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "--workspace"] exit=0；附件：evidence/0041-V-001.txt；Spec：00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
+
+- 2026-10-28T08:04:21+00:00 V-002 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-core"] exit=0；附件：evidence/0042-V-002.txt；Spec：00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
+
+- 2026-10-28T08:04:22+00:00 V-003 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-app"] exit=0；附件：evidence/0043-V-003.txt；Spec：00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
+
+- 2026-10-28T08:04:23+00:00 V-004 **passed** VERIFIED_CODE/local
+  argv=["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"] exit=0；附件：evidence/0044-V-004.txt；Spec：00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
+
+- 2026-10-28T08:04:23+00:00 V-005 **passed** VERIFIED_CODE/local
+  argv=["cargo", "fmt", "--all", "--", "--check"] exit=0；附件：evidence/0045-V-005.txt；Spec：00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
+
+- 2026-10-28T08:04:23+00:00 V-006 **passed** VERIFIED_CODE/local
+  argv=["python3", "-B", "tools/check_traceability.py"] exit=0；附件：evidence/0046-V-006.txt；Spec：00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
+
+- 2026-10-28T08:04:23+00:00 V-007 **passed** VERIFIED_CODE/local
+  argv=["./sdd", "scan"] exit=0；附件：evidence/0047-V-007.txt；Spec：00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577
+
+- 2026-10-28T08:04:24+00:00 V-008 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "! grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates"] exit=0；附件：evidence/0048-V-008.txt；Spec：00de0e1d123cadd16c7994cd9c3524a85fb801a68dc85d75c609416199b76577

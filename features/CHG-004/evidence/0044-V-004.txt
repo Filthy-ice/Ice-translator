@@ -1,0 +1,3 @@
+
+    Checking ice-app v0.1.0 (/Users/filthy-ice/Desktop/my-translator/Ice-translator/crates/ice-app)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.91s
