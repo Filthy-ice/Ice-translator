@@ -57,7 +57,12 @@ tempfile = "3"
 # `NSCell` 是 `NSCellImagePosition::ImageOnly`；`NSColor` 是 `contentTintColor` 那支系统蓝。
 # `objc2-core-foundation` 不是可选项：`NSWindow::setAlphaValue:` 的参数类型是 `CGFloat`，
 # objc2-app-kit 把带 CGFloat 的方法整体关在这个 feature 后面，不开就连方法都看不到。
+# 再加一个 `block2` feature（**不是模块名，是那条特性**）：双击标题栏（任务 #25，见
+# `system::dblclick`）唯一能"既看到又拦下"的位置是 `+addLocalMonitorForEventsMatchingMask:handler:`，
+# 而它接的是 ObjC block——`NSEvent.rs:1174` 那条重载整个 `#[cfg(feature = "block2")]`，
+# 不开就只剩一个收 `DynBlock` 之外的版本都没有，方法直接看不到。
 objc2 = "0.6"
+block2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSScreen",
     "NSView",
@@ -65,6 +70,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSButton",
     "NSControl",
     "NSEvent",
+    "block2",
     "NSTitlebarAccessoryViewController",
     "NSViewController",
     "NSResponder",

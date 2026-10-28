@@ -237,6 +237,13 @@ pub struct AppState {
     pub quitting: bool,
     /// 窗口当前是否处于隐藏/最小化态
     pub hidden: bool,
+    /// 窗口当前是不是被"双击标题栏"铺满了整块屏（任务 #25）。
+    ///
+    /// **运行时状态，不落盘**：铺满是这一屏这一次观看的临时姿势，重启后回到 `full_rect`
+    /// 才是"记住位置尺寸"（FR-3.6）。它同时是 `mode::capture` 的抑制开关——铺满期间实时
+    /// 几何就是整屏，让它写进 `full_rect` 就等于把 D-6/D-10 那一类缺陷换个入口重犯一遍：
+    /// 还原时已经没有"铺满之前的尺寸"可回了。
+    pub filled: bool,
     /// 有配置改动待落盘
     pub config_dirty: bool,
     /// 设置页里正在编辑的 Key 明文缓冲。只在内存，退出前不清空也不落盘、不进日志。
@@ -277,6 +284,7 @@ impl AppState {
             confirm: None,
             quitting: false,
             hidden: false,
+            filled: false,
             config_dirty: false,
             key_input: String::new(),
         }
