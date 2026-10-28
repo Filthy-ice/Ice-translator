@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 use crate::jobs::{self, JobRunner, OutcomeReceiver};
 use crate::mode;
 use crate::state::{self, AppState, KeyState, Tab, Tone};
+use crate::system::alpha;
 use crate::system::clipboard::{self, CopyKind};
 use crate::system::hotkeys::{self, Action};
 use crate::system::screen;
@@ -110,6 +111,11 @@ pub struct IceApp {
     clipboard_watch: clipboard::Watcher,
     /// 启动后的离屏校验跑过了没有（REQ-009）。一次就够：`screen::work_area` 要走 NSScreen。
     geometry_rescued: bool,
+    /// 上一帧量到的窗口内尺寸与装饰条厚度（缺陷 D-14 的取证，见 `trace_geometry`）
+    geometry_seen: Option<(egui::Vec2, f32)>,
+    /// 上一帧下到原生层的整窗不透明度（FR-3.7，见 `apply_native_alpha`）。
+    /// `None` = 还没下过或上一次没走通。
+    native_alpha: Option<f32>,
 }
 
 impl IceApp {
@@ -157,6 +163,8 @@ impl IceApp {
             pending_geometry: mode::PendingGeometry::default(),
             clipboard_watch: clipboard::Watcher::default(),
             geometry_rescued: false,
+            geometry_seen: None,
+            native_alpha: None,
         }
     }
 
@@ -355,6 +363,7 @@ impl IceApp {
     /// 层级也在这里对齐：停靠边的唯一改动入口就是它，吸附落位要升到置顶层级
     /// （AppKit 的 `.floating`，Q-012），解除停靠要降回用户的置顶开关，两处都不用等到下一帧。
     fn place_compact(&mut self, ctx: &egui::Context, position: Pos2, edge: DockEdge) {
+        tracing::debug!(x = position.x, y = position.y, ?edge, "下发窗口原点");
         ctx.send_viewport_cmd(ViewportCommand::OuterPosition(position));
         // 记下这次是"自己要求的移动"，`observe_native_move` 在它落地前不认成用户拖动
         self.commanded = Some(position);
@@ -441,6 +450,7 @@ impl IceApp {
         let was_pending = self.pending_geometry.is_pending();
         mode::capture(ctx, &mut self.state, &mut self.pending_geometry);
         if let Some(target) = self.pending_geometry.take_retry() {
+            tracing::debug!(w = target.x, h = target.y, "尺寸未落定，重发尺寸与原点请求");
             for command in mode::resend_commands(&self.state.config.ui, self.state.mode(), target) {
                 ctx.send_viewport_cmd(command);
             }
@@ -450,6 +460,82 @@ impl IceApp {
         if was_pending && !self.pending_geometry.is_pending() {
             self.flush_config(true);
         }
+    }
+
+    /// 缺陷 D-14 的取证（用户 2026-10-28："拖动时候变大，停下后又恢复原来的大小"，屏幕中间
+    /// 也这样，两种形态都中招）。
+    ///
+    /// 静态读代码排除了我们自己：`InnerSize` 全应用只有两个发出处——形态切换那组命令
+    /// （`commands_for_mode`）与切换未落定时的一次重发（`resend_commands`），拖动落定后的
+    /// 吸附只发 `OuterPosition`，而那条路径对全量窗连吸附都不做（`apply_snap` 拿 `area=None`
+    /// 直接落盘返回）。所以要看的是现场：**实测内尺寸到底动没动**。
+    ///
+    /// 两件事分别对应两种"看起来变大"：
+    /// - `dw`/`dh` 非零 = 窗口内容区真的被改大了（谁改的？不是我们，就是原生层）。
+    /// - `chrome` 变了 = 外框与内框的差（标题栏那条装饰）在跳，整窗因此变大。
+    ///
+    /// 只记数字，不记路径也不记任何用户内容（NFR-3）。挂在 `debug` 级：默认 `info` 不输出，
+    /// 排查时用 `RUST_LOG=ice_translator=debug` 打开。
+    fn trace_geometry(&mut self, ctx: &egui::Context) {
+        let (inner, outer) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().outer_rect));
+        let (Some(inner), Some(outer)) = (inner, outer) else {
+            return;
+        };
+        let size = inner.size();
+        let chrome = outer.height() - inner.height();
+        let previous = self.geometry_seen.replace((size, chrome));
+        let Some((before, before_chrome)) = previous else {
+            tracing::debug!(
+                mode = ?self.state.config.ui.mode,
+                w = size.x,
+                h = size.y,
+                chrome = chrome,
+                x = outer.min.x,
+                y = outer.min.y,
+                "窗口几何基线"
+            );
+            return;
+        };
+        if (before - size).length() <= 0.5 && (before_chrome - chrome).abs() <= 0.5 {
+            return;
+        }
+        tracing::debug!(
+            mode = ?self.state.config.ui.mode,
+            w = size.x,
+            h = size.y,
+            dw = size.x - before.x,
+            dh = size.y - before.y,
+            chrome = chrome,
+            dchrome = chrome - before_chrome,
+            x = outer.min.x,
+            y = outer.min.y,
+            "窗口几何变化"
+        );
+    }
+
+    /// 把整窗不透明度下到位（FR-3.7），返回**原生层是否接住了这一档**。
+    ///
+    /// 为什么放在帧循环而不是视图里：`views::compact` 只管画，够不着 `eframe::Frame`；
+    /// 而"窗口该多透明"是形态 + 焦点 + 配置三件事的判定，帧循环本来就同时拿着这三样
+    /// （见 `ui` 里的那次 `mode::dim_alpha`）。
+    ///
+    /// 返回 false 时缓存写成 `None`，下一帧重试：第一帧可能还拿不到窗口句柄
+    /// （eframe 建窗与首个 pass 的先后不由我们决定），一次失败不能永久退回。
+    fn apply_native_alpha(&mut self, frame: &eframe::Frame, want: f32) -> bool {
+        if !needs_alpha_update(self.native_alpha, want) {
+            return true;
+        }
+        let applied = alpha::set(frame, want);
+        self.native_alpha = applied.then_some(want);
+        // 值真的变了才记：这条是"标题栏到底有没有跟着淡"的唯一现场证据——无头测试拿不到
+        // 窗口句柄，走没走到原生层只能在这里看。失败侧只警告一次（`needs_alpha_update`
+        // 对失败不缓存，每帧都会重试，逐次打日志会刷屏，与 `system::screen` 同一手法）。
+        if applied {
+            tracing::debug!(alpha = want, native = true, "整窗不透明度下发");
+        } else if !ALPHA_FALLBACK_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!("原生整窗不透明度下不发，失焦只淡窗内底色（标题栏不会跟着淡）");
+        }
+        applied
     }
 
     /// 启动后的离屏校验（REQ-009）：盘上记的几何整块落在当前可用区之外（外接屏拔掉、
@@ -916,6 +1002,19 @@ fn reason_text(state: &KeyState) -> String {
     }
 }
 
+/// 原生整窗 alpha 走不通的警告只发一次（回退本身每帧都要重试，见 `needs_alpha_update`）。
+static ALPHA_FALLBACK_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 这一档不透明度要不要真的下发给窗口服务器（`apply_native_alpha` 的判定核心，抽出来才能无头断言）。
+///
+/// `applied` 是上一帧**成功**下到的值，`None` 表示还没下过或上次没走通。相同就跳过：
+/// `setAlphaValue:` 一旦每帧都发，AppKit 每帧都会把整个窗口标脏重合成一遍，
+/// 空闲 CPU 直接顶穿 NFR-2 的 1% 上限——悬浮窗停在桌面上不动时也应该几乎不耗电。
+fn needs_alpha_update(applied: Option<f32>, want: f32) -> bool {
+    applied != Some(want)
+}
+
 /// 按当前配置装配引擎：机翻恒在，AI 只在"配置齐备且拿到了 Key"时注册（REQ-005、R-4）。
 pub fn build_translator(config: &Config, key: Option<String>) -> Translator {
     let mut translator = Translator::new();
@@ -936,7 +1035,7 @@ impl eframe::App for IceApp {
         self.poll_clipboard(ctx, clipboard::read);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         theme::apply(&ctx, &self.state.config.ui);
 
@@ -960,27 +1059,38 @@ impl eframe::App for IceApp {
         }
 
         self.refresh_geometry(&ctx);
+        self.trace_geometry(&ctx);
         self.settle_drag(&ctx, || screen::desktop(&ctx));
         self.watch_dock(&ctx, || screen::desktop(&ctx));
         self.rescue_offscreen(&ctx, |outer| screen::work_area(&ctx, outer));
 
         let ai_available = self.ai_available();
         match self.state.mode() {
-            UiMode::Full => views::show(
-                ui,
-                &mut self.state,
-                &mut effects,
-                &self.history,
-                ai_available,
-            ),
+            UiMode::Full => {
+                // 全量窗永不半透明（REQ-007 第四条），但这一档要在这里显式写回 100%：
+                // 上一帧可能正是失焦的简洁窗，`native_alpha` 还停在 0.85 那一档上
+                self.apply_native_alpha(frame, 1.0);
+                views::show(
+                    ui,
+                    &mut self.state,
+                    &mut effects,
+                    &self.history,
+                    ai_available,
+                )
+            }
             UiMode::Compact => {
                 // 失焦半透明（REQ-007）：焦点是窗口级事实，由帧循环读给视图，视图自己不去问
                 let focused = ctx.input(|i| i.viewport().focused) == Some(true);
-                let dim = mode::dim_alpha(
+                let want = mode::dim_alpha(
                     UiMode::Compact,
                     focused,
                     self.state.config.ui.dim_when_unfocused,
+                    self.state.config.ui.unfocused_alpha,
                 );
+                // 两条路径二选一，不能叠加（叠了会淡成 want²）。原生那条能让标题栏一起变淡
+                // （FR-3.7 用户走查点名的就是"标题栏为什么不跟着透"），走通了就不再动 egui 底色。
+                let native = self.apply_native_alpha(frame, want);
+                let dim = if native { 1.0 } else { want };
                 views::compact::show(ui, &mut self.state, &mut effects, ai_available, dim)
             }
         }
@@ -1855,6 +1965,104 @@ mod tests {
 
         assert!(queued(&c).is_empty(), "已经在那儿了，不该再发几何命令");
         assert_eq!(app.state.config.ui.compact_rect.x, settled.min.x);
+    }
+
+    /// 缺陷 D-14 的第一道锁：拖动途中一条**尺寸**命令都不许发。
+    ///
+    /// 用户 2026-10-28："拖动时候变大，停下后又恢复原来的大小"，屏幕中间也这样，两种形态都
+    /// 中招。`InnerSize` 只要出现在拖动中途，原生层就会把窗口拽回配置里的那个尺寸，观感正是
+    /// "拖一下大一下、停下来又缩回去"。这里按帧喂移动中的外框（等价于 AppKit 自己搬窗口），
+    /// 逐帧检查发出去的命令：尺寸、下限、装饰、可否缩放四种都不许碰，位置命令（吸附要用的
+    /// `OuterPosition`）不在禁止之列。
+    #[test]
+    fn a_drag_never_asks_for_a_new_size_in_either_mode() {
+        let cases = [
+            (UiMode::Full, egui::vec2(1080.0, 720.0)),
+            (UiMode::Compact, SIZE),
+        ];
+        for (mode, size) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let mut state = plain_state();
+            state.config.ui.mode = mode;
+            let mut app = app(dir.path(), state);
+            let c = ctx();
+
+            for step in 0..8 {
+                let outer = Rect::from_min_size(Pos2::new(300.0 + step as f32 * 60.0, 300.0), size);
+                feed_geometry(&c, Some(outer), Some(true));
+                app.refresh_geometry(&c);
+                app.settle_drag(&c, || Some(area()));
+                for command in queued(&c) {
+                    assert!(
+                        !matches!(
+                            command,
+                            ViewportCommand::InnerSize(_)
+                                | ViewportCommand::MinInnerSize(_)
+                                | ViewportCommand::Decorations(_)
+                                | ViewportCommand::Resizable(_)
+                        ),
+                        "{mode:?} 拖动第 {step} 帧发了尺寸类命令：{command:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// 缺陷 D-14 的第二道锁：系统自己改了窗口尺寸时，我们记下来，但不跟它抢。
+    ///
+    /// 拖动途中原生层可能改内尺寸（平铺、缩放动画、用户抓到了边）。这一帧之后
+    /// `capture` 要把真实尺寸写回本槽——配置得跟着现实走；同时**一条 `InnerSize` 都不发**，
+    /// 否则就成了"系统改大、我们拽回、系统再改大"的来回抖。
+    #[test]
+    fn a_size_the_system_changed_is_recorded_not_fought() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        let c = ctx();
+        let normal = Rect::from_min_size(Pos2::new(300.0, 300.0), egui::vec2(1080.0, 720.0));
+        feed_geometry(&c, Some(normal), Some(true));
+        app.refresh_geometry(&c);
+
+        let grown = Rect::from_min_size(Pos2::new(360.0, 300.0), egui::vec2(1400.0, 900.0));
+        feed_geometry(&c, Some(grown), Some(true));
+        app.refresh_geometry(&c);
+
+        assert_eq!(
+            (
+                app.state.config.ui.full_rect.w,
+                app.state.config.ui.full_rect.h
+            ),
+            (1400.0, 900.0),
+            "原生层改过的尺寸要记进配置，不能留着旧值"
+        );
+        assert!(
+            !queued(&c)
+                .iter()
+                .any(|cmd| matches!(cmd, ViewportCommand::InnerSize(_))),
+            "系统刚改完尺寸我们就发一条拽回去，窗口就来回抖"
+        );
+    }
+
+    /// NFR-2 的护栏：整窗 alpha 每帧都发一次系统调用，AppKit 就每帧重合成整个窗口。
+    /// 悬浮窗绝大多数时间是"停在桌面上没人碰"，那一档不能变，所以同值必须跳过。
+    /// 上次没走通（`None`）要重试——第一帧拿不到窗口句柄是正常时序，不是失败终局。
+    #[test]
+    fn an_unchanged_window_alpha_is_not_resent() {
+        assert!(
+            !needs_alpha_update(Some(0.85), 0.85),
+            "同一档重复下发，空闲帧全在付重合成的钱"
+        );
+        assert!(
+            !needs_alpha_update(Some(1.0), 1.0),
+            "全量窗整场都是 100%，一次都不该发"
+        );
+        assert!(
+            needs_alpha_update(Some(0.85), 1.0),
+            "焦点回来了必须写回 100%，不然窗体永远停在半透明"
+        );
+        assert!(
+            needs_alpha_update(None, 0.85),
+            "从没成功下过（含首帧拿不到句柄）要重试，不能永久退回"
+        );
     }
 
     /// TC-3.5-d（接线）：停靠后从 6px 热区向内拖过阈值 → 就地解除停靠，停在松手处并落盘

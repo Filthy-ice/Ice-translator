@@ -1,5 +1,6 @@
-//! 应用侧的系统集成：钥匙串、剪贴板、快捷键、单实例锁、屏幕可用区。
+//! 应用侧的系统集成：钥匙串、剪贴板、快捷键、单实例锁、屏幕可用区、整窗不透明度。
 
+pub mod alpha;
 pub mod clipboard;
 pub mod hotkeys;
 pub mod screen;

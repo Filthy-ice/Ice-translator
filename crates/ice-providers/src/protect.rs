@@ -140,16 +140,19 @@ fn byte_at_char(s: &str, max: usize) -> usize {
     s.char_indices().nth(max).map(|(i, _)| i).unwrap_or(s.len())
 }
 
-/// 在 `text[..hard]` 内找最晚的自然断点，返回其后一位作为切点。
+/// `hard` 之内**最晚**的自然断点（换行与句末标点一视同仁，谁靠后取谁），返回其后一位。
+///
+/// 2026-10-28 用户要求"按照一定字符内的最后一个句号进行切分"。以前的写法只要额度里出现过换行
+/// 就切在那个换行上——哪怕它是第 3 个字符，于是先切出一块四个字符的碎块（白花一次往返），
+/// 后面整段照样还得再请求一次。断点只比先后，不比种类。
+///
 /// 断点必须是字符边界：'。' 占 3 字节，`i + 1` 会把切点落进字符内部。
 fn natural_cut(text: &str, hard: usize) -> Option<usize> {
     let head = &text[..hard];
-    if let Some(i) = head.rfind('\n') {
-        return Some(i + '\n'.len_utf8());
-    }
     SENTENCE_ENDS
         .iter()
         .filter_map(|p| head.rfind(*p).map(|i| (i, *p)))
+        .chain(head.rfind('\n').map(|i| (i, '\n')))
         .map(|(i, p)| i + p.len_utf8())
         .max()
 }
@@ -362,6 +365,26 @@ mod tests {
         let src = "短行\n".repeat(120); // 每行 4 个字符
         let chunks = chunk_chars(&src, 450);
         assert!(chunks.iter().all(|c| c.ends_with('\n')));
+        assert_eq!(chunks.concat(), src);
+    }
+
+    /// 2026-10-28 用户要求"按照一定字符内的最后一个句号进行切分"。改之前只要额度里出现过换行就切在
+    /// 那个换行上，哪怕后面还有 90 多个字符没吃满——结果是首块结尾停在半句上、碎块也更多。
+    /// 现在换行只是候选断点之一，谁最靠后取谁。
+    #[test]
+    fn a_leading_newline_does_not_steal_the_cut_from_a_later_period() {
+        let src = format!("短行\n{}", "句子一二三四。".repeat(30)); // 213 字符，每句 7 字符
+        let chunks = chunk_chars(&src, 100);
+        assert_eq!(chunks.len(), 3, "{chunks:?}");
+        for chunk in &chunks {
+            assert!(
+                chunk.ends_with('。'),
+                "切块要在句末收口，尾块是 {:?}，首块只 {} 字符",
+                chunk.chars().rev().take(4).collect::<String>(),
+                chunk.chars().count()
+            );
+        }
+        assert!(chunks[0].chars().count() > 50, "首块被换行抢走切点了");
         assert_eq!(chunks.concat(), src);
     }
 }

@@ -402,14 +402,22 @@ impl AppState {
         self.config_dirty = true;
     }
 
-    /// 全量↔简洁切换：只改形态，内容一律保留、不重发请求（FR-3.3）
-    pub fn toggle_mode(&mut self) -> UiMode {
-        self.config.ui.mode = match self.config.ui.mode {
+    /// 另一个形态——**只算不改**。
+    ///
+    /// 改 mode 这件事归 `mode::apply`：它必须先按**旧**形态把窗口实时几何记回源槽，再把 mode
+    /// 翻过去。反过来做（先翻再记）会让 `capture` 把切换前的尺寸写进**目标形态**的槽，随后
+    /// `target_size` 读到的正是这个实时尺寸，`InnerSize` 退化成"请求当前尺寸"的空操作——
+    /// 缺陷 D-13（用户 2026-10-28："不去碰一下边框，他就无法变为悬浮前的大小"）。
+    pub fn next_mode(&self) -> UiMode {
+        match self.config.ui.mode {
             UiMode::Full => UiMode::Compact,
             UiMode::Compact => UiMode::Full,
-        };
+        }
+    }
+
+    pub fn set_mode(&mut self, mode: UiMode) {
+        self.config.ui.mode = mode;
         self.config_dirty = true;
-        self.config.ui.mode
     }
 
     pub fn toggle_topmost(&mut self) -> bool {
@@ -816,7 +824,8 @@ mod tests {
         let id_before = state.request_id;
 
         for _ in 0..20 {
-            state.toggle_mode();
+            let next = state.next_mode();
+            state.set_mode(next);
         }
 
         assert_eq!(state.mode(), UiMode::Full);

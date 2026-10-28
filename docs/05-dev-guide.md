@@ -29,7 +29,7 @@ Ice-translator/
 ├── Cargo.toml                 # workspace：依赖版本集中在 [workspace.dependencies]
 ├── crates/
 │   ├── ice-core/              # 领域层：语言、图片文档模型、配置、历史、术语表
-│   ├── ice-providers/         # 引擎层：Translator 调度、缓存、机翻/AI 通道
+│   ├── ice-providers/         # 引擎层：Translator 调度、缓存、机翻/AI 通道、分段并行窗口（parallel.rs，crate 内私有）
 │   ├── ice-vision/            # 视觉层：OCR、原文擦除、译文回写
 │   └── ice-app/               # 界面层：eframe 应用、双模式窗口、状态机（二进制名 ice-translator）
 │      ├── src/
@@ -37,7 +37,7 @@ Ice-translator/
 │      │   ├── app.rs           # `IceApp`：eframe::App 实现、副作用执行、钥匙串探测回收
 │      │   ├── state.rs         # `AppState`：唯一一份界面状态
 │      │   ├── mode.rs theme.rs jobs.rs stub.rs
-│      │   ├── system/          # clipboard、hotkeys、screen、secrets、single_instance
+│      │   ├── system/          # clipboard、hotkeys、screen、secrets、single_instance、alpha（整窗不透明度）
 │      │   └── views/           # mod（工具条+状态条）、full、compact、history、settings、image
 │      └── examples/
 │          └── viewport_probe.rs  # 真机几何探针（`cargo run -p ice-app --example viewport_probe`）
@@ -83,10 +83,10 @@ ice-app  ──►  ice-providers  ──►  ice-core
 
 ```bash
 cargo check --workspace                 # 快速全量类型检查
-cargo test  --workspace                 # 全部单元测试（P5 v0.7 后当前 359 项通过 + 3 项 ignore）
-cargo test  -p ice-core                 # 只测领域层（51 项）
-cargo test  -p ice-providers            # 只测引擎层（53 项，HTTP 走本地假服务，不联网）
-cargo test  -p ice-app                  # 只测界面层（255 项，无头跑帧，不碰网络/剪贴板/钥匙串）
+cargo test  --workspace                 # 全部单元测试（2026-10-28 起 391 项通过 + 4 项 ignore）
+cargo test  -p ice-core                 # 只测领域层（53 项）
+cargo test  -p ice-providers            # 只测引擎层（61 项，HTTP 走本地假服务，不联网）
+cargo test  -p ice-app                  # 只测界面层（277 项，无头跑帧，不碰网络/剪贴板/钥匙串）
 cargo test  --workspace -- --ignored    # 跑需要真实网络/真机的集成测试
 cargo test  -p ice-providers --test live -- --ignored --nocapture machine
                                         # 只验机翻真实端点（MyMemory，无需 Key）
@@ -134,6 +134,7 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 - 涉及文件读写的用 `tempfile::tempdir()`，禁止写真实的用户配置目录。
 - 需要真实外部服务的测试单独放 `crates/<crate>/tests/live.rs`，标 `#[ignore]`，命名 `<通道>_live_<场景>`（如 `machine_live_short`、`ai_live_deepseek`），通过 `-- --ignored <通道>` 触发。原规范的 `net_` 前缀没采用：同一通道往往要跑两三个场景，把通道名放在前面才能用一条过滤命令选中整组。
 - 真实端点的契约测试**必须能被本地假服务替代**：引擎构造接受端点注入（`with_endpoint` / `from_config`），默认测试全部走 `fake_server`，联网用例只是补充，不是唯一证据。
+- **分段并行的测试只能用 `serve_parallel`，不能用 `serve`**（2026-10-28 加）。`serve` 按到达顺序发固定响应，而并行之后**到达顺序 ≠ 段序**，照旧写法会把内容发错段，断言变成猜谜（`machine` 那条老测试就是这样侥幸绿过一次）。`serve_parallel` 的两件事都是必需的：① 应答由**这条连接自己收到的请求**决定（`reply(到达序号, 原始请求)`）；② 记录**同时在飞的连接数峰值** `Fake::peak`，"真的并行"是量出来的而不是掐总耗时猜的。两个坑：栅栏最多白等 `BARRIER_HOLD`=250ms，所以引擎的测试超时必须明显大于它（本项目两条通道都改成 3s），否则"栅栏没放行"会被误报成"网络超时"；串行回归的表现是 `peak == 1`，不是报错。
 - AI 联网用例从 macOS 钥匙串读 Key（ service `IceTranslator` / account `ai-api-key`），生产代码不依赖 `keyring`（只作为 `ice-providers` 的 dev-dependency，见 `ADR-005`）：
   ```bash
   security add-generic-password -a ai-api-key -s IceTranslator -w   # -w 隐藏输入，不落终端记录
@@ -151,6 +152,7 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
   - **"画到哪"的问题**（控件溢出、把手压住按钮）靠 `views::compact::record(ctx, salt, rect)` 把控件矩形记进 `Context` 临时数据，然后在**最小窗口尺寸**（`MIN_COMPACT_SIZE`）下断言各带不重叠、不越界、行尾把手不被挤成零宽。P4 的 D-1/D-4 都是"断言 `Effects` 全绿而界面已经烂了"，所以版式测试必须量几何，不能只看副作用队列。
   - **滚动容器必须断言"可视区不越出给它的矩形"**（P5 缺陷 D-9 定的硬规则）。只断言"滚轮 N 帧后偏移增长"测不出越界：`ScrollArea` 的 `min_scrolled_size` 默认 64px，矮栏里它把可视区抬到 64px 并画到框外，而最大偏移按这个虚高视口计算，**最后十几像素怎么滚都滚不进来**——偏移在涨、内容也在动，测试全绿，用户看不见最后一行。写法：`full::record_scroll(ctx, 栏名, &output)` 记下（可视矩形、内容尺寸、当前偏移）三个数，断言 `inner.max.y <= 栏矩形.max.y`、`inner.max.y <= 压在它下面的那条带.min.y`、且 `offset >= content - inner.height`（真能滚到底）。`min_scrolled_height(0.0)` 是修法，这四条断言是防它被悄悄改回去的锁。
   - **凡是不参与布局的覆盖式浮层，优先考虑改成"自占一条带"**（P5 v0.7 / REQ-013 定的第二条硬规则）。全量窗右下角的动作条原本是浮层，正文末尾要按 `bar_cover()` 预留一条与它等高的空白带；预留公式与绘制公式分处两地，一边改了另一边没改，D-9 就以同样的症状复发一次。改成 `Panel::bottom` 自占一行之后，两栏的可用高在构造时就被扣掉，"盖住"在结构上不再可能，断言也从"预留量 ≤ 浮层高 +1px"换成一条更简单的"可视区底边在底栏上沿之上"（`the_last_line_stops_above_the_bottom_bar`）。同一条原则也用在简洁窗：动作行先建成 `Panel::bottom`，两带再分 `CentralPanel` 的剩余高度，分摊由纯函数 `views::compact::band_heights()` 决定，所以 1:1 与"矮窗口回落到输入带一行"两套结果都能脱离字体度量单独断言。
+  - **"自占一条带"必须建在窗口层，不能建在带内边距的 `CentralPanel` 里面**（P5 v0.7 落地时的缺陷 D-11，2026-10-28 用户"按钮上下留白距离不同"）。`egui::CentralPanel::default()` 用的框架是 `Frame::central_panel`，四边各 8px 内边距（egui `containers/frame.rs:191`）；把 `Panel::bottom` 建在它内部，这条栏就同时吃到"自己的留白 + 那层的 8px"，下边被顶离窗口底边 8px、左右也各少 8px，而**上边只少一份留白**——留白常量写得再对称也没用。正确做法：像工具条、状态条一样由 `views::show` 建（顺序 toolbar → status → 这条栏 → `CentralPanel`，`CentralPanel` 会吃掉剩余矩形，排到它后面的 `Panel` 收不到位置，P4 缺陷 D-1 就是这么把整条动作行裁出窗口的）。写无头骨架测试时也要照这个顺序排——只调页面函数（`full::show`）的骨架里根本没有那 8px，缺陷测不出来。**并且这条栏必须自己画底色**：`Frame::NONE` 挪到窗口层就是在窗口上开个洞，eframe 默认 `App::clear_color` 是 `rgba(12,12,12,180)`（半透明深灰，`eframe/src/epi.rs:251`），没被任何 `Frame` 画到的区域直接透出桌面（2026-10-28 用户第二次报的"这颜色怎么回事"）。工具条与状态条看不出来，是因为它们用的 `Frame::side_top_panel` 自带 `panel_fill`；`full::bottom_bar` 因此显式 `.fill(ui.visuals().panel_fill)`，并把底色与矩形一起记进 `bottom_bar_id`，由 `the_text_page_bottom_bar_hugs_the_status_bar` 断言两者相等。
   - **自占高度面板里的两个 egui 坑**（v0.7 踩过）：① 手动 `allocate` 出来的行必须 `ui.advance_cursor_after_rect(rect)`，不然 `Panel` 量到的还是它自己那一小条，整条栏会塌成 26×10；② `Ui::columns` 完全不看光标，按整行宽度均分，和上面那种定高行叠在一起就重合 5px——要左右两半各自对齐就用 `horizontal_top` + `allocate_ui_with_layout`。
   - **窗口行为也要能无头接线**：抓原生标题栏那条拖动路径不产生 `StartDrag`（AppKit 自己搬窗口），吸附只能靠"几何跳变后归于静止"来认。测法是喂一串 `outer_rect`（静止若干帧 → 跳变 → 再静止）断言 `DragSettler` 被 arm 并完成吸附，再用同一串几何配合 `commanded` 目标点断言"自己下发的移动不 arm"——这两条把"程序把用户的拖动判错了"这类只有真机才看得见的问题锁在了单测里。
 

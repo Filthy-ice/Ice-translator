@@ -44,7 +44,7 @@ const BAND_V_PAD: f32 = 4.0;
 /// 一条带的外框比内容多出来的高度：`BAND_V_PAD` + 1px 描边。
 ///
 /// 实测外框高 = 内容高 + 10（两带都是这个数），`band_heights` 必须按 10 而不是按 8 扣：
-/// 少扣这两像素，两条带就一起压到动作行底下（320×160 下译文带底边 142 vs 动作行顶边 135）。
+/// 少扣这两像素，两条带各多出一像素，叠到最矮那一档就够让译文带底边压过动作行顶边。
 const BAND_OUTER_PAD: f32 = BAND_V_PAD + 1.0;
 /// 译文区底部把手带高度。
 /// 输入行长到三行时这一带会被挤没，`MIN_BODY_HEIGHT` 那条守卫兜着。
@@ -117,6 +117,11 @@ fn toast_offset(ctx: &egui::Context) -> f32 {
 /// 只改底色不改文字：观感要的是"整块窗体透出桌面"，而不是内容糊掉。窗口 surface 在创建时
 /// 就带了 `with_transparent(true)`（`mode::initial_viewport`），这里填的 alpha 才有意义——
 /// surface 不透明时再怎么乘 alpha 也透不出来。
+///
+/// **这是回退路径**。macOS 上帧循环走的是原生整窗 `NSWindow.alphaValue`（`system::alpha`），
+/// 那条能让标题栏与红绿灯一起变淡（用户走查点名的就是"标题栏为什么不能跟着失焦半透明"），
+/// 且已经生效时这里收到的是 1.0，即什么都不做——两条路径叠加会淡成 `want²`。
+/// 只有拿不到原生窗口（非 macOS、无头）才由这条顶上。
 fn apply_dim(ui: &mut egui::Ui, alpha: f32) {
     if alpha >= 1.0 {
         return;
@@ -230,10 +235,10 @@ fn band_frame<R>(
 /// 也不再把字号和内边距压小（v0.4 那套三层收缩被 Q-011 推翻：用户 2026-10-23 的原话是
 /// "悬浮窗也可以正常使用操作栏，没必要搞一个缩减版的操作栏，还不容易点到"）。
 /// 换 `horizontal_wrapped` 而不是继续压小，技术上还有个好处：`wrapped` 布局自带
-/// "永不超出可用宽度"，与字体度量无关。无头测试用的是 egui 内置字体，没有中文字形，
-/// 量出来的文字宽度必然偏小，靠断言宽度防溢出锁不住（P4 的 D-1 就是"断言全绿而按钮被
-/// 裁出窗口"）。代价是最窄的窗里这一行占两行高，所以 `MIN_COMPACT_SIZE` 的高度抬到 160px
-/// （REQ-012 把两带 1:1 摊开后，130px 那一档译文带连两行字都放不下）。
+/// "永不超出可用宽度"，与字体度量无关——代价是最窄的窗里这一行可能占两行高，所以
+/// 宽度下限按**度量**锁住（`the_action_row_stays_on_one_line_at_the_minimum_width`：
+/// 320 那一档「退出」掉到第二行，用户 2026-10-28 要求"按钮不允许换行"，抬到 400），
+/// 高度下限抬到 160（REQ-012 两带 1:1 摊开后，130 那一档译文带连两行字都放不下）。
 fn action_row(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_available: bool) {
     let panel = egui::Panel::bottom("compact_bar").show(ui, |ui| {
         let available = ui.max_rect();
@@ -354,6 +359,10 @@ fn translation_pane(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effec
 
 /// 译文正文。四种状态与全量窗一致（失败红字 / 译文可选中 / 翻译中 / 空态提示），
 /// 只是不画徽标行——最小窗里正文只有几十像素高，先保译文，耗时与缓存标记回全量窗看。
+///
+/// 引擎名也不跟在译文后面（用户 2026-10-28："悬浮窗口时译文后面不应该有机翻两个字，在
+/// 边框上就看的到"）：动作行那颗「机翻|AI」分段按钮写的就是当前引擎，同一件事不说两遍，
+/// 而且那两个字还占掉译文的一行宽度。
 fn body(ui: &mut egui::Ui, state: &AppState) {
     if let Some(failure) = &state.failure {
         ui.add(
@@ -364,19 +373,11 @@ fn body(ui: &mut egui::Ui, state: &AppState) {
         return;
     }
     if let Some(result) = &state.translation {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            ui.add(
-                egui::Label::new(RichText::new(&result.text))
-                    .selectable(true)
-                    .wrap(),
-            );
-            ui.label(
-                RichText::new(result.engine.display_name())
-                    .color(theme::MUTED)
-                    .small(),
-            );
-        });
+        ui.add(
+            egui::Label::new(RichText::new(&result.text))
+                .selectable(true)
+                .wrap(),
+        );
         return;
     }
     if state.in_flight.is_some() {
@@ -404,10 +405,10 @@ mod tests {
     use ice_core::language::EngineKind;
     use ice_providers::request::TranslationResult;
 
-    /// 最小简洁窗（`MIN_COMPACT_SIZE`，v0.7 起 320×160）：所有布局断言都在这个尺寸下做，
+    /// 最小简洁窗（`MIN_COMPACT_SIZE`，2026-10-28 起 400×160）：所有布局断言都在这个尺寸下做，
     /// 装得下就一定装得下更大的
     fn window() -> Rect {
-        Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 160.0))
+        Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 160.0))
     }
 
     fn state() -> AppState {
@@ -453,7 +454,7 @@ mod tests {
             effects: &mut Effects,
             ai_available: bool,
             events: Vec<egui::Event>,
-        ) {
+        ) -> Vec<egui::epaint::ClippedShape> {
             let mut raw = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
                 events,
@@ -461,10 +462,13 @@ mod tests {
             };
             raw.time = Some(self.time);
             self.time += 1.0 / 60.0;
-            let output = self
+            let mut output = self
                 .ctx
                 .run_ui(raw, |ui| show(ui, state, effects, ai_available, 1.0));
+            // 形状在这一帧的 `FullOutput.shapes` 里，`end_pass` 会把它们从 graphics 层抽走
+            let shapes = std::mem::take(&mut output.shapes);
             output.drop_without_applying_deltas();
+            shapes
         }
 
         /// 命中测试用的是**上一帧**记下的控件矩形，点击之前必须先空跑两帧，
@@ -640,11 +644,11 @@ mod tests {
 
     /// REQ-012：输入带不再随内容长高——多出来的源文在它自己的框里滚，译文带那一份不会被吃掉。
     ///
-    /// 最窄（320，`MIN_COMPACT_SIZE`）和默认（460）两个宽度都跑一帧：两带等高是同一个式子给的，
+    /// 最窄（400，`MIN_COMPACT_SIZE`）和默认（460）两个宽度都跑一帧：两带等高是同一个式子给的，
     /// 但窄窗里动作行会不会换行、从中央区里扣掉多少，只有真画一帧才知道。
     #[test]
     fn the_input_band_keeps_its_share_when_the_source_gets_long() {
-        for width in [320.0, 460.0] {
+        for width in [400.0, 460.0] {
             let (short_input, short_body) = bands_at("hello", width);
             let (long_input, long_body) = bands_at("a\nb\nc\nd\ne\nf\ng\nh", width);
 
@@ -668,6 +672,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 用户 2026-10-28："悬浮窗口时译文后面不应该有机翻两个字，在边框上就看的到"。
+    ///
+    /// 判据直接落在**这一帧真的画出来的文字形状**上：「机翻」只许出现一次，就是动作行那颗
+    /// 分段按钮。译文后面再挂一个就变两次，而那条挂标还占掉译文的行宽。
+    #[test]
+    fn the_translation_band_does_not_repeat_the_engine_name() {
+        let mut state = state();
+        state.translation = Some(translated("你好，世界"));
+        let mut effects = Effects::default();
+        let mut harness = Harness::new(egui::vec2(460.0, 160.0));
+        let shapes = harness.step(&mut state, &mut effects, true, vec![]);
+        let texts: Vec<String> = shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().replace(' ', "")),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            texts.iter().any(|text| text == "你好，世界"),
+            "译文没画出来：{texts:?}"
+        );
+        assert_eq!(
+            texts.iter().filter(|text| text.contains("机翻")).count(),
+            1,
+            "「机翻」在悬浮窗里出现了不止一次（动作行那颗按钮之外又来了一处）：{texts:?}"
+        );
     }
 
     /// 封顶之后超出那几行靠滚轮看得到（与译文区同一个手法）
@@ -712,7 +746,7 @@ mod tests {
         );
     }
 
-    /// 最小窗（320×160）里两条带 + 动作行 + 所有按钮 + 把手都必须待在窗口内，且互不重叠。
+    /// 最小窗（400×160）里两条带 + 动作行 + 所有按钮 + 把手都必须待在窗口内，且互不重叠。
     /// 这条锁的是 REQ-005 的"不溢出、不重叠"与 REQ-011 的"退出按钮也在窗内"：
     /// v0.5 起动作行按默认字号排，装不下靠换行而不是压小
     /// （P4 的 D-1 是"断言全绿而按钮被裁出窗口"）。
@@ -791,8 +825,9 @@ mod tests {
     }
 
     /// 换行机制本身：宽度收到连"每个按钮的最小可点宽度"都放不下时，动作行要**换成两行**
-    /// 而不是溢出窗口。320px 到底放不放得下取决于中文字形宽度，无头量不准；
-    /// 这条只依赖与字体无关的 `interact_size.x`（40px）下限。
+    /// 而不是溢出窗口。这条量的是 200px（低于合法下限，用户拉不到，但机制得在极端下也成立），
+    /// 只依赖与字体无关的 `interact_size.x`（40px）下限；合法下限处放不放得下一整行，
+    /// 由 `the_action_row_stays_on_one_line_at_the_minimum_width` 按度量另锁一条。
     #[test]
     fn a_row_that_cannot_fit_wraps_instead_of_overflowing() {
         let size = Vec2::new(200.0, 200.0);
@@ -914,8 +949,9 @@ mod tests {
         );
     }
 
-    /// 行尾空白那块把手：只有在真的有空位时才存在。窄窗（320px）里整行被按钮占满，
-    /// 那里就没有把手，靠上面两条也还能拖——这是 v0.5 换行版式的既定代价，不是缺陷。
+    /// 行尾空白那块把手：只有在真的有空位时才存在。窗口被压到连一整行按钮都放不下时
+    /// （`the_action_row_stays_on_one_line_at_the_minimum_width` 管的就是不让这件事发生在合法
+    /// 下限处），那里就没有把手，靠译文尾部那一块也还能拖。
     #[test]
     fn the_leftover_space_at_the_end_of_the_row_is_a_handle() {
         let size = Vec2::new(560.0, 160.0);
@@ -1113,5 +1149,86 @@ mod tests {
         h.step(&mut state, &mut effects, false, vec![]);
         assert_eq!(state.source, "hello");
         assert!(effects.job.is_none(), "渲染失败态不该自己重发请求");
+    }
+
+    /// 整宽字形：中日韩汉字与全角标点占满一个 `1em`，其余（拉丁字母、数字、半角符号）不是
+    fn is_full_width(c: char) -> bool {
+        matches!(
+            c as u32,
+            0x2E80..=0x9FFF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFF00..=0xFF60
+        )
+    }
+
+    /// `Panel::bottom` 默认框（`Frame::side_top_panel`）的左右内边距，egui 写死在
+    /// `containers/frame.rs:187` 的 `Margin::symmetric(8, 2)` 里，不在 `Spacing` 里，只能自己记
+    const PANEL_X_MARGIN: f32 = 8.0;
+
+    /// 用户 2026-10-28："这个最小窗口太小了，按钮不允许换行"。
+    ///
+    /// 这条**不能**像别的布局断言那样"真画一帧量按钮的 y"：egui 自带的字体里没有中文字形
+    /// （`epaint-0.37.0/src/text/text_layout.rs:2192` 就写着 "No bundled font has CJK glyphs"），
+    /// 真机上的中文是 eframe 的 `system_fonts` 现找的系统字体（macOS 上是 PingFang）。无头跑
+    /// 出来一个汉字只有 6.5px，真机是 13.0px——在 320 宽的窗里无头照样"一行装得下"，
+    /// 那条断言锁不住任何东西（P4 的 D-1 是同一类盲区，只是方向相反）。
+    ///
+    /// 所以判据换成按度量算，字号与内边距都取当帧 `Style` 里的真值：
+    /// - 汉字整宽，一个字 `1em`；其余按 `0.6em` 估（"AI" 在 Ubuntu-Light 里实测 11.56px，
+    ///   估成 15.6px 是往宽里偏，宁可把下限要求算高）
+    /// - 每颗按钮加左右 `button_padding.x`，相邻两项加 `item_spacing.x`，面板再加左右各 8
+    ///
+    /// 按钮文字从**这一帧真的画出来的**文字形状里取：改了文案、加了按钮，这条跟着变。
+    #[test]
+    fn the_action_row_stays_on_one_line_at_the_minimum_width() {
+        let mut h = Harness::new(window().size());
+        let mut state = state();
+        let mut effects = Effects::default();
+        h.warm(&mut state, &mut effects, true);
+        let shapes = h.step(&mut state, &mut effects, true, vec![]);
+
+        let bar = rect(&h.ctx, "bar");
+        let labels: Vec<String> = shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.pos.y >= bar.min.y => {
+                    Some(text.galley.text().to_owned())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            ["全量", "复制", "设置", "机翻", "AI", "置顶", "退出"],
+            "动作行的按钮与文档记的不一致，下面的宽度就得重算"
+        );
+
+        let style = h.ctx.global_style();
+        let px = style.text_styles[&egui::TextStyle::Button].size;
+        let text_px: f32 = labels
+            .iter()
+            .map(|label| {
+                label
+                    .chars()
+                    .map(|c| if is_full_width(c) { px } else { 0.6 * px })
+                    .sum::<f32>()
+            })
+            .sum::<f32>();
+        let chrome_px = labels.len() as f32 * 2.0 * style.spacing.button_padding.x
+            + (labels.len() - 1) as f32 * style.spacing.item_spacing.x
+            + 2.0 * PANEL_X_MARGIN;
+        let needed = text_px + chrome_px;
+
+        // 先自校：这套算法必须能解释用户看到的那次换行，否则它凭什么说 400 放得下
+        let old_floor = 320.0 - 2.0 * PANEL_X_MARGIN;
+        assert!(
+            needed > old_floor,
+            "按度量算 320 宽放得下一整行（{needed} ≤ {old_floor}），那这条锁不住'320 会换行'"
+        );
+
+        // 行尾还得留出拖窗把手的那 `GAP_PADDING`（`bar_gap` 挤到零宽时把手直接消失）
+        let room = window().width() - 2.0 * PANEL_X_MARGIN;
+        assert!(
+            needed + GAP_PADDING <= room,
+            "最窄简洁窗放不下动作行：需要 {needed}+{GAP_PADDING}，可用 {room}"
+        );
     }
 }

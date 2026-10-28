@@ -39,9 +39,10 @@
 |---|---|---|---|
 | `engine` | `TranslationEngine`（trait）、`unavailable_error()` | 通道抽象：`kind/translate/is_available` | FR-1.3 |
 | `request` | `TranslationRequest`、`TranslationResult` | 通道间唯一的入参/出参结构：语言对、术语提示、分段续译的上下文尾巴、耗时与命中来源 | FR-1.1、FR-1.3、FR-1.9 |
-| `machine` | `MachineTranslateEngine`、`MACHINE_QUERY_CHARS` | 零配置机翻通道（MyMemory），单次查询 450 字符上限、超时与网络类重试 ≤2 | FR-1.3、FR-1.7、NFR-1 |
-| `ai` | `AiEngine` | OpenAI 兼容 chat 通道，提示词构造、分段与上下文续译、拼回 | FR-1.3、FR-1.9 |
-| `protect` | `ProtectedText`、`Restored`、`protect()`/`restore()`、`chunk_chars()` | URL/邮箱/代码块/标识符/带单位数字的占位符保护，以及"优先在换行或句末断开、不切开占位符"的切块 | FR-1.6、FR-1.9 |
+| `machine` | `MachineTranslateEngine`、`MACHINE_QUERY_CHARS` | 零配置机翻通道（MyMemory），单次查询 450 字符上限、超时与网络类重试 ≤2；超上限切块后**并行**在飞（`parallel`）并按块序拼回 | FR-1.3、FR-1.7、FR-1.9、NFR-1 |
+| `ai` | `AiEngine` | OpenAI 兼容 chat 通道，提示词构造、分段与上下文续译、拼回；按 `AiProvider::thinking_off()` 塞各家拼法的关闭思考字段；分段**并行**在飞 | FR-1.3、FR-1.9、NFR-1 |
+| `parallel` | `map_segments()`、`MAX_IN_FLIGHT` | 分段并行的唯一实现：`tokio::task::JoinSet` + 定长结果槽，在飞窗口 ≤ 4，**按段序**返回、任一段失败即整体失败并 `abort_all()` 取消其余（不私有，只对本 crate 的两个通道开放） | FR-1.9、NFR-1 |
+| `protect` | `ProtectedText`、`Restored`、`protect()`/`restore()`、`chunk_chars()` | URL/邮箱/代码块/标识符/带单位数字的占位符保护，以及"取额度内**最后一个**句号或换行断开、不切开占位符"的切块 | FR-1.6、FR-1.9 |
 | `cache` | `TranslationCache`、`CacheKey`、`CachedValue` | LRU；AI 通道以术语表版本号加盐 | FR-1.8、FR-4.5 |
 | `dispatcher` | `Translator` | 选引擎→查缓存→调用→术语后处理→回写缓存；`availability()` | FR-1.3、FR-1.7、FR-1.8 |
 | `error` | `ProviderError`（10 个变体）、`retryable()`、`from_reqwest()`/`from_status()` | 网络/状态/解析错误归一化为可读种类；错误文本剔除 URL 查询串，不回显源文与 Key | FR-1.7、NFR-3 |
@@ -183,6 +184,7 @@
 | 场景 | 机制 | 原因 |
 |---|---|---|
 | HTTP 翻译 | tokio `spawn`（多线程 runtime，由 `ice-app` 持有） | 不阻塞渲染 |
+| 长文分段（FR-1.9） | `providers::parallel::map_segments`：`JoinSet` + 定长结果槽，在飞窗口 ≤ `MAX_IN_FLIGHT`(4) | 段间无依赖，串行只是把往返时间相加。窗口设上限而不是全量并发，是为了不打爆机翻免费额度、不诱发 AI 侧 429；结果写回**槽位**而不是 push 进 Vec，所以谁先答完都不影响拼接顺序；任一段失败 `abort_all()` 后收摊，不再继续花额度 |
 | OCR / 图像合成 / 字体加载 | `spawn_blocking` | Vision 与像素操作是 CPU 阻塞调用 |
 | 结果回投 UI | `mpsc::channel(CHANNEL_CAPACITY)` + `ctx.request_repaint()` | eframe 事件驱动，必须主动唤醒。**有界**而非设计里写的 `unbounded`：无界队列在结果积压时会悄悄吃内存，有界则让背压可见 |
 | 钥匙串读取 | `spawn_blocking` + `mpsc::channel(1)`，建窗**之后**才发起 | macOS 对不由本程序写入的条目会弹授权框，`get_password()` 一直阻塞到用户点完。放在建窗之前窗口根本出不来，表现为"启动卡死"（P4 真机踩到并修掉）。线程内必须用 `blocking_send`：`send` 是 async 的，在 `spawn_blocking` 里只会造出一个没人 await 的 future |
@@ -235,6 +237,7 @@ main() ──► Config::load_at() ──► (cfg, Option<reason>)
 |---|---|---|
 | FR-1.3 双引擎 | `providers::dispatcher` | `providers::{machine,ai}` |
 | FR-1.6 内容保护 | `providers::protect` | — |
+| FR-1.9 长文分段提速 | `providers::parallel`（窗口与按序拼回） | `providers::{ai,machine}`、`protect::chunk_chars`、`core::config::AiProvider::thinking_off` |
 | FR-2.2 本地 OCR | `vision::{ocr,vision_sys}` | `core::document` |
 | FR-2.4/2.5 回填与覆盖层 | `vision::composite` | `vision::bg` |
 | FR-3.4 置顶 | `app::mode` | `core::config::UiConfig` |

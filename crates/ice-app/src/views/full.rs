@@ -1,9 +1,11 @@
 //! 文本页的 B 区（源文）与 C 区（译文）：F-06~F-10。
 //!
-//! 绘制顺序即视觉顺序（工具条 → 源文 → 译文 → 底栏 → 状态条），Tab 键的焦点遍历才不会出现
-//! "视觉在下面、焦点先到"的错位。动作按钮住在**自占一行的底栏**里（REQ-013，v0.7）：上一版
-//! 它浮在译文栏右下角，正文末尾要预留一条等高空白才不被压住，预留算错一点，长译文滚到底
-//! 最后一行就看不见（用户 2026-10-27 那轮的 D-9）。
+//! 绘制顺序（Tab 键的焦点遍历跟着它走）：工具条 → 状态条 → **本文件的 E 底栏** → 源文 → 译文。
+//! 底栏由 `views::show` 在窗口层建，且必须建在 `CentralPanel` **之前**——`CentralPanel` 吃掉剩余
+//! 矩形，之后再加的 `Panel` 收不到位置（P4 缺陷 D-1 就是这么把整条动作行裁出窗口的）。代价是
+//! 底栏在焦点顺序上排到正文之前；翻译走裸 Enter 与 Cmd+Enter，不靠 Tab 走到那颗按钮。
+//! 动作按钮住在这条自占一行的底栏里（REQ-013，v0.7）：上一版它浮在译文栏右下角，正文末尾要
+//! 预留一条等高空白才不被压住，预留算错一点，长译文滚到底最后一行就看不见（D-9）。
 
 use egui::{self, Align, Key, KeyboardShortcut, Layout, Modifiers, RichText};
 
@@ -30,7 +32,10 @@ const BAR_SPACING: f32 = 6.0;
 /// 底栏左侧给字数文本留出的宽度：字数可以省略号截断，按钮不行（REQ-013 的退让顺序）
 const CHAR_SLOT: f32 = 160.0;
 
-/// 两栏页脚行（字数 / 徽标）的固定高度。
+/// 正文框的内边距（`Frame::group` 与内部定高算式共用的那一个数）
+const GROUP_INNER_PAD: f32 = 8.0;
+
+/// 两栏页脚行（徽标）的固定高度。
 ///
 /// 徽标比纯文本高（内边距 4 + 小字号），空页脚又是 0 高——页脚高度各算各的，
 /// 两栏的底边就会差出一截，真机走查里"两边窗口大小不一样"正是这么来的。
@@ -40,6 +45,108 @@ const PANE_FOOTER_HEIGHT: f32 = 26.0;
 /// 底栏的矩形 id：布局测试要拿它跟两栏的正文矩形比"互不重叠"
 fn bottom_bar_id() -> egui::Id {
     egui::Id::NULL.with("ice-translator.bottom-bar")
+}
+
+/// 底栏上一帧实测到的矩形与它画的底色。
+///
+/// 底色也要记：这条栏挪到窗口层之后，`CentralPanel` 那层 `panel_fill` 不再兜在它下面，
+/// 忘了自己填色就是在窗口上开个透出桌面的洞（用户 2026-10-28 第二次报的问题）。矩形与
+/// 底色同批记下，断言才量的是同一条真机路径。
+#[cfg(test)]
+pub(crate) fn recorded_bar(ctx: &egui::Context) -> (egui::Rect, egui::Color32) {
+    ctx.data_mut(|d| d.get_temp::<(egui::Rect, egui::Color32)>(bottom_bar_id()))
+        .expect("底栏要记下自己的矩形与底色")
+}
+
+/// 两栏正文框（含标题下面那一整块圆角框）的矩形与底色
+fn pane_frame_id(pane: &'static str) -> egui::Id {
+    egui::Id::NULL.with("ice-translator.pane-frame").with(pane)
+}
+
+/// 栏目标题那一行的矩形，用来断言它真的居中在栏宽里
+fn pane_title_id(pane: &'static str) -> egui::Id {
+    egui::Id::NULL.with("ice-translator.pane-title").with(pane)
+}
+
+fn record_pane_frame(
+    ctx: &egui::Context,
+    pane: &'static str,
+    rect: egui::Rect,
+    fill: egui::Color32,
+) {
+    ctx.data_mut(|d| d.insert_temp(pane_frame_id(pane), (rect, fill)));
+}
+
+#[cfg(test)]
+pub(crate) fn recorded_pane(
+    ctx: &egui::Context,
+    pane: &'static str,
+) -> (egui::Rect, egui::Color32) {
+    ctx.data_mut(|d| d.get_temp::<(egui::Rect, egui::Color32)>(pane_frame_id(pane)))
+        .unwrap_or_else(|| panic!("{pane} 栏没有记下正文框"))
+}
+
+#[cfg(test)]
+pub(crate) fn recorded_pane_title(ctx: &egui::Context, pane: &'static str) -> egui::Rect {
+    ctx.data_mut(|d| d.get_temp::<egui::Rect>(pane_title_id(pane)))
+        .unwrap_or_else(|| panic!("{pane} 栏没有记下标题行"))
+}
+
+/// 栏目标题（"源文""译文"）：整行在栏宽内居中，整行从左到右一道**连续**渐变。
+///
+/// egui 0.37 没有渐变文字这条路：一行 `Galley` 只有一个颜色（`Glyph` 不带色位，颜色在
+/// 排版时就烘进 `Row::contents` 的网格里），`Shape` 里也没有裁剪节点。能借的是
+/// `Painter`——它给每个形状记下当下的 `clip_rect`（`painter.rs:213-220`），于是同一行字
+/// 可以画很多遍，每遍把 clip_rect 收到其中一个窄条上，那一遍用渐变的第 i 档色。
+/// 窄条宽度由 `theme::title_bands` 定，两字标题也被切成十几档，看得出走色。
+///
+/// 逐字换色不是渐变（用户 2026-10-28 否掉的正是那个），所以这里**不**按字取色。
+/// 字号取 `TextStyle::Body` 解析出来的值而不是写死 px，否则设置页的字号缩放（FR-2.3）
+/// 对标题不起作用。
+fn pane_title(ui: &mut egui::Ui, pane: &'static str, text: &str) {
+    let font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
+    let size = ui.ctx().fonts_mut(|f| {
+        f.layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::WHITE)
+            .size()
+    });
+    let pad = title_inset(ui.available_width(), size.x);
+    let origin = egui::pos2(ui.cursor().min.x + pad, ui.cursor().min.y);
+    exact_row(ui, size.y, Layout::left_to_right(Align::Min), |_| {});
+
+    let bands = theme::title_bands(size.x);
+    let step = size.x / bands as f32;
+    let outer = ui.clip_rect();
+    for index in 0..bands {
+        let left = origin.x + index as f32 * step;
+        // 最后一条收到行尾，避免步长取整在右端留出一道没画到的缝
+        let right = if index + 1 == bands {
+            origin.x + size.x
+        } else {
+            left + step
+        };
+        let band = egui::Rect::from_min_max(
+            egui::pos2(left, origin.y),
+            egui::pos2(right, origin.y + size.y),
+        );
+        ui.set_clip_rect(band.intersect(outer));
+        ui.painter().text(
+            origin,
+            egui::Align2::LEFT_TOP,
+            text,
+            font_id.clone(),
+            theme::title_color(index as f32 / (bands - 1) as f32),
+        );
+    }
+    ui.set_clip_rect(outer);
+    // 记的是**字占的那一段**，不是整行：行矩形本来就是满栏宽，拿它比"居不居中"等于没量
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(pane_title_id(pane), egui::Rect::from_min_size(origin, size)));
+}
+
+/// 居中的起笔留白：整行宽 `width` 放进宽 `available` 的栏里；放不下时不留（也不给负数，
+/// 负数会把标题推出栏外）
+fn title_inset(available: f32, width: f32) -> f32 {
+    ((available - width) / 2.0).max(0.0)
 }
 
 /// 两栏各自的滚动容器。
@@ -83,12 +190,8 @@ pub(crate) fn scroll_id(pane: &'static str) -> egui::Id {
     egui::Id::NULL.with("ice-translator.scroll").with(pane)
 }
 
-pub fn show(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
-    // 底栏先建：`Panel::bottom` 自下而上占位，两栏拿到的是**扣掉底栏之后**的剩余高度。
-    // v0.7 第一版让两栏自己减 `bar_height`，扣的数与画的数差 3px 就把条子挤出窗口——
-    // 交给 egui 排，"扣多少"和"画多高"才是同一个数（REQ-013 要的就是这个）。
-    let actions = bar_actions(state);
-    bottom_bar(ui, state, effects, &actions);
+/// 文本页的两栏正文。动作与副作用都在 `bottom_bar`（窗口层那条栏）里，这里只读 `state`。
+pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
     // 分两栏不能用 `Ui::columns`：它给每列的矩形用的是 `max_rect` 的底边，不看光标，
     // 底栏刚从光标矩形里扣掉那一条它看不见（实测正文底边压过条子上沿 5px）。
     // `horizontal` 系布局按 `available_size_before_wrap()` 分配，扣掉的高度真的传得进来。
@@ -119,7 +222,7 @@ fn exact_row(ui: &mut egui::Ui, height: f32, layout: Layout, add: impl FnOnce(&m
 
 /// B 区：源文编辑器（F-06）。字数不再挂在它脚注上——v0.7 起住进底栏左侧（REQ-013）。
 fn source_pane(ui: &mut egui::Ui, state: &mut AppState) {
-    ui.label(RichText::new("源文").strong());
+    pane_title(ui, "source", "源文");
     let body = pane_body_height(ui);
     let cursor = ui.cursor();
     let body_rect = egui::Rect::from_min_size(cursor.min, egui::vec2(cursor.width(), body));
@@ -136,38 +239,47 @@ fn source_pane(ui: &mut egui::Ui, state: &mut AppState) {
     } else {
         pane.visuals().widgets.noninteractive.bg_stroke
     };
+    let fill = theme::surface_fill(pane.visuals());
     egui::Frame::group(pane.style())
-        .inner_margin(8.0)
+        .inner_margin(GROUP_INNER_PAD)
+        .fill(fill)
         .stroke(stroke)
         .show(&mut pane, |ui| {
-            ui.allocate_ui(egui::vec2(ui.available_width(), body - 16.0), |ui| {
-                let output = scroll_area("source").show(ui, |ui| {
-                    egui::TextEdit::multiline(&mut state.source)
-                        .id(egui::Id::unique(SOURCE_EDITOR_ID))
-                        .frame(egui::Frame::NONE)
-                        .desired_width(f32::INFINITY)
-                        .min_size(egui::vec2(0.0, body - 16.0))
-                        .hint_text("输入或粘贴文本（Enter 翻译，Shift+Enter 换行）")
-                        // 裸 Enter 归"翻译"，换行只认 Shift+Enter（FR-1.1）
-                        .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
-                        .show(ui)
-                });
-                // 快捷键在绘制之前判定，所以这里记下的是给下一帧用的事实
-                state.focus_in_source = output.inner.response.has_focus();
-                record_scroll(ui.ctx(), "source", &output);
-            });
+            ui.allocate_ui(
+                egui::vec2(ui.available_width(), body - 2.0 * GROUP_INNER_PAD),
+                |ui| {
+                    let output = scroll_area("source").show(ui, |ui| {
+                        egui::TextEdit::multiline(&mut state.source)
+                            .id(egui::Id::unique(SOURCE_EDITOR_ID))
+                            .frame(egui::Frame::NONE)
+                            .desired_width(f32::INFINITY)
+                            .min_size(egui::vec2(0.0, body - 2.0 * GROUP_INNER_PAD))
+                            .hint_text("输入或粘贴文本（Enter 翻译，Shift+Enter 换行）")
+                            // 裸 Enter 归"翻译"，换行只认 Shift+Enter（FR-1.1）
+                            .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
+                            .show(ui)
+                    });
+                    // 快捷键在绘制之前判定，所以这里记下的是给下一帧用的事实
+                    state.focus_in_source = output.inner.response.has_focus();
+                    record_scroll(ui.ctx(), "source", &output);
+                },
+            );
         });
+    record_pane_frame(ui.ctx(), "source", body_rect, fill);
     ui.advance_cursor_after_rect(body_rect);
 
     state.sync_char_count();
 }
 
-/// 两栏共用的正文高度算法：扣掉行间距与固定页脚，剩下的全给正文。
+/// 两栏共用的正文高度算法：标题行以下全部给正文框。
 ///
-/// 底栏不在这里扣：它是 `Panel::bottom`，`show` 里先建，两栏拿到的可用高度本来就少了它。
-/// 页脚要扣：译文栏的徽标行是定高的，源文栏没有页脚也得跟着让出同一格，两个框才一样大。
+/// 底栏不在这里扣：它是窗口层的 `Panel::bottom`，在 `CentralPanel` 之前就把那一条占了，
+/// 两栏拿到的可用高度本来就少了它。v0.7 第一版让两栏自己减 `bar_height`，扣的数与画的数
+/// 差 3px 就把条子挤出窗口——交给 egui 排，"扣多少"和"画多高"才是同一个数（REQ-013）。
+/// 徽标行也不在这里扣：它住进译文框内部（见 `translation_pane`），两栏的框因此都是
+/// "标题以下满高"，底边天然对齐。
 fn pane_body_height(ui: &egui::Ui) -> f32 {
-    (ui.available_height() - ui.spacing().item_spacing.y - PANE_FOOTER_HEIGHT).max(80.0)
+    ui.available_height().max(80.0)
 }
 
 /// F-07：字数常驻；"检测：xx"只在源语言为自动检测时出现（FR-1.2）
@@ -183,7 +295,7 @@ pub fn char_count_text(state: &AppState) -> String {
 
 /// C 区：译文展示（F-08）+ 缓存与耗时标记（F-10）。动作按钮在底栏（F-09，REQ-013）。
 fn translation_pane(ui: &mut egui::Ui, state: &mut AppState) {
-    ui.label(RichText::new("译文").strong());
+    pane_title(ui, "translation", "译文");
     let body = pane_body_height(ui);
     let cursor = ui.cursor();
     let body_rect = egui::Rect::from_min_size(cursor.min, egui::vec2(cursor.width(), body));
@@ -192,25 +304,33 @@ fn translation_pane(ui: &mut egui::Ui, state: &mut AppState) {
             .max_rect(body_rect)
             .layout(Layout::top_down(Align::Min)),
     );
+    let fill = theme::surface_fill(boxed.visuals());
     egui::Frame::group(boxed.style())
-        .inner_margin(8.0)
+        .inner_margin(GROUP_INNER_PAD)
+        .fill(fill)
         .show(&mut boxed, |ui| {
+            // 徽标行住在框**里面**（2026-10-28）：挂在框外时，还没翻译的那 26px 就是
+            // 正文框与底栏之间一段滚不到的空白，用户看到的正是"两个框下面空白太多"。
+            // 定高这件事保留在框内——徽标有没有、有几枚，都不许把译文框顶高顶矮。
+            let inner = body - 2.0 * GROUP_INNER_PAD;
+            let text = (inner - ui.spacing().item_spacing.y - PANE_FOOTER_HEIGHT).max(0.0);
             // ScrollArea 的 auto_shrink(false) 会吃光"可用高度"而不是 set_min_height，
             // 不关进一个定高子 Ui，译文框就会比源文框高出一截
-            ui.allocate_ui(egui::vec2(ui.available_width(), body - 16.0), |ui| {
+            ui.allocate_ui(egui::vec2(ui.available_width(), text), |ui| {
                 let scrolled = scroll_area("translation").show(ui, |ui| {
                     translation_body(ui, state);
                 });
                 record_scroll(ui.ctx(), "translation", &scrolled);
             });
+            exact_row(
+                ui,
+                PANE_FOOTER_HEIGHT,
+                Layout::left_to_right(Align::Center),
+                |ui| badge_row(ui, state),
+            );
         });
+    record_pane_frame(ui.ctx(), "translation", body_rect, fill);
     ui.advance_cursor_after_rect(body_rect);
-    exact_row(
-        ui,
-        PANE_FOOTER_HEIGHT,
-        Layout::left_to_right(Align::Center),
-        |ui| badge_row(ui, state),
-    );
 }
 
 /// 动作条里的三个常驻动作 + 失败动作（F-13）
@@ -276,7 +396,18 @@ fn bar_height(size: egui::Vec2, rows: usize) -> f32 {
     rows as f32 * size.y + (rows - 1) as f32 * BAR_SPACING + 2.0 * BAR_MARGIN
 }
 
-/// F-09 / REQ-013：底栏。`Panel::bottom` 自占一行，左侧字数、右侧按钮组。
+/// F-09 / REQ-013：E 动作底栏。`Panel::bottom` 自占一行，左侧字数、右侧按钮组。
+///
+/// 由 `views::show` 在**窗口层**调用（只有文本页有），不在 `full::show` 里：放进
+/// `CentralPanel` 的话，它下面还压着那层框架的 8px 内边距，按钮就成了"上 7、下 15"
+/// （用户 2026-10-28 那句"按钮上下留白距离不同"）。窗口层的条子与状态条相接、横向满窗，
+/// 上下各留 `BAR_MARGIN`，REQ-013 那句"贴窗口下边"才真的成立。
+///
+/// **这条栏必须自己画底色**，不能像以前那样留空：挪到窗口层之后，它下面不再有
+/// `CentralPanel` 那层 `panel_fill` 兜着，而 eframe 的默认 `clear_color` 是
+/// `rgba(12,12,12,180)`（半透明深灰，`eframe/src/epi.rs:251`）——留空就是在那一条
+/// 窗口区域上开个洞，直接透出桌面（用户 2026-10-28 第二次报的"这颜色怎么回事"）。
+/// 工具条与状态条同样由 `Frame::side_top_panel` 画着 `panel_fill`，看不出这件事。
 ///
 /// 从"浮层"改成"自占"的理由（用户 2026-10-27 那句"底部还是被遮住了"）：浮层不参与布局，
 /// 正文必须靠预留空白躲它，预留公式与实画公式一旦不同步就又被压一行。底栏占位之后，
@@ -284,14 +415,12 @@ fn bar_height(size: egui::Vec2, rows: usize) -> f32 {
 ///
 /// 左右两块各用一个定长子 `Ui`，中间不会互相压：字数那格可以省略号截断，按钮那格不行。
 /// 按钮按 `rev()` 排进 `right_to_left`，视觉顺序仍是「翻译」在最左。
-fn bottom_bar(
-    ui: &mut egui::Ui,
-    state: &mut AppState,
-    effects: &mut Effects,
-    actions: &[BarAction],
-) {
+pub(crate) fn bottom_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
+    let actions = bar_actions(state);
+    let fill = ui.visuals().panel_fill;
+    let frame = egui::Frame::NONE.fill(fill).inner_margin(BAR_MARGIN);
     let panel = egui::Panel::bottom("full_bottom_bar")
-        .frame(egui::Frame::NONE.inner_margin(BAR_MARGIN))
+        .frame(frame)
         .show(ui, |ui| {
             let (size, rows) = bar_layout(ui.available_width() - CHAR_SLOT, actions.len());
             let height = bar_height(size, rows) - 2.0 * BAR_MARGIN;
@@ -341,8 +470,9 @@ fn bottom_bar(
             // 面板高度就塌回"一个按钮"，换出来的第二排直接画到面板外面（与简洁窗同一个坑）
             ui.advance_cursor_after_rect(rect);
         });
-    ui.ctx()
-        .data_mut(|d| d.insert_temp(bottom_bar_id(), panel.response.rect));
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(bottom_bar_id(), (panel.response.rect, fill));
+    });
 }
 
 fn translation_body(ui: &mut egui::Ui, state: &AppState) {
@@ -486,6 +616,15 @@ mod tests {
         }
     }
 
+    /// 无头骨架：与 `views::show` 里文本页同序——窗口层先建底栏，再进 `CentralPanel`。
+    ///
+    /// 少了这层，测的就不是真机那条路径。底栏"上 7、下 15"那 8px（用户 2026-10-28）只在
+    /// `CentralPanel` 里才画得出来：直接调 `show` 时根本没有那层框架的 8px 下内边距。
+    fn run_text_ui(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
+        bottom_bar(ui, state, effects);
+        egui::CentralPanel::default().show(ui, |ui| show(ui, state));
+    }
+
     /// 跑若干帧文本页（宽 `width`、高 720），返回 Context。
     /// 两帧起步：底栏矩形与滚动容器的实测数据都是画完那一帧才记上的，
     /// 单帧读到的还是上一帧（也就是没有）的值。
@@ -501,16 +640,10 @@ mod tests {
             let mut raw = raw_input(width, 720.0);
             raw.time = Some(time);
             time += 1.0 / 60.0;
-            let output = ctx.run_ui(raw, |ui| show(ui, state, effects));
+            let output = ctx.run_ui(raw, |ui| run_text_ui(ui, state, effects));
             output.drop_without_applying_deltas();
         }
         ctx
-    }
-
-    /// 底栏这一行占到的矩形（REQ-013 之后它自占位，布局断言就比它的上沿）
-    fn bar_rect(ctx: &egui::Context) -> egui::Rect {
-        ctx.data_mut(|d| d.get_temp::<egui::Rect>(bottom_bar_id()))
-            .expect("底栏要记下自己的矩形")
     }
 
     /// 某栏滚动容器的可视矩形
@@ -525,7 +658,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut effects = Effects::default();
         let output = ctx.run_ui(raw_input(640.0, MIN_BODY_HEIGHT), |ui| {
-            show(ui, state, &mut effects)
+            run_text_ui(ui, state, &mut effects)
         });
         output.drop_without_applying_deltas();
         ctx
@@ -583,21 +716,33 @@ mod tests {
                 source: egui::MouseWheelSource::Trackpad,
                 modifiers: egui::Modifiers::NONE,
             });
-            let output = ctx.run_ui(raw, |ui| show(ui, state, effects));
+            let output = ctx.run_ui(raw, |ui| run_text_ui(ui, state, effects));
             output.drop_without_applying_deltas();
         }
         scroll_metrics(&ctx, pane).offset
     }
 
-    /// 最小窗口 640×420 扣掉工具条 56、状态条 28、CentralPanel 上下内边距各 8 之后，
-    /// 文本页真正拿到的高度。
-    const MIN_BODY_HEIGHT: f32 = 420.0 - 56.0 - 28.0 - 16.0;
+    /// 最小窗口 640×420 扣掉工具条 56、状态条 28 之后，文本页那一整块（底栏 + 两栏 +
+    /// `CentralPanel` 的上下内边距各 8）拿到的总高。骨架里底栏与中央栏都从这条数往下扣。
+    const MIN_BODY_HEIGHT: f32 = 420.0 - 56.0 - 28.0;
 
-    /// 两栏的正文框必须等大、顶边对齐。
+    /// `CentralPanel::default()` 用的 `Frame::central_panel` 四边各 8px 内边距（egui
+    /// `containers/frame.rs:191`）。底栏挪到窗口层之后，这 8px 落在**正文与底栏之间**，
+    /// 不再压在底栏下面——压在下面时就是"按钮上下留白差 8px"那个缺陷。
+    const CENTRAL_FRAME_PAD: f32 = 8.0;
+
+    /// `Panel` 在靠正文那一侧的外边距里预留的分隔线，宽度取 `noninteractive.bg_stroke`。
+    const PANEL_SEPARATOR: f32 = 1.0;
+
+    /// 两栏正文框 `Frame::group` 的内边距（`source_pane` / `translation_pane` 里那个 8.0）。
+    const GROUP_FRAME_PAD: f32 = 8.0;
+
+    /// 两栏的正文框必须等大、顶边对齐，而且**自己带底色**。
     ///
-    /// 译文栏下面还挂着徽标行（`exact_row` 定高），源文栏 v0.7 起没有页脚（字数住进底栏），
-    /// 栏目的 `min_rect` 因此天然不等高——那不代表框不一样大。这里量两栏滚动容器的矩形：
-    /// 它们才是用户看到的那两个框。故意各跑一次"有译文/无译文"，徽标行高度差也一并锁住。
+    /// 2026-10-28 起量的是 `Frame::group` 那个框本身（`recorded_pane`），不再是里面的滚动
+    /// 容器：徽标行搬进译文框内部之后两个容器的可视高度本来就差一条页脚，而用户看到的两个
+    /// 框是等大的。有译文/无译文各跑一次，锁住"框高不随徽标有无变化"。
+    /// 底色那两条对应同一天那句"这两个框怎么和软件其他的框颜色一样"。
     #[test]
     fn both_panes_get_the_same_box() {
         for with_translation in [true, false] {
@@ -606,8 +751,8 @@ mod tests {
                 state.translation = Some(translated("你好，世界"));
             }
             let ctx = measure_columns(&mut state);
-            let source = scroll_rect(&ctx, "source");
-            let translation = scroll_rect(&ctx, "translation");
+            let (source, source_fill) = recorded_pane(&ctx, "source");
+            let (translation, translation_fill) = recorded_pane(&ctx, "translation");
             assert!(
                 (source.height() - translation.height()).abs() <= 0.5,
                 "两个框不一样高（译文={with_translation}）：源文 {} 译文 {}",
@@ -621,11 +766,144 @@ mod tests {
                 translation.min.y
             );
             assert!(
+                (source.width() - translation.width()).abs() <= 0.5,
+                "两个框不一样宽（译文={with_translation}）：源文 {source:?} 译文 {translation:?}"
+            );
+            assert!(
                 source.max.y <= MIN_BODY_HEIGHT + 0.5,
-                "页脚被挤出栏外（y={}），最小窗口下会被裁掉",
+                "正文框被挤出栏外（y={}），最小窗口下会被裁掉",
                 source.max.y
             );
+            let canvas = ctx.global_style().visuals.panel_fill;
+            for (pane, fill) in [("source", source_fill), ("translation", translation_fill)] {
+                assert_ne!(fill, canvas, "{pane} 栏的框没填色，和窗口背景糊成一片");
+                assert_eq!(fill.a(), 255, "{pane} 栏的框底色不该是半透明：{fill:?}");
+            }
         }
+    }
+
+    /// 正文框要一直长到底栏边上（用户 2026-10-28："原文及译文框下面空白太多"）。
+    ///
+    /// 改之前实测那条空白是 36px（26 的页脚预留 + 8 的中央栏内边距 + 1 的分隔线），
+    /// 而页脚在还没翻译时是一段滚不到的死白。徽标行搬进框内之后，框底到条子上沿之间
+    /// 只该剩 `CentralPanel` 那 8px 内边距——多一像素都是有人又在中间垫了东西。
+    #[test]
+    fn the_pane_boxes_reach_down_to_the_bottom_bar() {
+        let mut state = state();
+        state.translation = Some(translated("你好，世界"));
+        let mut effects = Effects::default();
+        let ctx = run_text_page(&mut state, &mut effects, 1080.0, 2);
+        let (bar, _) = recorded_bar(&ctx);
+        for pane in ["source", "translation"] {
+            let (frame, _) = recorded_pane(&ctx, pane);
+            let gap = bar.min.y - frame.max.y;
+            assert!(
+                (0.0..=CENTRAL_FRAME_PAD + 0.5).contains(&gap),
+                "{pane} 栏的框与底栏之间空出 {gap:.1}px（应为 {:.1}px 的中央栏内边距）：\
+                 框底 {} 条子上沿 {}",
+                CENTRAL_FRAME_PAD,
+                frame.max.y,
+                bar.min.y
+            );
+        }
+    }
+
+    /// 栏目标题居中在栏宽里，且不压进正文框（用户 2026-10-28 那句"居中更好"）。
+    #[test]
+    fn the_pane_titles_are_centered_over_their_pane() {
+        let mut state = state();
+        let mut effects = Effects::default();
+        let ctx = run_text_page(&mut state, &mut effects, 1080.0, 2);
+        for pane in ["source", "translation"] {
+            let (frame, _) = recorded_pane(&ctx, pane);
+            let title = recorded_pane_title(&ctx, pane);
+            let left = title.min.x - frame.min.x;
+            let right = frame.max.x - title.max.x;
+            assert!(
+                (left - right).abs() <= 2.0,
+                "{pane} 栏的标题没居中：左边留 {left:.1}px，右边留 {right:.1}px"
+            );
+            assert!(
+                title.max.y <= frame.min.y + 0.5,
+                "{pane} 栏的标题压进了正文框：标题底边 {} 框顶边 {}",
+                title.max.y,
+                frame.min.y
+            );
+        }
+    }
+
+    /// 标题这一帧到底被画成什么样：直接数背景层里的文字形状。
+    ///
+    /// 锁的是"渐变"而不是"拼色"（用户 2026-10-28："你搞两个不同颜色的字放一起就叫艺术字
+    /// 了？"）。逐字换色的写法只有两个字模形状；连续渐变是**同一行字画 N 遍、每遍裁到一条
+    /// 窄带上**，所以这里要看到 N 个形状、每个的文字都是完整的"源文"，而且 N 条裁剪矩形
+    /// 首尾相接铺满标题那一行。
+    #[test]
+    fn the_title_is_painted_as_clipped_bands_of_the_whole_word() {
+        let mut state = state();
+        let mut effects = Effects::default();
+        let ctx = egui::Context::default();
+        // 形状在这一帧的 `FullOutput.shapes` 里——`end_pass` 会把它们从 graphics 层抽走，
+        // 所以不能像别的走查测试那样跑完再从 `ctx.graphics` 找。
+        let mut shapes: Vec<egui::epaint::ClippedShape> = Vec::new();
+        let mut time = 0.0;
+        for _ in 0..2 {
+            let mut raw = raw_input(1080.0, 720.0);
+            raw.time = Some(time);
+            time += 1.0 / 60.0;
+            let mut output = ctx.run_ui(raw, |ui| run_text_ui(ui, &mut state, &mut effects));
+            shapes = std::mem::take(&mut output.shapes);
+            output.drop_without_applying_deltas();
+        }
+
+        for pane in ["source", "translation"] {
+            let word = if pane == "source" { "源文" } else { "译文" };
+            let title = recorded_pane_title(&ctx, pane);
+            let bands: Vec<egui::Rect> = shapes
+                .iter()
+                .filter(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) => text.galley.text().replace(' ', "") == word,
+                    _ => false,
+                })
+                .map(|clipped| clipped.clip_rect)
+                .collect();
+            assert!(
+                bands.len() > 6,
+                "{pane} 栏的标题被画成 {} 段：一行字只画两三遍就是逐字换色，不是渐变",
+                bands.len()
+            );
+            assert_eq!(
+                bands.len(),
+                theme::title_bands(title.width()),
+                "{pane} 栏的标题段数和 `title_bands` 算出来的对不上"
+            );
+            // 每一条都裁在标题那一行里，且相邻条子的左沿就是上一条的右沿
+            let mut left = title.min.x - 0.5;
+            for clip in &bands {
+                assert!(
+                    (clip.min.x - left).abs() <= 0.6,
+                    "{pane} 栏的色带之间有缝：上一条到 {left:.1}，这一条从 {:.1} 开始",
+                    clip.min.x
+                );
+                assert!(
+                    clip.max.x > clip.min.x && clip.min.y <= title.min.y + 0.5,
+                    "{pane} 栏的色带矩形不像一条竖带：{clip:?}"
+                );
+                left = clip.max.x;
+            }
+            assert!(
+                (left - title.max.x).abs() <= 0.6,
+                "{pane} 栏的色带没铺满整行：铺到 {left:.1}，标题宽到 {:.1}",
+                title.max.x
+            );
+        }
+    }
+
+    #[test]
+    fn title_inset_centers_the_row_and_never_pushes_it_outside() {
+        assert_eq!(title_inset(300.0, 100.0), 100.0);
+        // 栏比标题还窄时不留负数（负数会把字推出栏外）
+        assert_eq!(title_inset(50.0, 100.0), 0.0);
     }
 
     /// W-1.16：粘贴 18,000 字符之后，源文框必须老老实实待在自己那一栏里，
@@ -634,6 +912,9 @@ mod tests {
     /// 断言落在滚动容器的实测数据上而不是栏目的 `min_rect`：两栏的正文都画进"丢弃的子 Ui"
     /// 再手工推进光标（底边对齐就是这么做的），子 Ui 里溢出多少，`min_rect` 一概看不见——
     /// 这正是 D-1/D-3 那批布局测试放走这个缺陷的原因。
+    ///
+    /// "两个框一样大"量的是 `recorded_pane`（用户看到的那个圆角框），不是滚动容器：
+    /// 徽标行住进译文框内部之后，容器本来就比源文那个矮一条页脚（2026-10-28）。
     #[test]
     fn a_huge_paste_keeps_the_source_editor_inside_its_pane() {
         let mut state = state();
@@ -643,12 +924,14 @@ mod tests {
         let ctx = measure_columns(&mut state);
         let source = scroll_rect(&ctx, "source");
         let translation = scroll_rect(&ctx, "translation");
+        let (source_box, _) = recorded_pane(&ctx, "source");
+        let (translation_box, _) = recorded_pane(&ctx, "translation");
 
         assert!(
-            (source.height() - translation.height()).abs() <= 0.5,
+            (source_box.height() - translation_box.height()).abs() <= 0.5,
             "长文粘贴之后两个框不一样大：源文 {} 译文 {}",
-            source.height(),
-            translation.height()
+            source_box.height(),
+            translation_box.height()
         );
         for (pane, rect) in [("source", source), ("translation", translation)] {
             let metrics = scroll_metrics(&ctx, pane);
@@ -688,6 +971,10 @@ mod tests {
 
     /// REQ-013：底栏自占一行，排在两栏之后。四边都在窗口内，且不压任何一栏的正文可视区
     /// ——上一版它是浮层，正文靠预留躲它，预留公式与实画公式不同步就又盖住一行。
+    ///
+    /// 后两条锁的是 2026-10-28 那个缺陷（"按钮上下留白距离不同"）：底栏当年画在
+    /// `CentralPanel` 里，被那层框架的 8px 下内边距顶离窗口底边，按钮变成上 6、下 14。
+    /// 现在它是窗口层的栏，必须贴住底边、横满整窗，条子里外各留一份 `BAR_MARGIN`。
     #[test]
     fn the_bottom_bar_occupies_its_own_row_below_both_panes() {
         let mut state = state();
@@ -695,7 +982,7 @@ mod tests {
         state.sync_char_count();
         let mut effects = Effects::default();
         let ctx = run_text_page(&mut state, &mut effects, 1080.0, 2);
-        let bar = bar_rect(&ctx);
+        let (bar, _) = recorded_bar(&ctx);
         let win = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1080.0, 720.0));
 
         assert!(
@@ -715,6 +1002,19 @@ mod tests {
                 bar.min.y
             );
         }
+        assert!(
+            bar.min.x <= 0.5 && bar.max.x >= win.max.x - 0.5,
+            "底栏没有横满整窗（{bar:?}），两侧会被页框内边距切出缺口"
+        );
+        assert!(
+            bar.max.y >= win.max.y - 0.5,
+            "底栏下方空出 {}px：它被容器的内边距顶离了窗口底边，按钮上下留白就不等了",
+            win.max.y - bar.max.y
+        );
+        assert!(
+            (bar.height() - (BUTTON_SIZE.y + 2.0 * BAR_MARGIN + PANEL_SEPARATOR)).abs() <= 0.5,
+            "底栏不是'一排按钮 + 上下各一份留白 + 一条分隔线'：{bar:?}"
+        );
     }
 
     /// 退让顺序是纯函数（与字体度量无关）：标准档排得下就用标准档；排不下先把整排调窄一档；
@@ -749,7 +1049,7 @@ mod tests {
         });
         let mut effects = Effects::default();
         let ctx = run_text_page(&mut state, &mut effects, 400.0, 2);
-        let bar = bar_rect(&ctx);
+        let (bar, _) = recorded_bar(&ctx);
 
         assert!(
             bar.max.x <= 400.0 + 0.5,
@@ -793,7 +1093,7 @@ mod tests {
                 source: egui::MouseWheelSource::Trackpad,
                 modifiers: egui::Modifiers::NONE,
             });
-            ctx.run_ui(raw, |ui| show(ui, &mut state, &mut effects))
+            ctx.run_ui(raw, |ui| run_text_ui(ui, &mut state, &mut effects))
                 .drop_without_applying_deltas();
         }
 
@@ -802,7 +1102,7 @@ mod tests {
                 d.get_temp::<(egui::Rect, egui::Vec2, egui::Vec2)>(scroll_id("translation"))
             })
             .expect("译文栏没有滚动容器");
-        let bar = bar_rect(&ctx);
+        let (bar, _) = recorded_bar(&ctx);
 
         // 先确认真滚到了底，否则下面那条"没被盖住"是白过的
         assert!(
@@ -818,18 +1118,27 @@ mod tests {
             inner.max.y,
             bar.min.y
         );
-        // 视口底边到条子上沿之间只该有译文栏自己的徽标行（`PANE_FOOTER_HEIGHT`）、
-        // 它上面一条行距（3px）和底栏的上内边距，合计 ≈35px；再多的就是凭空留出的空白
+        // 视口底边到条子上沿之间该有的是：译文栏 `Frame::group` 的下内边距、徽标行
+        // （`PANE_FOOTER_HEIGHT`）和它上面那条行距，再加 `CentralPanel` 的下内边距与底栏的
+        // 分隔线；再多的就是凭空留出的空白（滚不到的那段假滚动条）
         assert!(
-            bar.min.y - inner.max.y <= PANE_FOOTER_HEIGHT + 3.0 + BAR_MARGIN + 5.0,
-            "正文与底栏之间空出 {:?}px，比徽标行那一条还多",
+            bar.min.y - inner.max.y
+                <= PANE_FOOTER_HEIGHT
+                    + 3.0
+                    + GROUP_FRAME_PAD
+                    + CENTRAL_FRAME_PAD
+                    + PANEL_SEPARATOR
+                    + 2.0,
+            "正文与底栏之间空出 {:.1}px，比徽标行那一条还多",
             bar.min.y - inner.max.y
         );
     }
 
     fn run_full(state: &mut AppState, effects: &mut Effects) {
         let ctx = egui::Context::default();
-        let output = ctx.run_ui(raw_input(1080.0, 720.0), |ui| show(ui, state, effects));
+        let output = ctx.run_ui(raw_input(1080.0, 720.0), |ui| {
+            run_text_ui(ui, state, effects)
+        });
         output.drop_without_applying_deltas();
     }
 
@@ -915,7 +1224,7 @@ mod tests {
         let ctx = egui::Context::default();
         ctx.memory_mut(|mem| mem.request_focus(egui::Id::unique(SOURCE_EDITOR_ID)));
         let output = ctx.run_ui(raw_input(1080.0, 720.0), |ui| {
-            show(ui, &mut state, &mut effects)
+            run_text_ui(ui, &mut state, &mut effects)
         });
         output.drop_without_applying_deltas();
         assert!(state.focus_in_source, "Enter 能不能翻译全靠这个标记");
