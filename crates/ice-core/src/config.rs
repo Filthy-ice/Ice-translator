@@ -19,7 +19,7 @@ pub const KEYCHAIN_ACCOUNT: &str = "ai-api-key";
 /// 两处各写一份字面量就会漂（P4 的简洁窗高度下限写成 64，与设计的数值不一致）。
 pub const MIN_FULL_W: f32 = 640.0;
 pub const MIN_FULL_H: f32 = 420.0;
-/// 简洁窗的最小内尺寸（FR-3.2，CHG-004 REQ-001/REQ-012：可缩放，但不小于 400×160）。
+/// 简洁窗的最小内尺寸（FR-3.2，CHG-004 REQ-001/REQ-012：可缩放，但不小于 420×160）。
 ///
 /// 高度两次抬高：v0.5 从 96 抬到 130（动作行改回与全量窗同字号同内边距后，最窄窗里它要占
 /// 两行，96px 把译文区挤成零高）；v0.7 抬到 160（REQ-012 的两带 1:1 分摊要在下限处也让
@@ -29,7 +29,11 @@ pub const MIN_FULL_H: f32 = 420.0;
 /// 「退出」被挤到第二行。为什么是 400 由 `ice-app::views::compact` 里的
 /// `the_action_row_stays_on_one_line_at_the_minimum_width` 按字形度量算出来并锁住
 /// （七颗按钮的字宽 + 内边距 + 间距 + 面板边距 = 348px，400 再留 48px 给行尾的拖窗把手）。
-pub const MIN_COMPACT_W: f32 = 400.0;
+///
+/// 2026-10-28 晚间同一轮走查又在行首加了主题切换框（太阳/月亮/自动，与两颗汉字的按钮等宽
+/// 42px），八项 = 390px + 面板边距 16 + 「退出」钉到右边缘后中间那块把手要的 2×`GAP_PADDING`
+/// = 414px，400 那一档会重新换行，所以下限抬到 **420**（默认宽 460 不动，仍有 54px 余量）。
+pub const MIN_COMPACT_W: f32 = 420.0;
 pub const MIN_COMPACT_H: f32 = 160.0;
 
 /// 失焦半透明可调区间的两端（FR-3.7）。
@@ -105,6 +109,18 @@ pub enum Theme {
     System,
     Light,
     Dark,
+}
+
+impl Theme {
+    /// 悬浮窗那颗切换框单点循环的下一档（用户 2026-10-28：「浅色/深色/自动三种状态，
+    /// 自动在深色后」）。起点是默认值 `System`，所以「自动」点下去回到「浅色」。
+    pub const fn next(self) -> Self {
+        match self {
+            Theme::System => Theme::Light,
+            Theme::Light => Theme::Dark,
+            Theme::Dark => Theme::System,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -482,6 +498,20 @@ mod tests {
         assert!(cfg.ui.always_on_top);
         assert_eq!(cfg.ui.font_scale, 1.0);
         assert_eq!(cfg.translation.target, Language::ZhHans);
+    }
+
+    /// 悬浮窗切换框的单点循环：浅色 → 深色 → 自动 → 浅色（用户 2026-10-28 指定的顺序，
+    /// 「自动在深色后」）。三次点完必须回到原点，否则循环会漂到某一档出不去。
+    #[test]
+    fn theme_cycles_light_dark_system_and_back() {
+        assert_eq!(Theme::Light.next(), Theme::Dark);
+        assert_eq!(Theme::Dark.next(), Theme::System);
+        assert_eq!(Theme::System.next(), Theme::Light);
+        assert_eq!(
+            Theme::default().next().next().next(),
+            Theme::default(),
+            "默认档连点三次要回到默认档"
+        );
     }
 
     #[test]
