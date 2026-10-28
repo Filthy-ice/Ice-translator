@@ -99,8 +99,15 @@ pub fn auto_reverse_target(detected: Language, target: Language) -> Option<Langu
     }
 }
 
-/// 提示条自动消失的时长
-pub const TOAST_VISIBLE: std::time::Duration = std::time::Duration::from_secs(4);
+/// 提示条从出现到**完全淡出**的总时长（用户 2026-10-28 变更 I："所有的提示类弹窗都是中心弹窗
+/// 500ms内淡化消失，不应该有关闭的操作和按钮"）。以前是四秒常驻 + 一颗 `×`，
+/// 现在整条lifetime就是一次线性淡出：到点为 0，不留可点的东西。
+pub const TOAST_LIFETIME: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// 淡出期间的重绘步长。线性降透明度要连续几帧才看得出"在淡"，一帧 16ms 把
+/// `TOAST_LIFETIME` 切成约 30 帧；只在还有提示条在屏上时按这个步长续重绘，
+/// 空闲时一次都不续（NFR-2 的空闲 1% 不受影响）。
+pub const TOAST_FADE_STEP: std::time::Duration = std::time::Duration::from_millis(16);
 
 #[derive(Debug, Clone)]
 pub struct Toast {
@@ -111,7 +118,17 @@ pub struct Toast {
 
 impl Toast {
     pub fn expired(&self) -> bool {
-        self.shown_at.elapsed() >= TOAST_VISIBLE
+        self.shown_at.elapsed() >= TOAST_LIFETIME
+    }
+
+    /// 此刻该用几分不透明度画自己：出生那一刻 1.0，`TOAST_LIFETIME` 那一刻 0.0，中间线性。
+    ///
+    /// 这是**画**的一帧里现算的，不是记下来的：一帧只画一次，重绘到了就该更淡。
+    /// 越界（年龄为负或远超 lifetime）夹回 0~1，宁可不画也不给出半透明的实心字。
+    pub fn opacity(&self) -> f32 {
+        let age = self.shown_at.elapsed().as_secs_f32();
+        let life = TOAST_LIFETIME.as_secs_f32();
+        (1.0 - age / life).clamp(0.0, 1.0)
     }
 }
 
@@ -289,13 +306,9 @@ impl AppState {
         }
     }
 
-    pub fn dismiss_toast(&mut self, index: usize) {
-        if index < self.toasts.len() {
-            self.toasts.remove(index);
-        }
-    }
-
     /// 每帧调一次：过期的提示条自动消失。返回是否有变化（决定要不要请求重绘）。
+    ///
+    /// 这里**没有**"用户点掉一条"那条路（变更 I）：提示条只剩自己会消失这一种结束方式。
     pub fn tick_toasts(&mut self) -> bool {
         let before = self.toasts.len();
         self.toasts.retain(|toast| !toast.expired());
@@ -712,6 +725,38 @@ mod tests {
             "显式设定不许应用替用户改"
         );
         assert!(state.toasts.is_empty(), "没改语言就不该有提示条");
+    }
+
+    /// 变更 I（2026-10-28）：提示条整条 lifetime 就是一次线性淡出。
+    /// 判的是"多老有多淡"这条式子本身——画它的那一侧只乘这一个数，别处不再另算一套。
+    #[test]
+    fn a_toast_fades_linearly_and_is_gone_at_five_hundred_ms() {
+        let mut state = app_with_source("hello");
+        state.toasts.clear();
+        state.toast(Tone::Info, "已复制");
+        let toast = &state.toasts[0];
+        assert!(
+            (toast.opacity() - 1.0).abs() < 0.05,
+            "刚出生的提示条几乎该是实心的，实得 {}",
+            toast.opacity()
+        );
+
+        // 把时间戳拨到半程：不要求精确到 0.5，只要求"确实在往下走且没走过头"
+        state.toasts[0].shown_at -= TOAST_LIFETIME / 2;
+        let middle = state.toasts[0].opacity();
+        assert!(
+            (0.4..=0.65).contains(&middle),
+            "半程该淡到一半上下，实得 {middle}"
+        );
+
+        state.toasts[0].shown_at -= TOAST_LIFETIME;
+        assert_eq!(
+            state.toasts[0].opacity(),
+            0.0,
+            "过了点就该完全不画，不许留一点残影"
+        );
+        assert!(state.tick_toasts(), "到点要收掉，并让调用方补一次重绘");
+        assert!(state.toasts.is_empty());
     }
 
     /// 检不出语言（纯数字）：不翻、不拦，请求按 P4 的回退照常发

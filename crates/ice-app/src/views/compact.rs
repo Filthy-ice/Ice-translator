@@ -60,9 +60,6 @@ const TRANSLATION_PANE: &str = "compact_translation";
 /// 输入框滚动容器的 id（`&'static str` 是给 `full::record_scroll` 用的）
 const SOURCE_PANE: &str = "compact_source_pane";
 
-/// 提示条与输入行底边的间距（REQ-005：不遮住正在输入的字）
-const TOAST_GAP: f32 = 4.0;
-
 pub fn show(
     ui: &mut egui::Ui,
     state: &mut AppState,
@@ -83,7 +80,7 @@ pub fn show(
             translation_pane(ui, state, effects, body_band);
         });
 
-    toasts(&ctx, state, toast_offset(&ctx));
+    toasts(&ctx, state);
 }
 
 /// 两带的高度分摊（REQ-012）。纯函数：中央区（已扣掉动作行）的可用高进，两条带的**内容**高出。
@@ -102,14 +99,6 @@ pub fn band_heights(available_h: f32) -> (f32, f32) {
     }
     let input = INPUT_HEIGHT.min(room);
     (input, (room - input).max(0.0))
-}
-
-/// 提示条离窗口顶部的距离：越过输入带。带高每帧由 `band_heights` 决定，
-/// 这个距离只能读它这一帧真正占到的底边，写死会把文字压在提示条下面。
-fn toast_offset(ctx: &egui::Context) -> f32 {
-    ctx.data_mut(|d| d.get_temp::<Rect>(rect_id("input")))
-        .map(|band| band.max.y + TOAST_GAP)
-        .unwrap_or(INPUT_HEIGHT + TOAST_GAP)
 }
 
 /// 失焦时把"构成窗体的那几层底色"一起降透明（REQ-007）。
@@ -328,8 +317,14 @@ fn theme_toggle(ui: &mut egui::Ui, state: &mut AppState) -> Rect {
     response.rect
 }
 
-/// 动作行：「☀/☾/自动 / 复制 / 设置 / 机翻|AI / 置顶 —— 退出（钉右）」，
+/// 动作行：「☀/☾/自动 / 复制 / 设置 / 机翻|AI —— 退出（钉右）」，
 /// 正常字号、正常按钮内边距，左排与「退出」之间剩下的真空白是第三块把手。
+///
+/// 「置顶」那颗文字开关按用户 2026-10-28 的原话删掉了（"置顶不应该是文字，应该和大部分软件
+/// 一样，可以在标题栏最右侧有一个类似于钉子的图标"）。这一格现在由标题栏那颗图钉承担
+/// （`system::pin`；两种形态共用同一个 `NSWindow`，所以全量窗也一起有了），`Cmd+Shift+P`
+/// 与设置页那一格照旧——**删的是文字，不是能力**，点的仍是 `Effects::toggle_topmost`
+/// 那一条通道，不另开第二条置顶实现。
 ///
 /// 「全量」那颗按钮按用户 2026-10-28 的原话删掉了（"悬浮窗更换全量的按钮可以不要，
 /// 将标题栏最大化功能替换为切换全量"）。切回全量现在只有两个入口：标题栏那颗绿灯
@@ -337,8 +332,9 @@ fn theme_toggle(ui: &mut egui::Ui, state: &mut AppState) -> Rect {
 /// hover 提示里那句快捷键也因此不能丢。
 ///
 /// 「退出」为什么单独钉到行的右边缘（用户 2026-10-28："悬浮窗退出放在右下角"）：它是这一行
-/// 唯一的"离开"动作，跟在 `置顶` 后面时和开关挤在一起。它在一条 `right_to_left` 子带里，
-/// 子带的竖向范围取左排**实测**出来的那一格，所以行高仍由左排决定。
+/// 唯一的"离开"动作，跟在左排最后一颗后面时和开关挤在一起（那次它后面还站着「置顶」）。
+/// 它在一条 `right_to_left` 子带里，子带的竖向范围取左排**实测**出来的那一格，
+/// 所以行高仍由左排决定。
 ///
 /// 高度不再 `exact_size`：这一行是自然高度，一行装得下就一行，装不下换行成两行。
 /// 它是 `Panel::bottom`，占掉的高度由 egui 从中央区里扣，`band_heights` 拿到的可用高
@@ -387,15 +383,6 @@ fn action_row(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai
             let engine = engine_picker(ui, state, effects, ai_available);
             record(&ctx, "engine", engine);
             left = left.union(engine);
-
-            let top = ui
-                .selectable_label(state.config.ui.always_on_top, "置顶")
-                .on_hover_text("窗口置顶（Cmd+Shift+P）");
-            record(&ctx, "btn_top", top.rect);
-            left = left.union(top.rect);
-            if top.clicked() {
-                effects.toggle_topmost = true;
-            }
         });
 
         // REQ-011：退出要看得见。红灯/`Cmd+W` 是收进后台（FR-5.2），不是退出，
@@ -892,7 +879,6 @@ mod tests {
             "btn_theme",
             "btn_copy",
             "btn_settings",
-            "btn_top",
             "btn_quit",
             "engine",
             "translation",
@@ -914,7 +900,6 @@ mod tests {
             rect(&h.ctx, "btn_copy"),
             rect(&h.ctx, "btn_settings"),
             rect(&h.ctx, "engine"),
-            rect(&h.ctx, "btn_top"),
             rect(&h.ctx, "btn_quit"),
             rect(&h.ctx, "bar_gap"),
         ];
@@ -938,7 +923,7 @@ mod tests {
         let mut state = state();
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, true);
-        for salt in ["btn_theme", "btn_copy", "btn_settings", "btn_top", "engine"] {
+        for salt in ["btn_theme", "btn_copy", "btn_settings", "engine"] {
             let r = rect(&h.ctx, salt);
             assert!(
                 r.height() >= 20.0 - 0.5,
@@ -1086,14 +1071,14 @@ mod tests {
         h.warm(&mut state, &mut effects, false);
         let gap = rect(&h.ctx, "bar_gap");
         let quit = rect(&h.ctx, "btn_quit");
-        let top = rect(&h.ctx, "btn_top");
+        let engine = rect(&h.ctx, "engine");
         assert!(
             gap.width() >= 20.0,
             "宽窗下中间那段空白应当留下把手：{gap:?}"
         );
         assert!(
-            gap.min.x >= top.max.x && gap.max.x <= quit.min.x,
-            "把手跑出了\"左排之后、退出之前\"那一段：{gap:?}（置顶 {top:?}、退出 {quit:?}）"
+            gap.min.x >= engine.max.x && gap.max.x <= quit.min.x,
+            "把手跑出了\"左排之后、退出之前\"那一段：{gap:?}（引擎分段 {engine:?}、退出 {quit:?}）"
         );
         assert!(drag_probe(size, gap.center()), "动作行中间的把手拖不动");
 
@@ -1151,20 +1136,24 @@ mod tests {
         assert!(!effects.toggle_mode, "设置走自己的通道，不是普通的形态切换");
     }
 
-    /// v0.5：停靠指示按钮下线（停靠由边缘自动判定，REQ-003），这一行只剩置顶一个开关
+    /// 变更 I（用户 2026-10-28："置顶不应该是文字，应该和大部分软件一样，可以在标题栏最右侧
+    /// 有一个类似于钉子的图标"）：动作行里那颗文字开关下线。
+    ///
+    /// 这条量的是**没有**——那颗按钮的矩形根本不该被记下来。删的是文字不是能力：
+    /// 置顶现在由标题栏那颗图钉承担（`system::pin`，点击与 `Cmd+Shift+P` 落在
+    /// 同一个 `effects.toggle_topmost` 上），两种形态共用同一个原生窗口所以都有。
     #[test]
-    fn the_topmost_indicator_is_a_button() {
+    fn the_action_row_has_no_topmost_text_switch() {
         let mut h = Harness::new(window().size());
         let mut state = state();
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
-        h.click(
-            &mut state,
-            &mut effects,
-            false,
-            rect(&h.ctx, "btn_top").center(),
+        assert!(
+            h.ctx
+                .data_mut(|d| d.get_temp::<Rect>(rect_id("btn_top")))
+                .is_none(),
+            "动作行里还画着一颗置顶按钮——变更 I 要它变成标题栏的图钉"
         );
-        assert!(effects.toggle_topmost);
     }
 
     /// REQ-011：退出在悬浮窗上看得见、点得动。它只置一个意图，怎么落盘怎么关窗是 `app.rs` 的事
@@ -1193,7 +1182,7 @@ mod tests {
         h.warm(&mut state, &mut effects, false);
         let quit = rect(&h.ctx, "btn_quit");
         let bar = rect(&h.ctx, "bar");
-        let top = rect(&h.ctx, "btn_top");
+        let engine = rect(&h.ctx, "engine");
 
         assert!(
             (bar.max.x - PANEL_X_MARGIN - quit.max.x).abs() <= 0.5,
@@ -1204,8 +1193,8 @@ mod tests {
             "\"退出\"跑出了动作行那一格，不在右下角：{quit:?}（行 {bar:?}）"
         );
         assert!(
-            quit.min.x > top.max.x,
-            "\"退出\"还跟在\"置顶\"后面挨着，没有钉到右边：{top:?} → {quit:?}"
+            quit.min.x > engine.max.x,
+            "\"退出\"还跟在左排后面挨着，没有钉到右边：{engine:?} → {quit:?}"
         );
     }
 
@@ -1380,7 +1369,7 @@ mod tests {
             actions.max.x <= 560.0 + 0.5,
             "宽窗里动作行溢出：{actions:?}"
         );
-        for salt in ["btn_theme", "btn_copy", "btn_settings", "btn_top", "engine"] {
+        for salt in ["btn_theme", "btn_copy", "btn_settings", "engine"] {
             let r = rect(&h.ctx, salt);
             assert!(r.height() >= 20.0 - 0.5, "{salt} 在宽窗里被压小了：{r:?}");
         }
@@ -1434,7 +1423,8 @@ mod tests {
     /// 所以宽度需求比"行尾留 4px"那一版又多 4px。
     ///
     /// 按钮文字从**这一帧真的画出来的**文字形状里取：改了文案、加了按钮，这条跟着变。
-    /// 跑在 `Theme::Light`（图案档，框内没有文字）下，文字清单才仍然是那六颗按钮。
+    /// 跑在 `Theme::Light`（图案档，框内没有文字）下，文字清单才仍然是那五颗按钮
+    ///（变更 I 之前是六颗：那颗「置顶」换成标题栏图钉后从这一行消失了）。
     #[test]
     fn the_action_row_stays_on_one_line_at_the_minimum_width() {
         let mut h = Harness::new(window().size());
@@ -1459,7 +1449,7 @@ mod tests {
             .collect();
         assert_eq!(
             labels,
-            ["复制", "设置", "机翻", "AI", "置顶", "退出"],
+            ["复制", "设置", "机翻", "AI", "退出"],
             "动作行的按钮与文档记的不一致，下面的宽度就得重算"
         );
 
@@ -1482,13 +1472,17 @@ mod tests {
             + 2.0 * PANEL_X_MARGIN
             + 2.0 * GAP_PADDING;
 
-        // 先自校：这套算法必须能解释用户看到的那次换行（320 那一档「退出」掉到了第二行），
-        // 也必须解释"为什么下限停在 400、不跟着主题框那次抬到 420"——「全量」那颗删掉了，
-        // 一行的需求比加了主题框那一版少了整整一颗按钮。
+        // 两头自校：① 这套按度量的算法是**往宽里偏**的估计（汉字算满 1em、拉丁按 0.6em 估），
+        // 所以它只能证明"合法下限放得下"，不能反过来说"比它窄一像素就该换行"——
+        // 真布局在 313 那一档照样装得下一行。换行机制本身由
+        // `a_row_that_cannot_fit_wraps_instead_of_overflowing` 在 200px 那里锁住。
+        // ② 原来那条"必须解释 320 那一档那次换行"的历史判据跟着置顶按钮一起退休了：
+        // 少了一整颗按钮之后一行只要 314px，320 已经装得下，再拿它当溢出证据就成了假话。
+        let row = rect(&h.ctx, "actions");
         assert!(
-            needed > 320.0,
-            "按度量算这一行在 320 那一档还放得下（{needed} ≤ 320），\
-             那'用户看到的换行'就没被这套算法解释住"
+            row.height() < 40.0,
+            "最窄简洁窗（{:?}）里动作行换行了，按度量需要 {needed}：{row:?}",
+            window().size()
         );
         assert!(
             needed <= window().width(),
