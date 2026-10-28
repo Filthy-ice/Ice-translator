@@ -19,7 +19,7 @@ use crate::state::AppState;
 /// 与 `Config::sanitized` 共用同一份定义，两边不会各写各的字面量。
 pub const MIN_FULL_SIZE: Vec2 = Vec2::new(MIN_FULL_W, MIN_FULL_H);
 
-/// 简洁模式的最小内尺寸（FR-3.2 改：可缩放，下限 320×160，无上限）
+/// 简洁模式的最小内尺寸（FR-3.2 改：可缩放，下限 400×160，无上限）
 pub const MIN_COMPACT_SIZE: Vec2 = Vec2::new(MIN_COMPACT_W, MIN_COMPACT_H);
 
 /// 隐藏期间的重绘心跳。
@@ -347,20 +347,27 @@ pub fn initial_viewport(cfg: &UiConfig) -> ViewportBuilder {
         ))
 }
 
-/// 失焦时窗体底色的不透明度（FR-3.7、REQ-007）。
+/// 失焦时窗体的不透明度（FR-3.7、REQ-007）。
 ///
-/// 只有"简洁形态 + 没有焦点 + 用户没关这个开关"才降到 85%，其余一律 100%：
+/// 只有"简洁形态 + 没有焦点 + 用户没关这个开关"才用配置里那一档，其余一律 100%：
 /// 全量窗是要盯着看内容的，不该因为点了一下别处就变淡。
-pub const fn dim_alpha(mode: UiMode, focused: bool, dim_enabled: bool) -> f32 {
+///
+/// 降到多少由用户说了算（`config.ui.unfocused_alpha`，2026-10-28 起可调），这里不再写死
+/// 常量——数值只有一处出处，就是配置。调用方给的值应已由 `Config::sanitized` 夹进
+/// `MIN_UNFOCUSED_ALPHA..=MAX_UNFOCUSED_ALPHA`，本函数不做二次夹取：
+/// 它是纯判定，越界护栏属于加载与写入侧。
+pub const fn dim_alpha(
+    mode: UiMode,
+    focused: bool,
+    dim_enabled: bool,
+    unfocused_alpha: f32,
+) -> f32 {
     if matches!(mode, UiMode::Compact) && !focused && dim_enabled {
-        DIM_ALPHA
+        unfocused_alpha
     } else {
         1.0
     }
 }
-
-/// 失焦半透明降到的不透明度（"透 15%"）
-const DIM_ALPHA: f32 = 0.85;
 
 pub const fn window_level(always_on_top: bool) -> WindowLevel {
     if always_on_top {
@@ -547,15 +554,16 @@ pub fn apply(
     pending: &mut PendingGeometry,
 ) {
     if state.hidden {
-        state.config.ui.mode = mode;
-        state.mark_config_dirty();
+        state.set_mode(mode);
         return;
     }
-    // 先把当前几何记回配置，否则切回来时会跳到上一次的旧位置
+    // 先把当前几何记回配置，否则切回来时会跳到上一次的旧位置。
+    // 这一句必须在改 mode **之前**：`capture` 按 mode 选槽，先翻了 mode 就是把切换前的实时
+    // 尺寸记进目标槽（缺陷 D-13，见 `AppState::next_mode`）。
     capture(ctx, state, pending);
-    state.config.ui.mode = mode;
-    state.mark_config_dirty();
+    state.set_mode(mode);
     let target = target_size(&state.config.ui, mode);
+    tracing::debug!(?mode, w = target.x, h = target.y, "下发形态切换的几何命令");
     for command in commands_for_mode(&state.config.ui, mode) {
         ctx.send_viewport_cmd(command);
     }
@@ -564,8 +572,12 @@ pub fn apply(
     ctx.request_repaint();
 }
 
+/// 切到另一形态。源文、译文、语言对、页签一律保留，且不重发请求（FR-3.3）。
+///
+/// 这里**不**先翻 `config.ui.mode`：`apply` 开头那次 `capture` 要按旧形态把实时几何记回源槽，
+/// 先翻了就把切换前的尺寸写进目标槽，`InnerSize` 随之变成空操作（缺陷 D-13）。
 pub fn toggle(ctx: &egui::Context, state: &mut AppState, pending: &mut PendingGeometry) -> UiMode {
-    let mode = state.toggle_mode();
+    let mode = state.next_mode();
     apply(ctx, state, mode, pending);
     mode
 }
@@ -842,7 +854,7 @@ mod tests {
         );
     }
 
-    /// 两个形态各带自己的下限：切到简洁时不得把 640×420 带过去，切回全量时不得把 320×160 留下。
+    /// 两个形态各带自己的下限：切到简洁时不得把 640×420 带过去，切回全量时不得把 400×160 留下。
     /// 这条锁的是"约束跟着形态走"，写错就是 W-2.1 复发（窗口缩不下去 / 全量窗能缩到看不见控件）。
     #[test]
     fn each_mode_carries_its_own_minimum_and_never_inherits_the_other() {
@@ -858,7 +870,7 @@ mod tests {
         assert!(full.contains(&ViewportCommand::MinInnerSize(MIN_FULL_SIZE)));
         assert!(
             !full.contains(&ViewportCommand::MinInnerSize(MIN_COMPACT_SIZE)),
-            "全量窗只留 320×160 的下限就能被缩到控件叠在一起"
+            "全量窗只留 400×160 的下限就能被缩到控件叠在一起"
         );
         assert_eq!(min_size_for(UiMode::Full), MIN_FULL_SIZE);
         assert_eq!(min_size_for(UiMode::Compact), MIN_COMPACT_SIZE);
@@ -989,6 +1001,95 @@ mod tests {
         assert!(queued(&ctx).contains(&ViewportCommand::Decorations(true)));
     }
 
+    /// 把窗口实时几何喂给无头 `Context`，等价于真机切换的那一帧：命令还没生效，窗口仍是旧尺寸。
+    fn feed_live(ctx: &egui::Context, inner: Rect) {
+        let info = egui::ViewportInfo {
+            inner_rect: Some(inner),
+            outer_rect: Some(Rect::from_min_size(inner.min, inner.size())),
+            ..Default::default()
+        };
+        let mut raw = egui::RawInput::default();
+        raw.viewports.insert(egui::ViewportId::ROOT, info);
+        ctx.run_ui(raw, |_| {}).drop_without_applying_deltas();
+    }
+
+    /// 缺陷 D-13（用户 2026-10-28 走查："不去碰一下边框，他就无法变为悬浮前的大小/最小全量
+    /// 尺寸；全量窗口下点击悬浮按钮也无法变为悬浮模式最小尺寸"）。
+    ///
+    /// v0.7 之前的 `toggle` 先翻 `config.ui.mode` 再进 `apply`，而 `apply` 开头那次 `capture`
+    /// 按 mode 选槽——切换前的**实时尺寸**因此被记进**目标形态**的槽，`target_size` 读回来的
+    /// 正是这个实时尺寸，`InnerSize` 发的等于"当前已经多大就请求多大"：简洁→全量那条还会被
+    /// 原生 `MinInnerSize` 静默驳回（本文件开头那条 winit 行为）。窗口纹丝不动，直到用户手动
+    /// 拉一下边框才被原生夹到 640×420。
+    ///
+    /// 既有测试抓不到它，因为它们都绕开 `toggle` 直接调 `apply(目标形态)`（那条路径先 capture
+    /// 再翻 mode，写的是源槽，是对的），或干脆没喂几何（`capture_rect` 返回 `None` 直接跳过）。
+    #[test]
+    fn the_toggle_asks_for_the_other_shape_size_not_the_live_one() {
+        let live_compact = Rect::from_min_size(Pos2::new(1400.0, 320.0), Vec2::new(460.0, 160.0));
+        let live_full = Rect::from_min_size(Pos2::new(900.0, 200.0), Vec2::new(1080.0, 720.0));
+
+        for (from, to, live, asked) in [
+            (
+                UiMode::Compact,
+                UiMode::Full,
+                live_compact,
+                Vec2::new(1080.0, 720.0),
+            ),
+            (
+                UiMode::Full,
+                UiMode::Compact,
+                live_full,
+                Vec2::new(460.0, 160.0),
+            ),
+        ] {
+            let mut state = state();
+            state.config.ui.mode = from;
+            state.config.ui.full_rect = WindowRect {
+                x: 900.0,
+                y: 200.0,
+                w: 1080.0,
+                h: 720.0,
+            };
+            state.config.ui.compact_rect = WindowRect {
+                x: 1400.0,
+                y: 320.0,
+                w: 460.0,
+                h: 160.0,
+            };
+            let ctx = egui::Context::default();
+            feed_live(&ctx, live);
+
+            let mode = toggle(&ctx, &mut state, &mut PendingGeometry::default());
+
+            assert_eq!(mode, to);
+            let commands = queued(&ctx);
+            assert!(
+                commands.contains(&ViewportCommand::InnerSize(asked)),
+                "{from:?}→{to:?} 下发的是 {commands:?}：请求实时尺寸等于空操作，窗口不会动"
+            );
+            let destination = if to == UiMode::Full {
+                state.config.ui.full_rect
+            } else {
+                state.config.ui.compact_rect
+            };
+            assert_eq!(
+                (destination.w, destination.h),
+                (asked.x, asked.y),
+                "{to:?} 槽被切换前的实时尺寸写脏了：目标尺寸再没人请求"
+            );
+            let source = if from == UiMode::Full {
+                state.config.ui.full_rect
+            } else {
+                state.config.ui.compact_rect
+            };
+            assert_eq!(
+                (source.w, source.h),
+                (live.width(), live.height()),
+                "{from:?} 槽该记住切换那一刻的实时尺寸，切回来才跳回原位"
+            );
+        }
+    }
     #[test]
     fn topmost_maps_to_window_level_and_is_persisted() {
         let ctx = egui::Context::default();
@@ -1042,20 +1143,40 @@ mod tests {
         );
     }
 
-    /// REQ-007 的四组组合：只有"简洁 + 失焦 + 开关开着"才降透明度
+    /// REQ-007 的四组组合：只有"简洁 + 失焦 + 开关开着"才降透明度。
+    /// 第一组用 0.6 而不是默认档，锁住"降到的值来自配置"——写成常量就测不出用户调了没生效。
     #[test]
     fn only_an_unfocused_compact_window_dims() {
-        assert_eq!(dim_alpha(UiMode::Compact, false, true), DIM_ALPHA);
-        assert_eq!(dim_alpha(UiMode::Compact, true, true), 1.0, "聚焦时恒定");
+        assert_eq!(dim_alpha(UiMode::Compact, false, true, 0.6), 0.6);
         assert_eq!(
-            dim_alpha(UiMode::Compact, false, false),
+            dim_alpha(UiMode::Compact, true, true, 0.6),
+            1.0,
+            "聚焦时恒定"
+        );
+        assert_eq!(
+            dim_alpha(UiMode::Compact, false, false, 0.6),
             1.0,
             "开关关了就不降"
         );
         assert_eq!(
-            dim_alpha(UiMode::Full, false, true),
+            dim_alpha(UiMode::Full, false, true, 0.6),
             1.0,
             "全量窗从不半透明"
+        );
+    }
+
+    /// 默认档（0.85）就是 v0.6 那个写死的数值：改成可调不能顺手改掉观感，
+    /// 老用户的 config.toml 里也没有这个键，反序列化后必须落在同一档上。
+    #[test]
+    fn the_default_unfocused_alpha_is_the_one_shipped_since_v06() {
+        let cfg = ice_core::config::Config::default();
+        assert_eq!(
+            cfg.ui.unfocused_alpha,
+            ice_core::config::DEFAULT_UNFOCUSED_ALPHA
+        );
+        assert_eq!(
+            dim_alpha(UiMode::Compact, false, true, cfg.ui.unfocused_alpha),
+            0.85
         );
     }
 

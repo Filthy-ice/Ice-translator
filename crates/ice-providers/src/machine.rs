@@ -1,7 +1,8 @@
 //! 机翻通道（FR-1.3、FR-1.7、NFR-1）。
 //!
 //! 零配置可用：不需要 Key，直接 GET 公共端点。选型与失效条件见 `docs/adr/ADR-004-machine-translate-endpoint.md`。
-//! 单次查询有长度上限（实测 500 字符），因此超长文本先保护再切块，逐块请求后按序拼回。
+//! 单次查询有长度上限（实测 500 字符），因此超长文本先保护再切块；块之间互不依赖，
+//! 所以在飞窗口里同时发若干块、收齐后按块序拼回（2026-10-28 用户要求长文提速，见 `crate::parallel`）。
 
 use std::time::{Duration, Instant};
 
@@ -12,6 +13,7 @@ use serde::Deserialize;
 
 use crate::engine::TranslationEngine;
 use crate::error::{ProviderError, ProviderResult, from_reqwest, from_status, should_retry};
+use crate::parallel::{MAX_IN_FLIGHT, map_segments};
 use crate::protect::{chunk_chars, protect, restore};
 use crate::request::{TranslationRequest, TranslationResult};
 
@@ -92,6 +94,21 @@ impl MachineTranslateEngine {
             .map_err(|e| ProviderError::Decode(format!("机翻响应不是预期 JSON：{e}")))?;
         parsed.into_translation()
     }
+
+    /// 一块的重试策略与 AI 通道一致：只有网络类失败才重试，且只在块内重试。
+    async fn chunk_with_retry(&self, text: &str, langpair: &str) -> ProviderResult<String> {
+        let mut retries = 0u32;
+        loop {
+            match self.translate_chunk(text, langpair, retries).await {
+                Ok(text) => return Ok(text),
+                Err(err) if should_retry(&err) && retries < EXTRA_ATTEMPTS => {
+                    retries += 1;
+                    tracing::debug!("机翻第 {retries} 次重试，原因：{err}");
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
 }
 
 /// `responseStatus` 实测既可能是数字 `200` 也可能是字符串 `"403"`
@@ -167,24 +184,23 @@ impl TranslationEngine for MachineTranslateEngine {
 
         let protected = protect(&req.text);
         let chunks = chunk_chars(&protected.template, MACHINE_QUERY_CHARS);
+        let segments = chunks.len();
         let started = Instant::now();
+        tracing::debug!(len = req.char_count(), chunks = segments, "发起机翻");
 
-        let mut joined = String::new();
-        for chunk in &chunks {
-            let mut retries = 0u32;
-            let text = loop {
-                match self.translate_chunk(chunk, &langpair, retries).await {
-                    Ok(text) => break text,
-                    Err(err) if should_retry(&err) && retries < EXTRA_ATTEMPTS => {
-                        retries += 1;
-                        tracing::debug!("机翻第 {retries} 次重试，原因：{err}");
-                    }
-                    Err(err) => return Err(err),
-                }
-            };
-            // 块与块直接相接：切块本身是无损切分（protect 的 chunk 测试保证每块拼回等于整篇）
-            joined.push_str(&text);
-        }
+        // 块之间没有依赖（占位符编号在切块前就整体算好了），所以能同时在飞几块。
+        // 收回来的是**按块序**排好的结果，与谁先答完无关。
+        let engine = self.clone();
+        let pair = langpair.clone();
+        let pieces = map_segments(chunks, MAX_IN_FLIGHT, move |chunk| {
+            let engine = engine.clone();
+            let pair = pair.clone();
+            async move { engine.chunk_with_retry(&chunk, &pair).await }
+        })
+        .await?;
+
+        // 块与块直接相接：切块本身是无损切分（protect 的 chunk 测试保证每块拼回等于整篇）
+        let joined = pieces.concat();
 
         let restored = restore(&joined, &protected.originals);
         if !restored.lost.is_empty() {
@@ -199,7 +215,7 @@ impl TranslationEngine for MachineTranslateEngine {
             detected,
             elapsed_ms: started.elapsed().as_millis() as u64,
             cache_hit: false,
-            segments: chunks.len(),
+            segments,
         })
     }
 }
@@ -209,10 +225,16 @@ mod tests {
     use ice_core::language::LangPair;
 
     use super::*;
-    use crate::fake_server::{closed_url, serve, serve_hanging, wait_for_requests};
+    use crate::fake_server::{closed_url, serve, serve_hanging, serve_parallel, wait_for_requests};
 
     fn engine(fake: &str) -> MachineTranslateEngine {
         MachineTranslateEngine::with_endpoint(fake, Duration::from_millis(300))
+    }
+
+    /// 并行分段用的引擎：超时给 3 秒而不是 300ms。
+    /// `serve_parallel` 在在飞连接没凑齐时会白等 250ms，掐着 300ms 会把"栅栏没放行"误报成"网络超时"。
+    fn engine_roomier(fake: &str) -> MachineTranslateEngine {
+        MachineTranslateEngine::with_endpoint(fake, Duration::from_secs(3))
     }
 
     fn ok(text: &str) -> String {
@@ -289,30 +311,66 @@ mod tests {
             .unwrap_or_default()
     }
 
+    /// 并行分段的应答必须从这条连接收到的 `q` 里长出来。
+    /// 按到达顺序发固定响应（`serve` 那种）在并行下会把内容发错块，断言就变成猜谜。
+    fn echo_block(_arrival: usize, raw: &str) -> (u16, String) {
+        (200, ok(&format!("译<{}>", query_of(raw).replace('\n', ""))))
+    }
+
     #[tokio::test]
     async fn long_text_is_chunked_under_the_limit_and_rejoined() {
-        let fake = serve(vec![ok("第一段"), ok("第二段")]);
         let text = "句子。".repeat(200); // 800 字符，超过 450 上限
-        let result = engine(&fake.url)
+        let expected = chunk_chars(&text, MACHINE_QUERY_CHARS);
+        let fake = serve_parallel(expected.len(), expected.len(), echo_block);
+        let result = engine_roomier(&fake.url)
             .translate(&TranslationRequest::new(
                 text.clone(),
                 LangPair::explicit(Language::ZhHans, Language::En),
             ))
             .await
             .expect("超长文本应分块成功");
-        assert_eq!(result.segments, 2);
-        assert_eq!(result.text, "第一段第二段");
-        let requests = wait_for_requests(&fake, 2);
-        let queries: Vec<String> = requests.iter().map(|r| query_of(r)).collect();
-        for query in &queries {
+        assert_eq!(result.segments, expected.len());
+
+        // 拼接按块序，与谁先答完无关：每块应答只含自己那块原文，逐块接起来必然等于原文的逐块形状
+        let wanted: String = expected
+            .iter()
+            .map(|chunk| format!("译<{chunk}>"))
+            .collect();
+        assert_eq!(result.text, wanted, "收结果必须按块序拼");
+
+        let requests = wait_for_requests(&fake, expected.len());
+        let mut sent: Vec<String> = requests.iter().map(|r| query_of(r)).collect();
+        for query in &sent {
             let count = query.chars().count();
             assert!(
                 count <= MACHINE_QUERY_CHARS,
                 "单块 {count} 字符超过端点上限 {MACHINE_QUERY_CHARS}"
             );
         }
-        // 切块无损：拼回去必须等于原文
-        assert_eq!(queries.concat(), text);
+        // 并行之后"第几条记录"不等于"第几块"，所以按集合比：切块必须无损、不重不漏
+        let mut want = expected.clone();
+        sent.sort();
+        want.sort();
+        assert_eq!(sent, want, "发出的块集合应等于切块结果");
+    }
+
+    /// 机翻长文真的同时在飞多块，不是排着队串行。量的是假服务记下的"同时在飞连接数峰值"：
+    /// 串行实现永远是 1，凑不出 3 块同时在飞。
+    #[tokio::test]
+    async fn long_text_sends_several_blocks_at_the_same_time() {
+        let text = "句子。".repeat(200);
+        let expected = chunk_chars(&text, MACHINE_QUERY_CHARS);
+        let fake = serve_parallel(expected.len(), expected.len(), echo_block);
+        let result = engine_roomier(&fake.url)
+            .translate(&TranslationRequest::new(
+                text,
+                LangPair::explicit(Language::ZhHans, Language::En),
+            ))
+            .await
+            .expect("超长文本应分块成功");
+        assert_eq!(result.segments, expected.len());
+        let peak = fake.peak.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(peak >= 2, "同时在飞只有 {peak} 块——并行没生效");
     }
 
     #[tokio::test]

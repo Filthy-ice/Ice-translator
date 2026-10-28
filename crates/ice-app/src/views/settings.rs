@@ -7,7 +7,7 @@
 //! 输入框是 `password`，界面**不回显任何片段**（连后 4 位也不给），长度与哈希前缀只进日志。
 
 use egui::{self, Align, Layout, RichText};
-use ice_core::config::{AiProvider, Theme};
+use ice_core::config::{AiProvider, MAX_UNFOCUSED_ALPHA, MIN_UNFOCUSED_ALPHA, Theme};
 use ice_core::history::HistoryStore;
 use ice_core::language::{EngineKind, Language};
 
@@ -428,7 +428,9 @@ fn appearance_group(ui: &mut egui::Ui, state: &mut AppState) {
                     &mut state.config.ui.dim_when_unfocused,
                     "悬浮窗失焦时半透明",
                 )
-                .on_hover_text("只在简洁悬浮窗生效：没有焦点时整块窗体透出桌面，聚焦后恢复 100%")
+                .on_hover_text(
+                    "只在简洁悬浮窗生效：没有焦点时整块窗（含标题栏）透出桌面，聚焦后恢复 100%",
+                )
                 .changed()
             {
                 state.mark_config_dirty();
@@ -439,6 +441,29 @@ fn appearance_group(ui: &mut egui::Ui, state: &mut AppState) {
                 .on_hover_text("开启后会读取你复制的文本并自动翻译；关闭时完全不读取剪贴板")
                 .changed()
             {
+                state.mark_config_dirty();
+            }
+        });
+        // FR-3.7 的可调档（2026-10-28，用户走查："透明度需要能够在设置中调节"）。
+        // 配置里存的是不透明度 0~1，滑杆给人读的是百分数：一次换算，1% 的档位两边都对得准，
+        // 不必为界面再加一个字段。开关关掉时滑杆置灰——那一档已经不生效了，拖着没意义。
+        row(ui, "半透明", |ui| {
+            let mut percent = state.config.ui.unfocused_alpha * 100.0;
+            let slider = egui::Slider::new(
+                &mut percent,
+                MIN_UNFOCUSED_ALPHA * 100.0..=MAX_UNFOCUSED_ALPHA * 100.0,
+            )
+            .text("不透明度")
+            .suffix("%")
+            .step_by(1.0)
+            .fixed_decimals(0);
+            if ui
+                .add_enabled(state.config.ui.dim_when_unfocused, slider)
+                .changed()
+            {
+                // 与字号那一条同样的护栏：滑杆自己会夹，这里再夹一次是防坏配置带进来的越界值
+                state.config.ui.unfocused_alpha =
+                    (percent / 100.0).clamp(MIN_UNFOCUSED_ALPHA, MAX_UNFOCUSED_ALPHA);
                 state.mark_config_dirty();
             }
         });

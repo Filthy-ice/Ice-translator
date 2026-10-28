@@ -1,8 +1,9 @@
 //! 全量界面的窗口骨架与页签分发。
 //!
 //! REQ-001 的四区里，工具条（A）与状态条（D）在这里，源文（B）/译文（C）两栏在 `full.rs`；
-//! 其余三个页签各自一个文件，签名统一为 `show(ui, &mut AppState, &mut Effects)`。
-//! 简洁悬浮窗是另一套骨架，在 `compact.rs`。
+//! E 动作底栏的画法在 `full::bottom_bar`，但**调用**也在这里——它是窗口层的一条栏，
+//! 必须排在 `CentralPanel` 之前。其余三个页签各自一个文件，签名统一为
+//! `show(ui, &mut AppState, &mut Effects)`。简洁悬浮窗是另一套骨架，在 `compact.rs`。
 
 use egui::{self, Align, Align2, Layout, Order, RichText};
 use ice_core::history::HistoryStore;
@@ -17,8 +18,17 @@ pub mod history;
 pub mod image;
 pub mod settings;
 
-/// 工具条与状态条的高度（`03-ui-design.md` §1）
-pub const TOOLBAR_HEIGHT: f32 = 56.0;
+/// 工具条的上下内边距（横向沿用 egui 面板自己的 8px）。
+///
+/// 这条栏以前是 `exact_size(56.0)` 钉死的（`03-ui-design.md` §1 那个 56px），里面却只有
+/// 一行约 20px 的控件：多出来的三十几像素全在空转，正文被整块顶下去（用户 2026-10-28
+/// "明明只占用一行，但是好远"）。现在栏高按内容自适应，这一条是它唯一的高度来源，
+/// 字号缩放（`ui.font_scale` 到 2.0）时栏子也跟着长，不再溢出。
+///
+/// 类型是 `i8` 不是 `f32`：egui 0.37 把 `Margin` 收成了整数（`epaint/src/margin.rs:44`）。
+const TOOLBAR_Y_MARGIN: i8 = 6;
+
+/// 状态条的高度（`03-ui-design.md` §1）
 pub const STATUS_HEIGHT: f32 = 28.0;
 
 /// 全量模式提示条离窗口顶部的距离（简洁窗按输入行的实际底边算，见 `compact::toast_offset`）
@@ -77,9 +87,15 @@ pub fn show(
 ) {
     toolbar(ui, state, effects, ai_available);
     status_bar(ui, state, ai_available);
+    // E 动作底栏（REQ-013）：文本页专属，建在 `CentralPanel` 之前才拿得到位置（`CentralPanel`
+    // 吃掉剩余矩形）。放在窗口层而不是页内，是为了让它贴住状态条——落在 `CentralPanel` 里时，
+    // 它下方还压着那层框架的 8px 内边距，按钮上下留白就差了 8px（用户 2026-10-28 报的缺陷）。
+    if state.tab == Tab::Text {
+        full::bottom_bar(ui, state, effects);
+    }
 
     egui::CentralPanel::default().show(ui, |ui| match state.tab {
-        Tab::Text => full::show(ui, state, effects),
+        Tab::Text => full::show(ui, state),
         Tab::Image => image::show(ui, state),
         Tab::History => history::show(ui, state, history),
         Tab::Settings => settings::show(ui, state, effects, ai_available),
@@ -91,29 +107,35 @@ pub fn show(
 }
 
 /// A 区：页签（F-01）+ 语言（F-02/F-03）+ 引擎（F-04）+ 悬浮（F-05）
+///
+/// 与正文的分界交给 `Panel` 自己画的那条分隔线（`show_separator_line` 默认开，取
+/// `widgets.noninteractive.bg_stroke`）——底栏那条走的是同一段代码、同一个颜色，两栏的
+/// 边界感自然一致。这里**不再额外套一圈 stroke**：2026-10-28 加过一圈 `edge_color` 边框，
+/// 用户当场退回"太明显了，突兀，和底部栏的分割线一样颜色就行，而且两侧不需要线条"。
+/// 栏高囤积才是"界限不明显"的真凶，那条由 `TOOLBAR_Y_MARGIN` 管。
 fn toolbar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_available: bool) {
-    egui::Panel::top("toolbar")
-        .exact_size(TOOLBAR_HEIGHT)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                tabs(ui, state);
-                ui.separator();
-                source_language(ui, state);
-                target_language(ui, state, effects);
-                ui.separator();
-                engine_picker(ui, state, effects, ai_available);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui
-                        .button("悬浮窗")
-                        .on_hover_text("切到简洁悬浮窗（Cmd+Shift+M）")
-                        .clicked()
-                    {
-                        effects.toggle_mode = true;
-                    }
-                });
+    let frame = egui::Frame::side_top_panel(ui.style())
+        .inner_margin(egui::Margin::symmetric(8, TOOLBAR_Y_MARGIN));
+    egui::Panel::top("toolbar").frame(frame).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            tabs(ui, state);
+            ui.separator();
+            source_language(ui, state);
+            target_language(ui, state, effects);
+            ui.separator();
+            engine_picker(ui, state, effects, ai_available);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui
+                    .button("悬浮窗")
+                    .on_hover_text("切到简洁悬浮窗（Cmd+Shift+M）")
+                    .clicked()
+                {
+                    effects.toggle_mode = true;
+                }
             });
         });
+    });
 }
 
 fn tabs(ui: &mut egui::Ui, state: &mut AppState) {
@@ -315,23 +337,31 @@ mod tests {
         )
     }
 
-    /// 无头跑一帧。`ctx.run_ui` 交出来的就是 eframe 在 `App::ui` 里给的那个根 `Ui`，
+    /// 无头跑 `frames` 帧。`ctx.run_ui` 交出来的就是 eframe 在 `App::ui` 里给的那个根 `Ui`，
     /// 所以 view 的绘制路径与真机完全一致；`screen_rect` 用来覆盖窄宽布局。
+    /// 控件矩形是画完那一帧才记上的，要读它至少跑两帧。
     fn run_frame(
         state: &mut AppState,
         effects: &mut Effects,
         history: &HistoryStore,
         screen: egui::Vec2,
-    ) {
+        frames: usize,
+    ) -> egui::Context {
         let ctx = egui::Context::default();
-        let raw = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
-            ..Default::default()
-        };
-        let output = ctx.run_ui(raw, |ui| {
-            show(ui, state, effects, history, false);
-        });
-        output.drop_without_applying_deltas();
+        let mut time = 0.0;
+        for _ in 0..frames {
+            let mut raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
+                ..Default::default()
+            };
+            raw.time = Some(time);
+            time += 1.0 / 60.0;
+            let output = ctx.run_ui(raw, |ui| {
+                show(ui, state, effects, history, false);
+            });
+            output.drop_without_applying_deltas();
+        }
+        ctx
     }
 
     fn temp_history() -> (tempfile::TempDir, HistoryStore) {
@@ -347,10 +377,168 @@ mod tests {
             let mut state = state();
             state.tab = tab;
             let mut effects = Effects::default();
-            run_frame(&mut state, &mut effects, &store, egui::vec2(640.0, 420.0));
+            run_frame(
+                &mut state,
+                &mut effects,
+                &store,
+                egui::vec2(640.0, 420.0),
+                1,
+            );
             assert_eq!(state.tab, tab, "渲染过程不该把页签改掉");
             assert!(effects.job.is_none(), "切到 {tab:?} 不该发起请求");
         }
+    }
+
+    /// 用户 2026-10-28 报的两条缺陷一起锁在这里，量的是 `views::show` 这条真机路径：
+    /// ① "按钮上下留白距离不同"——底栏画在 `CentralPanel` 里时被那层 8px 下内边距顶离窗口
+    /// 底边（实测上 7、下 15），挪到窗口层后必须贴住状态条上沿、横向满窗；
+    /// ② "这颜色怎么回事"——挪走之后它下面不再有 `panel_fill` 兜着，`Frame::NONE` 就等于
+    /// 在窗口上开个透出桌面的洞（eframe 默认 `clear_color` 是半透明深灰）。
+    #[test]
+    fn the_text_page_bottom_bar_hugs_the_status_bar() {
+        let (_dir, store) = temp_history();
+        let mut state = state();
+        let mut effects = Effects::default();
+        let screen = egui::vec2(1080.0, 720.0);
+        let ctx = run_frame(&mut state, &mut effects, &store, screen, 2);
+        let (bar, fill) = full::recorded_bar(&ctx);
+
+        let status_top = screen.y - STATUS_HEIGHT;
+        assert!(
+            (bar.max.y - status_top).abs() <= 0.5,
+            "底栏与状态条之间空出 {:.1}px，按钮的上下留白就差这么多：{bar:?}",
+            status_top - bar.max.y
+        );
+        assert!(
+            bar.min.x <= 0.5 && bar.max.x >= screen.x - 0.5,
+            "底栏没横满整窗（{bar:?}），左右各被页框内边距切掉一块"
+        );
+        let style = ctx.global_style();
+        assert_eq!(
+            fill, style.visuals.panel_fill,
+            "底栏没自己画装饰条的底色，那条区域会透出桌面（D-12）"
+        );
+        assert_eq!(fill.a(), 255, "装饰条的底色必须不透明：{fill:?}");
+    }
+
+    /// 另一件只量"画没画"的事：把最后一帧的绘制清单拿出来。
+    /// 现有的 `run_frame` 只交回 `Context`（控件矩形是记在临时数据里的），而边框线是形状，
+    /// 只能从 shapes 读——所以这条单独一个入口，不去改动上面那些测试。
+    fn run_shapes(
+        state: &mut AppState,
+        effects: &mut Effects,
+        history: &HistoryStore,
+        screen: egui::Vec2,
+    ) -> (egui::Context, Vec<egui::epaint::ClippedShape>) {
+        let ctx = egui::Context::default();
+        let mut time = 0.0;
+        let mut shapes = Vec::new();
+        for _ in 0..2 {
+            let mut raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
+                ..Default::default()
+            };
+            raw.time = Some(time);
+            time += 1.0 / 60.0;
+            let mut output = ctx.run_ui(raw, |ui| {
+                show(ui, state, effects, history, false);
+            });
+            shapes = std::mem::take(&mut output.shapes);
+            output.drop_without_applying_deltas();
+        }
+        (ctx, shapes)
+    }
+
+    /// 工具条与正文的分界**只有一条线**，而且与底栏那条同源：两者都由 `Panel` 自己画
+    /// （`show_separator_line` 默认开，取 `widgets.noninteractive.bg_stroke`）。
+    ///
+    /// 用户 2026-10-28 对着截图退回的原话："我看到你改动的菜单栏界限了，太明显了，突兀，
+    /// 和底部栏的分割线一样颜色就行，而且两侧不需要线条。"所以这条锁三件事：顶区有一条
+    /// 横贯整窗的分隔线、它的颜色等于底栏那条、顶区没有第二圈边框。
+    /// 前一行"界限不明显"的真凶是栏高囤积（82px），那条由 `the_toolbar_takes_one_row_...` 管。
+    #[test]
+    fn the_toolbar_separator_matches_the_bottom_bar_and_has_no_frame() {
+        let (_dir, store) = temp_history();
+        let mut state = state();
+        let mut effects = Effects::default();
+        let screen = egui::vec2(1080.0, 720.0);
+        let (ctx, shapes) = run_shapes(&mut state, &mut effects, &store, screen);
+
+        // 横贯整窗的水平线段：(所在高度, 线色)
+        let mut lines: Vec<(f32, egui::Color32)> = shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::LineSegment { points, stroke } => {
+                    let (a, b) = (points[0], points[1]);
+                    (a.y == b.y && a.x <= 0.5 && b.x >= screen.x - 0.5)
+                        .then_some((a.y, stroke.color))
+                }
+                _ => None,
+            })
+            .collect();
+        lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        let top: Vec<_> = lines.iter().filter(|(y, _)| *y < 100.0).collect();
+        assert_eq!(top.len(), 1, "工具条下沿该只有一条分隔线，实得 {lines:?}");
+        let bottom: Vec<_> = lines
+            .iter()
+            .filter(|(y, _)| *y > screen.y - 120.0)
+            .collect();
+        assert!(
+            !bottom.is_empty(),
+            "底栏那条分隔线没找到，无法比对：{lines:?}"
+        );
+        assert_eq!(
+            top[0].1, bottom[0].1,
+            "两条分隔线颜色不同——工具条自己另画了一色"
+        );
+        assert_eq!(
+            top[0].1,
+            ctx.global_style()
+                .visuals
+                .widgets
+                .noninteractive
+                .bg_stroke
+                .color,
+            "分隔线必须走 egui 那一处出处，别再各配一套色"
+        );
+
+        let edge = theme::edge_color(ctx.global_style().visuals.dark_mode);
+        let framed = shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Rect(rect) => {
+                rect.stroke.color == edge
+                    && rect.stroke.width >= 1.0
+                    && rect.rect.min.x <= 0.5
+                    && rect.rect.max.x >= screen.x - 0.5
+                    && rect.rect.min.y <= 1.0
+            }
+            _ => false,
+        });
+        assert!(!framed, "工具条又套上一圈整窗边框了：两侧不该有线");
+    }
+
+    /// 用户 2026-10-28："明明只占用一行，但是好远"。以前工具条 `exact_size(56)` 钉死，
+    /// 里面只有一行约 20px 的控件，正文框上沿被顶到 **82px**（实测，把 `exact_size` 加回去
+    /// 跑这条就能看到）。改成按内容自适应之后是 61px：栏高 = 一行 + 上下各 6px。
+    /// 这条锁的是"栏不再囤空转"，阈值给 64px：留 3px 给字形度量的零头，但 56 那一档必然过不了。
+    #[test]
+    fn the_toolbar_takes_one_row_so_the_panes_sit_right_under_it() {
+        let (_dir, store) = temp_history();
+        let mut state = state();
+        let mut effects = Effects::default();
+        let ctx = run_frame(
+            &mut state,
+            &mut effects,
+            &store,
+            egui::vec2(1080.0, 720.0),
+            2,
+        );
+        let (source, _) = full::recorded_pane(&ctx, "source");
+        assert!(
+            source.min.y <= 64.0,
+            "正文框上沿跑到 {:.1}px，工具条又囤出空转了（钉死 56px 那一版是 82px）",
+            source.min.y
+        );
     }
 
     #[test]
@@ -358,7 +546,13 @@ mod tests {
         let (_dir, store) = temp_history();
         let mut state = state();
         let mut effects = Effects::default();
-        run_frame(&mut state, &mut effects, &store, egui::vec2(1080.0, 720.0));
+        run_frame(
+            &mut state,
+            &mut effects,
+            &store,
+            egui::vec2(1080.0, 720.0),
+            1,
+        );
         assert!(effects.job.is_none());
         assert!(effects.copy.is_none());
         assert!(effects.save_key.is_none());
@@ -380,7 +574,13 @@ mod tests {
 
         for tab in Tab::all() {
             state.tab = tab;
-            run_frame(&mut state, &mut effects, &store, egui::vec2(1080.0, 720.0));
+            run_frame(
+                &mut state,
+                &mut effects,
+                &store,
+                egui::vec2(1080.0, 720.0),
+                1,
+            );
         }
 
         assert_eq!(state.source, "hello");

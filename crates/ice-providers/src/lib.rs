@@ -8,6 +8,7 @@ pub mod dispatcher;
 pub mod engine;
 pub mod error;
 pub mod machine;
+mod parallel;
 pub mod protect;
 pub mod request;
 

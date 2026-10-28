@@ -41,7 +41,13 @@ tempfile = "3"
 #
 # `default-features = false` 是必须的：objc2-app-kit 的 default 会打开 ~283 个模块，
 # 连带把 objc2-cloud-kit / core-video / core-text / metal 等六个 Apple 绑定 crate 拖进
-# 编译图（实测：不设它，`cargo build` 会多出这六个 rlib）。这里只需要读 `NSScreen`。
+# 编译图（实测：不设它，`cargo build` 会多出这六个 rlib）。这里只需要读 `NSScreen`，
+# 外加 `NSView`/`NSWindow` 两个模块——失焦半透明要改整窗不透明度（FR-3.7，见 `system::alpha`）。
+# `objc2-core-foundation` 不是可选项：`NSWindow::setAlphaValue:` 的参数类型是 `CGFloat`，
+# objc2-app-kit 把带 CGFloat 的方法整体关在这个 feature 后面，不开就连方法都看不到。
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSScreen"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSScreen", "NSView", "NSWindow", "objc2-core-foundation"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry"] }
+# 从 eframe 拿到原生窗口句柄：`AppKitWindowHandle.ns_view` 指的是 NSView（不是窗口），
+# 再问它要 `window`。只取句柄，不引 winit 本身。
+raw-window-handle = "0.6"

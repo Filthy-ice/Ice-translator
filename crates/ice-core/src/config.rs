@@ -19,13 +19,27 @@ pub const KEYCHAIN_ACCOUNT: &str = "ai-api-key";
 /// 两处各写一份字面量就会漂（P4 的简洁窗高度下限写成 64，与设计的数值不一致）。
 pub const MIN_FULL_W: f32 = 640.0;
 pub const MIN_FULL_H: f32 = 420.0;
-/// 简洁窗的最小内尺寸（FR-3.2，CHG-004 REQ-001/REQ-012：可缩放，但不小于 320×160）。
+/// 简洁窗的最小内尺寸（FR-3.2，CHG-004 REQ-001/REQ-012：可缩放，但不小于 400×160）。
 ///
 /// 高度两次抬高：v0.5 从 96 抬到 130（动作行改回与全量窗同字号同内边距后，最窄窗里它要占
 /// 两行，96px 把译文区挤成零高）；v0.7 抬到 160（REQ-012 的两带 1:1 分摊要在下限处也让
 /// 两带都装得下一行字——130 高时均分只剩 (130−30−10)/2 ≈ 45px，译文带连两行都放不下）。
-pub const MIN_COMPACT_W: f32 = 320.0;
+///
+/// 宽度 320 → 400 是用户 2026-10-28 走查提的"最小窗口太小了，按钮不允许换行"：320 那一档
+/// 「退出」被挤到第二行。为什么是 400 由 `ice-app::views::compact` 里的
+/// `the_action_row_stays_on_one_line_at_the_minimum_width` 按字形度量算出来并锁住
+/// （七颗按钮的字宽 + 内边距 + 间距 + 面板边距 = 348px，400 再留 48px 给行尾的拖窗把手）。
+pub const MIN_COMPACT_W: f32 = 400.0;
 pub const MIN_COMPACT_H: f32 = 160.0;
+
+/// 失焦半透明可调区间的两端（FR-3.7）。
+///
+/// 下限 0.30：再低悬浮窗就基本找不见了，用户会以为程序崩了（悬浮窗没有别的常驻入口）。
+/// 上限 1.00：等于"开着开关但完全不透明"，与关开关等价，交给用户当"略微透一点"的微调用。
+pub const MIN_UNFOCUSED_ALPHA: f32 = 0.30;
+pub const MAX_UNFOCUSED_ALPHA: f32 = 1.00;
+/// 默认不透明度：即 v0.6 起写死的 `DIM_ALPHA`，2026-10-28 改成可调后保留原值当默认档
+pub const DEFAULT_UNFOCUSED_ALPHA: f32 = 0.85;
 
 /// 屏幕矩形，用于持久化窗口位置（FR-3.6）
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -103,6 +117,9 @@ pub struct UiConfig {
     pub font_scale: f32,
     /// 简洁模式失焦时半透明（FR-3.7）
     pub dim_when_unfocused: bool,
+    /// 失焦半透明降到的不透明度（FR-3.7，2026-10-28 起可调）。
+    /// 合法区间 [`MIN_UNFOCUSED_ALPHA`]..=[`MAX_UNFOCUSED_ALPHA`]，越界由 `sanitized` 夹回。
+    pub unfocused_alpha: f32,
     /// 复制即翻（FR-3.8）
     pub clipboard_watch: bool,
     pub full_rect: WindowRect,
@@ -122,6 +139,7 @@ impl Default for UiConfig {
             theme: Theme::System,
             font_scale: 1.0,
             dim_when_unfocused: true,
+            unfocused_alpha: DEFAULT_UNFOCUSED_ALPHA,
             clipboard_watch: false,
             full_rect: WindowRect {
                 x: 120.0,
@@ -271,6 +289,34 @@ impl AiProvider {
     pub const fn needs_manual_model(self) -> bool {
         self.preset_model().is_empty()
     }
+
+    /// 关闭"思考"时该往请求体里塞哪个字段（FR-1.9 长文提速，2026-10-28 用户要求"别忘了接口中关闭思考"）。
+    ///
+    /// 翻译是直出任务，思考链只会同时抬高首字延迟与 token 花费，所以默认关掉。
+    /// 各家拼法不统一，这正是"差异收敛在预设里"的那一处：
+    /// 百炼的 OpenAI 兼容模式认顶层布尔 `enable_thinking`，其余几家用 `thinking: {"type":"disabled"}`。
+    ///
+    /// Custom 返回 `None`：自定义地址后面是什么服务无从判断，多塞一个陌生字段可能被严格
+    /// 服务端 400 拒掉——宁可不关思考，也不能让整条翻译链失败。
+    pub const fn thinking_off(self) -> Option<ThinkingOff> {
+        match self {
+            AiProvider::Bailian => Some(ThinkingOff::Bool("enable_thinking")),
+            AiProvider::DeepSeek
+            | AiProvider::Zhipu
+            | AiProvider::Kimi
+            | AiProvider::VolcengineArk => Some(ThinkingOff::Typed("thinking")),
+            AiProvider::Custom => None,
+        }
+    }
+}
+
+/// 关闭思考的字段形态（见 [`AiProvider::thinking_off`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThinkingOff {
+    /// `"<字段>": false`
+    Bool(&'static str),
+    /// `"<字段>": {"type": "disabled"}`
+    Typed(&'static str),
 }
 
 /// AI 服务参数。**不包含 Key 本身**，只包含钥匙串条目引用（FR-4.2）。
@@ -394,6 +440,15 @@ impl Config {
     /// 把越界数值夹回合法区间，防止坏配置导致窗口不可用。
     pub fn sanitized(mut self) -> Self {
         self.ui.font_scale = self.ui.font_scale.clamp(0.8, 2.0);
+        // clamp 对 NaN 两条比较都为假、会原样返回 NaN，所以先单独挡一次（TOML 能写出 nan）。
+        // alpha 是 NaN 时窗体会整个看不见，宁可退回默认档。
+        self.ui.unfocused_alpha = if self.ui.unfocused_alpha.is_finite() {
+            self.ui
+                .unfocused_alpha
+                .clamp(MIN_UNFOCUSED_ALPHA, MAX_UNFOCUSED_ALPHA)
+        } else {
+            DEFAULT_UNFOCUSED_ALPHA
+        };
         self.ui.dock_sliver_px = self.ui.dock_sliver_px.clamp(2.0, 24.0);
         self.ui.snap_threshold_px = self.ui.snap_threshold_px.clamp(8.0, 200.0);
         // v0.5 起停靠只认左/右（Q-010）。Top/Bottom 留在枚举里只为反序列化兼容，
@@ -506,6 +561,35 @@ mod tests {
         assert_eq!((rect.w, rect.h), (MIN_COMPACT_W, MIN_COMPACT_H));
     }
 
+    /// 失焦不透明度可调之后，加载侧要有同一道护栏：用户手改 `unfocused_alpha` 越界
+    /// 只能夹到区间两端，不能把 0.0 或 2.0 原样带进 `setAlphaValue:`。
+    #[test]
+    fn sanitize_keeps_the_unfocused_alpha_inside_its_band() {
+        let mut cfg = Config::default();
+        cfg.ui.unfocused_alpha = 0.0;
+        assert_eq!(
+            cfg.sanitized().ui.unfocused_alpha,
+            MIN_UNFOCUSED_ALPHA,
+            "透过头了要停在看不见的边缘，而不是整块窗消失"
+        );
+
+        let mut cfg = Config::default();
+        cfg.ui.unfocused_alpha = 2.0;
+        assert_eq!(cfg.sanitized().ui.unfocused_alpha, MAX_UNFOCUSED_ALPHA);
+
+        let mut cfg = Config::default();
+        cfg.ui.unfocused_alpha = f32::NAN;
+        assert_eq!(cfg.sanitized().ui.unfocused_alpha, DEFAULT_UNFOCUSED_ALPHA);
+
+        let mut cfg = Config::default();
+        cfg.ui.unfocused_alpha = 0.6;
+        assert_eq!(
+            cfg.sanitized().ui.unfocused_alpha,
+            0.6,
+            "区间内的值不该被动过"
+        );
+    }
+
     #[test]
     fn sanitize_leaves_a_larger_compact_rect_alone() {
         let mut cfg = Config::default();
@@ -557,6 +641,34 @@ mod tests {
             "https://proxy.example.com/v1/chat/completions"
         );
         assert_eq!(cfg.effective_model(), "deepseek-reasoner");
+    }
+
+    /// 2026-10-28 用户要求"别忘了接口中关闭思考"。这条锁的是两家的拼法别写反：
+    /// 百炼只认顶层布尔 `enable_thinking`，其余几家用 `thinking.type`，Custom 一个都不发。
+    #[test]
+    fn thinking_off_field_follows_each_vendors_spelling() {
+        assert_eq!(
+            AiProvider::Bailian.thinking_off(),
+            Some(ThinkingOff::Bool("enable_thinking"))
+        );
+        for p in [
+            AiProvider::DeepSeek,
+            AiProvider::Zhipu,
+            AiProvider::Kimi,
+            AiProvider::VolcengineArk,
+        ] {
+            assert_eq!(
+                p.thinking_off(),
+                Some(ThinkingOff::Typed("thinking")),
+                "{} 应该用对象写法",
+                p.display_name()
+            );
+        }
+        assert_eq!(
+            AiProvider::Custom.thinking_off(),
+            None,
+            "地址是用户手填的，服务未知，不许发陌生字段"
+        );
     }
 
     #[test]

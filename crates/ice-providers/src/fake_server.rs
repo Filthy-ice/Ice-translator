@@ -1,19 +1,23 @@
 //! 测试用的本地假 HTTP 服务：不依赖第三方包，也不碰网络出口。
 //!
-//! 只提供引擎测试需要的能力：按顺序应答、挂起不答、以及一个确定没人监听的端口。
+//! 只提供引擎测试需要的能力：按顺序应答、并发应答（并记录同时在飞的连接数）、
+//! 挂起不答、以及一个确定没人监听的端口。
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Clone)]
 pub struct Fake {
     pub url: String,
     pub requests: Arc<Mutex<Vec<String>>>,
     pub closed: Arc<AtomicBool>,
+    /// 同时在飞的连接数峰值。`serve` 一条一条地应答，永远是 1；
+    /// `serve_parallel` 就是用它来分辨"真的并行"和"排着队串行"。
+    pub peak: Arc<AtomicUsize>,
 }
 
 /// 读完一个请求（含 body），返回原始文本
@@ -56,6 +60,7 @@ fn spawn_pairs(items: Vec<(u16, String)>, hang: bool, delay: Duration) -> Fake {
         url,
         requests: Arc::new(Mutex::new(Vec::new())),
         closed: Arc::new(AtomicBool::new(false)),
+        peak: Arc::new(AtomicUsize::new(0)),
     };
     let requests = fake.requests.clone();
     let closed = fake.closed.clone();
@@ -142,4 +147,97 @@ pub fn wait_for_requests(fake: &Fake, n: usize) -> Vec<String> {
         thread::sleep(Duration::from_millis(10));
     }
     fake.requests.lock().expect("假服务记录锁").clone()
+}
+/// 放行前最多等多久：等在飞的连接凑到 `expect` 个。
+/// 串行客户端永远凑不满，每条连接都要白等这一轮——所以它必须明显小于引擎的超时。
+const BARRIER_HOLD: Duration = Duration::from_millis(250);
+/// 响应延迟按到达顺序倒着排：第 `i` 条连接延后 `(total-1-i) × 40ms` 才答。
+/// 并行之后"后发的先答完"是必然发生的，用它抓"按完成顺序拼接"这种乱序 bug。
+const STAGGER: Duration = Duration::from_millis(40);
+
+/// 并发假服务，为并行分段而生。与 `serve` 的两点区别都不是可有可无的：
+///
+/// 1. **响应内容由这条连接收到的请求决定**（`reply(到达序号, 原始请求)`）。并行之后到达顺序
+///    与段序不再是一回事，照 `serve` 那样按顺序发响应会把内容发错段，断言就成了猜谜；
+/// 2. **同时在飞的连接数记进 `peak`**，并且在飞数凑到 `expect` 才放行（最多白等 `BARRIER_HOLD`）。
+///    串行客户端的 `peak` 恒为 1，因此"真的并行"这条是量出来的，不是掐总耗时猜的。
+///
+/// 满 `total` 条后停止接受连接并置 `closed`。
+pub fn serve_parallel(
+    total: usize,
+    expect: usize,
+    reply: impl Fn(usize, &str) -> (u16, String) + Send + Sync + 'static,
+) -> Fake {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("假服务需要能绑定回环地址");
+    let url = format!("http://{}", listener.local_addr().expect("已绑定"));
+    let fake = Fake {
+        url,
+        requests: Arc::new(Mutex::new(Vec::new())),
+        closed: Arc::new(AtomicBool::new(false)),
+        peak: Arc::new(AtomicUsize::new(0)),
+    };
+    let server = Arc::new(Parallel {
+        requests: fake.requests.clone(),
+        closed: fake.closed.clone(),
+        peak: fake.peak.clone(),
+        live: Arc::new(AtomicUsize::new(0)),
+        served: Arc::new(AtomicUsize::new(0)),
+        total,
+        expect,
+        reply: Box::new(reply),
+    });
+    thread::spawn(move || {
+        while server.served.load(Ordering::SeqCst) < total {
+            let Ok((stream, _)) = listener.accept() else {
+                break;
+            };
+            let server = Arc::clone(&server);
+            thread::spawn(move || serve_one(stream, server));
+        }
+        server.closed.store(true, Ordering::SeqCst);
+    });
+    fake
+}
+
+/// 应答生成器：拿到"到达序号 + 这条连接的原始请求"，决定回什么状态码和响应体
+type Reply = Box<dyn Fn(usize, &str) -> (u16, String) + Send + Sync>;
+
+struct Parallel {
+    requests: Arc<Mutex<Vec<String>>>,
+    closed: Arc<AtomicBool>,
+    peak: Arc<AtomicUsize>,
+    live: Arc<AtomicUsize>,
+    served: Arc<AtomicUsize>,
+    total: usize,
+    expect: usize,
+    reply: Reply,
+}
+
+fn serve_one(mut stream: TcpStream, server: Arc<Parallel>) {
+    let text = read_request(&mut stream);
+    // 先记录再计数：`served` 到齐时每条请求必然都已进了记录表，`wait_for_requests` 才不会读到半张表
+    server
+        .requests
+        .lock()
+        .expect("假服务记录锁")
+        .push(text.clone());
+    let index = server.served.fetch_add(1, Ordering::SeqCst);
+    // 计数在响应之前、销账在响应之后：这样 `peak` 量的才是"真的还在飞"的连接
+    let live = server.live.fetch_add(1, Ordering::SeqCst) + 1;
+    server.peak.fetch_max(live, Ordering::SeqCst);
+
+    let deadline = Instant::now() + BARRIER_HOLD;
+    while server.live.load(Ordering::SeqCst) < server.expect && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    let lag = STAGGER * (server.total.saturating_sub(1).saturating_sub(index) as u32);
+    if !lag.is_zero() {
+        thread::sleep(lag);
+    }
+    let (code, body) = (server.reply)(index, &text);
+    respond(&mut stream, &status_line(code), &body);
+    server.live.fetch_sub(1, Ordering::SeqCst);
+    if server.served.load(Ordering::SeqCst) >= server.total {
+        server.closed.store(true, Ordering::SeqCst);
+    }
 }
