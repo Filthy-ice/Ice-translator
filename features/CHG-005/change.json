@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "id": "CHG-005",
+  "title": "图片翻译 P6：macOS Vision 本地识别、行合并与可编辑识别结果",
+  "version": "v0.1",
+  "status": "SPEC_REVIEW",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-001",
+      "blocking": false,
+      "question": "本包与 P7 的切分线画在哪？FR-2.3 的验收判据后半句（生成图反映修改）必须靠 P7 的回填才能看。",
+      "resolution": "已决（沿革：CHG-004 非目标表第 29 行 + charter 的 P6/P7 分档）：识别链 S0~S3 + 结果编辑 + 识别段状态/取消归 CHG-005；回填链 S4~S8（FR-2.4~2.9）归 CHG-006。FR-2.3 判据拆两半登记，本包验『改动进了交给 P7 的那份数据』。",
+      "source": "docs/00-charter.md:66-67、features/CHG-004/spec.md 非目标表、docs/traceability.md 的 FR-2.1~2.3 行（均标『待 P6』）；查阅 2026-10-28。"
+    },
+    {
+      "id": "Q-002",
+      "blocking": false,
+      "question": "文件选择器怎么来：自接 NSOpenPanel（objc2-app-kit 已在依赖里，只差 feature）还是引入 rfd 这类新 crate？",
+      "resolution": "已决：自接 NSOpenPanel + beginWithCompletionHandler:（禁 runModal，会冻帧）。代价：objc2-foundation 要补 NSURL feature，app-kit 要补 NSOpenPanel/NSSavePanel/NSPanel 三个开关；block2 已为任务 #25 打开。",
+      "source": "objc2-app-kit 0.3.2 绑定实测（generated/NSOpenPanel.rs 的 URLs/canChooseFiles、NSSavePanel.rs:423 beginWithCompletionHandler / :435 runModal、feature 依赖清单）；2026-10-28 会话：Agent 依源码/绑定核对与 docs/04 既定算法作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-003",
+      "blocking": false,
+      "question": "真实样图集谁来出？docs/06 定了 IMG-1~12 与 ≥0.92 判据，但 assets/samples/ 是空的且无标注，FR-2.2 那条 Must 的真实达标数字拿不到原料。",
+      "resolution": "默认按 (c) 起步并邀请 (a)：(a) 用户提供 10~12 张真实截图进 assets/samples/，Agent 出『逐张跑识别 + 落 CSV（只含文件名/行数/块数/耗时）』工具，打分人工做；(b) 只用程序自绘合成图出自动指标，真实达标推到 P8；(c) 用户先给 2~3 张常用场景截图，跑出观察值并如实登记『样本不足，不作达标判据』。无论哪条：自动度量 SHALL NOT 被当作 FR-2.2 已达标的全部依据，0.92 这条数不动。",
+      "source": "2026-10-28 实测 assets/samples 为空目录（ls 无输出）、docs/06-test-cases.md:219-236 与 TC-2.2-a 的原文判据；docs/04 §5 度量表。"
+    },
+    {
+      "id": "Q-004",
+      "blocking": false,
+      "question": "拆分要能拆回原行就得让块携带行回溯；可用户改过文本后行与字的对应已不可靠，怎么处理？",
+      "resolution": "已决：块带运行态行回溯（Vec<u32> 行号，不进配置 schema）。拆分时文本未改 → 按行回溯如实还原；已被改 → 不猜字符比例，用户那段整体留在拆出的第一块、其余块空串并提示『这块改过文字，拆分后请核对』。",
+      "source": "ice-core/src/document.rs:79-120（TextBlock 现无行级来源字段）；docs/01 FR-2.3 的『合并/拆分』；2026-10-28 会话：Agent 依源码/绑定核对与 docs/04 既定算法作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-005",
+      "blocking": false,
+      "question": "HEIC 怎么办？macOS 照片默认存 HEIC，而本仓 image 只开 png+jpeg；系统 ImageIO（CGImageSourceCreateWithData，objc2-image-io 是 objc2-vision 的可选依赖）本来就能解。",
+      "resolution": "默认 (a)：本包只承诺 PNG/JPEG + 剪贴板 TIFF，其余格式明确提示不支持并登记已知限制 L-7。备选 (b)：解码统一走系统 ImageIO，一次拿到 macOS 支持的全部格式，代价是 ice-vision 加一个绑定 crate 且解码那半不再跨平台。选 (b) 则 REQ-001 的解码那句改写、docs/04 删掉 L-7。",
+      "source": "Cargo.toml:27（image default-features=false, features=[png,jpeg]）、objc2-vision 0.3.2 索引条目的可选依赖含 objc2-image-io；2026-10-28 会话：Agent 依源码/绑定核对与 docs/04 既定算法作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-006",
+      "blocking": false,
+      "question": "低置信 ⚠ 的阈值定多少、要不要进设置页？docs/06 对 IMG-11 只写了『置信度阈值与 ⚠ 提示』，没给数。",
+      "resolution": "已决：阈值 0.5，写成 ice-vision 里的常量，不进配置、不加设置项；真样图跑完若太松/太紧就改常量并在验收报告写依据（与 REQ-004 的『调参改数值不改结构』同一条纪律）。",
+      "source": "docs/06-test-cases.md:233（IMG-11 的考察点）；2026-10-28 会话：Agent 依源码/绑定核对与 docs/04 既定算法作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-007",
+      "blocking": false,
+      "question": "8000px 上限那条『按比例缩到上限』由谁做、用什么插值？缩放后的图要不要留盘？P7 导出的是哪一张？",
+      "resolution": "已决：解码后在内存里用 image::thumbnail 等比缩放，不落盘；缩放后尺寸即 OcrDocument.width/height，REQ-003 的换算以此为准；界面提示『已缩放』，并明写 P7 导出的是缩放后那张的合成结果。",
+      "source": "docs/04-image-pipeline.md §1 S0 原文（『超过 8000px 边长 → 提示并按比例缩到上限处理，导出时明确已缩放』）；2026-10-28 会话：Agent 依源码/绑定核对与 docs/04 既定算法作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-008",
+      "blocking": false,
+      "question": "FR-2.9 那句『可取消』在本包能做到什么程度？VNRequest::cancel() 在绑定里存在，但这些类没有 unsafe impl Send，而 performRequests_error 是同步阻塞。",
+      "resolution": "已决：本包的取消 = 结果过期（立即回空闲、不产生任何数据或提示、晚到结果按序号丢弃）；底层调用不被中断（百毫秒级 CPU 照旧花掉）。界面文案 SHALL NOT 写『已取消识别』，写『已忽略这次结果』一类诚实表达。P7 的翻译段是网络请求，那一侧可以真取消，两段语义不同。",
+      "source": "objc2-vision 0.3.2 实测：generated/VNRequest.rs:141-144（cancel 存在）、VNRequest.rs:16（『performRequests is not an asynchronous method』）、全 crate grep 无 unsafe impl Send/Sync；stale_outcome_is_dropped_without_touching_the_ui 的既有机制。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-10-28T13:15:51+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-10-28T13:15:59+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-10-28T13:24:48+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    }
+  ],
+  "approval": null,
+  "plan_hash": null
+}
