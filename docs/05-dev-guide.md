@@ -167,6 +167,8 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 - **一处观感设置要同时喂给 egui 的三个不同入口**（2026-10-28 变更 H 定的硬规则，`theme::PaneText`）。字号是 `FontId`；行间距在 `Spacing::extra_text_line_spacing`，**只有 TextEdit 那条路会自动吃**（`text_edit/builder.rs:563`），`Label` 完全不认，得换成每个 section 上的**绝对** `format.line_height`（`text_layout.rs:534` 是 `unwrap_or(row_height)`，不取较大值，所以传小了会切字）；字间距两边都要手工挂 `format.extra_letter_spacing`——`Spacing` 里根本没有这一项，TextEdit 只能通过 `.layouter(...)` 这个自定义排版器塞进去。四个调用点（全量源文、全量译文、简洁输入带、简洁译文带）都走同一个 `PaneText`，就是为了不让"一个框松一个框挤"这种半改完的状态出现。回归锁分两层：`theme::tests` 量 `PaneText` 自己（字号是 `font_scale × 分栏倍率`、行高正好多出设置值、字间距让同一句话变宽），`views::full::tests` 量**真的跑完两帧之后栏目内容的高度**——只有后者能证明 view 真的用了它。**跑帧必须补 `theme::apply`**：`spacing` 那一步是 `app.rs` 每帧做的，测试里不补就永远读到 egui 出厂的 0，正文再松也量不出来（第一版就栽在这儿，源文栏 629→629 一动不动）。还有一个同类陷阱：`full` 的源文框被 `min_size` 拉到满栏高，字数太少时量到的是栏目高不是内容高，测行距要用 2400 字以上。
 - **默认档不许是"用户抱怨的那个样子"**。变更 H 之前字距/行距是 0，用户抱怨"太挤"；只把滑杆加上而默认仍是 0，等于把同一个毛病留给用户自己去设置里翻。`config::DEFAULT_LETTER_SPACING`（0.5px）与 `DEFAULT_LINE_SPACING`（3px）因此写死成非零，并由 `letter_and_line_spacing_act_on_both_body_columns` 的第一条断言锁住"默认必须比全 0 松"。**但默认值不许顺手扩成配色改动**（用户 2026-10-28 说"发灰"，根因是中文落到了偏细的苹方，改的是字体族，一处颜色都没动）。
 
+- **统计口径必须与被比较的对象同量纲，先问单位再调常数**（2026-10-28 复核待办第 5 条定的硬规则，`ice-core::detect`）。中英混排"按主导一方判定"这条规则本身没错，错的是两边不是同一个东西：汉字按**字**计、拉丁按**字母**计，一个 `CrashLoopBackOff` 就顶 16 个字，中文句子被判成英语（实测 14 条实例判反 2 条，置信度 0.56/0.77）。改成按翻译单元计（汉字一字一单元、一段连续拉丁字母一单元、`k8s`/`P99` 各算一个术语、纯数字不算词）之后 14 条全对，**而改前那 5 条既有测试一条没动、也没重调阈值**——这是"改的是量纲而不是把常数挪到刚够过"的判据。凡是"按数量比较两边谁占主导"的启发式，动手之前先问一句两边的单位是否可比；复核用的实例表留在 `crates/ice-core/examples/detect_probe.rs`，一条命令重跑、判错非零退出。
+
 ## 7. 提交规范
 
 - Conventional Commits：`docs(P0): ...`、`feat(P3): ...`、`fix(P5): ...`、`test(P7): ...`
