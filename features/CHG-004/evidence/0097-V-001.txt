@@ -1,0 +1,495 @@
+
+running 320 tests
+test app::tests::a_failed_save_keeps_the_dirty_flag_for_the_next_try ... ok
+test app::tests::a_double_click_fills_the_work_area_and_arms_the_guard ... ok
+test app::tests::a_focused_window_does_not_get_a_redundant_focus_command ... ok
+test app::tests::a_disabled_or_hidden_watch_never_reads_the_clipboard ... ok
+test app::tests::a_docked_window_is_never_rescued_back_into_the_area ... ok
+test app::tests::a_first_stage_expiry_resends_the_size_and_position_once ... ok
+test app::tests::a_full_window_never_snaps ... ok
+test app::tests::a_drag_never_asks_for_a_new_size_in_either_mode ... ok
+test app::tests::a_pending_key_probe_leaves_ai_unavailable_until_it_lands ... ok
+test app::tests::a_second_double_click_gives_the_remembered_rect_back ... ok
+test app::tests::a_docked_start_lands_at_the_tucked_position_instead_of_the_saved_one ... ok
+test app::tests::a_title_bar_click_toggles_through_the_same_effect_as_the_shortcut ... ok
+test app::tests::a_switch_while_hidden_only_updates_the_config ... ok
+test app::tests::a_move_we_asked_for_ourselves_does_not_arm_the_settler ... ok
+test app::tests::a_size_the_system_changed_is_recorded_not_fought ... ok
+test app::tests::a_title_bar_double_click_queues_the_fill_effect_once ... ok
+test app::tests::an_unchanged_window_alpha_is_not_resent ... ok
+test app::tests::ai_availability_needs_config_and_a_key_not_just_one_of_them ... ok
+test app::tests::a_window_released_off_screen_is_pulled_back_into_the_work_area ... ok
+test app::tests::an_unavailable_keychain_degrades_to_a_toast ... ok
+test app::tests::a_settled_drag_snaps_to_the_nearest_edge_and_persists ... ok
+test app::tests::an_unfocused_window_gets_focus_before_the_native_drag ... ok
+test app::tests::filling_to_the_size_already_recorded_is_refused ... ok
+test app::tests::config_writes_are_debounced_but_a_forced_save_always_happens ... ok
+test app::tests::docking_lifts_the_strip_even_with_the_topmost_switch_off ... ok
+test app::tests::escape_in_the_compact_window_clears_the_input_and_the_result ... ok
+test app::tests::escape_does_nothing_in_the_full_window ... ok
+test app::tests::hide_window_keeps_the_process_and_the_content ... ok
+test app::tests::machine_engine_is_always_registered_and_ai_needs_both_config_and_key ... ok
+test app::tests::glossary_from_config_reaches_the_engine_on_the_first_job ... ok
+test app::tests::a_window_saved_off_screen_is_pulled_back_on_the_first_frame ... ok
+test app::tests::rebuilding_the_translator_keeps_the_glossary ... ok
+test app::tests::landing_on_the_position_it_already_holds_sends_nothing ... ok
+test app::tests::dragging_a_docked_window_inward_releases_it_and_keeps_the_position ... ok
+test app::tests::hovering_the_strip_reveals_the_docked_window ... ok
+test app::tests::snapping_again_from_the_docked_position_is_a_no_op ... ok
+test app::tests::quit_writes_the_config_before_releasing_the_lock ... ok
+test app::tests::the_compact_settings_button_switches_to_full_and_lands_on_settings ... ok
+test app::tests::releasing_the_dock_gives_the_level_back_to_the_topmost_switch ... ok
+test app::tests::startup_notice_becomes_a_toast_and_history_is_loaded_once ... ok
+test app::tests::it_retracts_after_the_pointer_leaves_and_does_not_bounce_back ... ok
+test app::tests::the_clipboard_poll_fills_the_source_and_dispatches_a_job ... ok
+test app::tests::sliding_along_the_docked_edge_keeps_the_window_docked ... ok
+test app::tests::the_probe_overrides_a_stale_configured_flag ... ok
+test app::tests::the_restored_size_is_centered_when_the_area_is_known ... ok
+test app::tests::the_probe_result_actually_arrives_over_the_channel ... ok
+test app::tests::the_poll_ignores_the_text_the_app_itself_just_copied ... ok
+test app::tests::the_titlebar_pin_and_the_hotkey_share_one_path ... ok
+test app::tests::the_dock_watcher_lands_on_the_desktop_edge_not_the_screen_edge ... ok
+test app::tests::translate_action_queues_a_job_instead_of_calling_the_network ... ok
+test app::tests::the_two_slots_never_end_up_equal_after_a_failed_switch ... ok
+test app::tests::the_release_reads_the_anchor_even_after_capture_moved_the_config_rect ... ok
+test app::tests::the_reset_button_restores_both_slots_and_flushes_them ... ok
+test app::tests::the_switched_geometry_is_saved_as_soon_as_it_lands ... ok
+test app::tests::translate_on_an_empty_source_queues_nothing ... ok
+test jobs::tests::cache_hit_does_not_append_a_second_history_row ... ok
+test app::tests::typing_or_a_held_button_keeps_the_window_out ... ok
+test jobs::tests::failure_is_mapped_and_source_survives ... ok
+test jobs::tests::glossary_change_reaches_the_engine_prompt ... ok
+test jobs::tests::stale_outcome_is_dropped_without_touching_the_ui ... ok
+test jobs::tests::replacing_the_translator_takes_effect_on_the_next_job ... ok
+test jobs::tests::status_code_is_logged_for_http_failures_only ... ok
+test mode::tests::a_display_seam_is_not_a_dockable_edge ... ok
+test jobs::tests::every_error_variant_renders_a_message_and_never_panics ... ok
+test mode::tests::a_docked_startup_begins_floating ... ok
+test mode::tests::a_docked_strip_is_always_floating ... ok
+test jobs::tests::submitted_job_lands_in_state_and_history ... ok
+test mode::tests::a_held_button_postpones_the_settle_conclusion ... ok
+test mode::tests::a_filled_window_writes_nothing_into_the_slots ... ok
+test mode::tests::a_jitter_of_the_same_size_stays_silent ... ok
+test mode::tests::a_mode_switch_while_filled_gives_up_the_fill ... ok
+test mode::tests::a_moving_window_is_not_settled ... ok
+test mode::tests::a_never_landing_switch_refuses_to_adopt_the_measured_size ... ok
+test mode::tests::a_pending_switch_blocks_the_size_axis_until_it_lands ... ok
+test mode::tests::a_strange_chrome_reading_never_produces_a_negative_size ... ok
+test mode::tests::a_still_window_settles_exactly_once ... ok
+test mode::tests::a_suppressed_capture_still_records_the_position ... ok
+test mode::tests::a_switch_sends_exactly_one_of_each_geometry_command ... ok
+test mode::tests::a_visible_window_never_triggers_a_reveal ... ok
+test mode::tests::a_window_wider_than_the_work_area_gets_clamped_to_the_area_start ... ok
+test mode::tests::an_unarmed_settler_never_fires ... ok
+test mode::tests::an_undersized_configured_rect_is_clamped_before_it_reaches_the_window ... ok
+test mode::tests::apply_records_exactly_the_size_it_queued ... ok
+test mode::tests::both_dock_edges_release_toward_the_screen_interior ... ok
+test mode::tests::capture_ignores_the_first_frame_where_geometry_is_unknown ... ok
+test mode::tests::capture_takes_position_from_outer_and_size_from_inner ... ok
+test mode::tests::clamping_a_compact_rect_only_lifts_the_too_small_axes ... ok
+test mode::tests::docking_clamps_the_cross_axis_into_the_work_area ... ok
+test mode::tests::docking_to_no_edge_leaves_the_window_alone ... ok
+test mode::tests::dragging_a_docked_window_inward_releases_it ... ok
+test mode::tests::each_mode_carries_its_own_minimum_and_never_inherits_the_other ... ok
+test mode::tests::filling_asks_for_the_work_area_minus_the_chrome ... ok
+test mode::tests::fitting_into_the_work_area_handles_all_five_cases ... ok
+test mode::tests::focus_reveals_even_when_the_geometry_never_comes_back ... ok
+test mode::tests::geometry_alone_would_snap_a_dragged_away_window_back ... ok
+test mode::tests::geometry_coming_back_reveals_on_its_own ... ok
+test mode::tests::hide_cancels_close_and_minimizes ... ok
+test mode::tests::initial_viewport_follows_the_saved_mode ... ok
+test mode::tests::moving_again_restarts_the_settle_timer ... ok
+test mode::tests::only_an_unfocused_compact_window_dims ... ok
+test mode::tests::postponing_without_feeding_baselines_on_release ... ok
+test mode::tests::quit_sets_the_flag_and_really_closes ... ok
+test mode::tests::restoring_gives_back_the_remembered_rect_not_the_screen ... ok
+test mode::tests::retracting_after_a_reveal_returns_to_the_same_tucked_rect ... ok
+test mode::tests::reveal_is_judged_by_geometry_not_by_a_flag_macos_never_refreshes ... ok
+test mode::tests::reveal_resends_the_geometry_of_the_current_mode ... ok
+test mode::tests::revealing_slides_the_whole_window_back_into_the_area ... ok
+test mode::tests::snapping_an_already_docked_window_changes_nothing ... ok
+test mode::tests::snapping_to_the_left_edge_mirrors_the_right_one ... ok
+test mode::tests::snapping_to_the_right_edge_uses_the_specified_formula ... ok
+test mode::tests::sub_pixel_jitter_counts_as_still ... ok
+test mode::tests::switching_back_to_full_restores_decorations_and_min_size ... ok
+test mode::tests::switching_to_compact_queues_a_small_titled_window ... ok
+test mode::tests::the_default_unfocused_alpha_is_the_one_shipped_since_v06 ... ok
+test mode::tests::the_first_expiry_hands_back_exactly_one_retry ... ok
+test mode::tests::the_hide_frame_itself_never_counts_as_a_reveal ... ok
+test mode::tests::the_sliver_band_is_the_hot_zone_plus_one_sliver_inward ... ok
+test mode::tests::the_top_and_bottom_edges_never_snap ... ok
+test mode::tests::toggling_mode_keeps_content_and_marks_config_dirty ... ok
+test mode::tests::the_toggle_asks_for_the_other_shape_size_not_the_live_one ... ok
+test mode::tests::topmost_maps_to_window_level_and_is_persisted ... ok
+test state::tests::a_chinese_source_against_a_chinese_target_goes_to_english ... ok
+test state::tests::a_colliding_target_flips_to_the_other_side ... ok
+test state::tests::a_toast_fades_linearly_and_is_gone_at_five_hundred_ms ... ok
+test state::tests::an_english_source_against_an_english_target_is_reversed_before_the_request ... ok
+test state::tests::an_explicit_source_language_is_never_overridden ... ok
+test state::tests::char_count_is_cached_until_source_changes ... ok
+test state::tests::failure_keeps_source_and_maps_action ... ok
+test state::tests::empty_source_does_not_submit_and_clears_stale_result ... ok
+test state::tests::mode_toggle_preserves_content_and_does_not_request ... ok
+test state::tests::rate_limit_keeps_retry_possible_and_has_no_action ... ok
+test state::tests::stale_outcome_is_dropped_without_touching_visible_text ... ok
+test state::tests::corrupt_history_shows_reason_and_keeps_app_usable ... ok
+test state::tests::status_text_reflects_state_and_ai_availability ... ok
+test state::tests::submit_while_in_flight_is_ignored ... ok
+test state::tests::history_row_loads_without_submitting ... ok
+test state::tests::switching_engine_or_target_resubmits_current_source ... ok
+test state::tests::term_edits_flow_into_config_and_mark_dirty ... ok
+test state::tests::timeout_on_ai_offers_machine_fallback_but_not_on_machine ... ok
+test state::tests::undetectable_text_does_not_trigger_a_reversal ... ok
+test system::clipboard::tests::bilingual_copy_keeps_source_newlines_and_fixed_separator ... ok
+test system::clipboard::tests::composing_is_idempotent ... ok
+test system::clipboard::tests::empty_translation_never_touches_clipboard ... ok
+test system::clipboard::tests::the_watcher_compares_content_not_how_many_times_it_has_fired ... ok
+test system::clipboard::tests::the_watcher_fills_only_on_external_new_text ... ok
+test system::clipboard::tests::trailing_newlines_from_the_provider_are_trimmed ... ok
+test system::dblclick::tests::a_click_in_the_middle_of_the_title_bar_counts ... ok
+test system::clipboard::tests::translation_copy_writes_only_the_translation ... ok
+test system::dblclick::tests::clicks_over_the_buttons_are_left_alone ... ok
+test system::dblclick::tests::an_impossible_band_swallows_nothing ... ok
+test system::dblclick::tests::one_double_click_is_handed_over_exactly_once ... ok
+test system::dblclick::tests::nothing_inside_the_content_area_is_swallowed ... ok
+test system::dblclick::tests::only_the_watched_window_counts ... ok
+test system::hotkeys::tests::action_of_respects_focus_for_plain_enter ... ok
+test system::hotkeys::tests::cmd_enter_translates_regardless_of_focus ... ok
+test system::hotkeys::tests::escape_clears_the_input_regardless_of_focus ... ok
+test system::hotkeys::tests::global_shortcuts_ignore_focus ... ok
+test system::hotkeys::tests::action_of_collects_keys_in_order_and_ignores_everything_else ... ok
+test system::hotkeys::tests::held_keys_do_not_repeat_the_action ... ok
+test system::hotkeys::tests::plain_enter_translates_only_when_focus_is_in_source ... ok
+test system::hotkeys::tests::shift_enter_is_a_newline_even_with_focus_in_source ... ok
+test system::hotkeys::tests::unbound_keys_pass_through ... ok
+test system::hotkeys::tests::window_shortcuts_map_to_hide_and_quit ... ok
+test system::pin::tests::one_click_is_handed_over_exactly_once ... ok
+test system::pin::tests::pinned_means_upright_and_blue ... ok
+test system::pin::tests::the_tip_matches_the_state ... ok
+test system::screen::tests::a_secondary_screen_below_the_main_one_lands_under_it ... ok
+test system::screen::tests::a_shorter_neighbour_widens_the_union_without_losing_an_edge ... ok
+test system::screen::tests::a_single_display_unions_to_its_own_visible_area ... ok
+test system::screen::tests::a_taller_secondary_screen_to_the_right_gets_a_negative_top ... ok
+test system::screen::tests::a_window_outside_every_screen_falls_back_to_the_main_one ... ok
+test system::screen::tests::an_empty_screen_list_selects_nothing ... ok
+test system::screen::tests::flipping_a_full_frame_covers_the_screen ... ok
+test system::screen::tests::flipping_the_main_screen_moves_the_origin_to_the_top_left ... ok
+test system::screen::tests::the_desktop_union_spans_both_displays_and_skips_the_seam ... ok
+test system::screen::tests::the_fallback_area_subtracts_an_approximate_menu_bar ... ok
+test system::screen::tests::the_screen_containing_the_window_center_wins ... ok
+test system::secrets::tests::describe_error_never_echoes_payload_bytes ... ok
+test system::secrets::tests::fingerprint_is_stable_and_hides_the_key ... ok
+test system::secrets::tests::describe_error_covers_access_failures ... ok
+test system::single_instance::tests::acquire_creates_lock_with_own_pid_and_release_removes_it ... ok
+test system::single_instance::tests::a_stale_lock_recording_our_own_recycled_pid_is_taken_over ... ok
+test system::single_instance::tests::corrupt_lock_content_is_treated_as_stale ... ok
+test system::single_instance::tests::release_does_not_remove_someone_elses_lock ... ok
+test system::single_instance::tests::second_acquire_in_same_dir_is_rejected_while_holder_lives ... ok
+test system::titlebar::tests::one_click_is_handed_over_exactly_once ... ok
+test tests::a_broken_legacy_glossary_does_not_block_startup ... ok
+test tests::a_clean_startup_has_no_notice_and_nothing_to_save ... ok
+test tests::a_key_in_the_keychain_is_reflected_in_config_and_fingerprinted ... ok
+test tests::a_pending_key_probe_keeps_the_cached_flag_untouched ... ok
+test fonts::tests::heiti_is_the_first_proportional_face_and_second_monospace_one ... ok
+test tests::a_stale_key_configured_flag_is_cleared ... ok
+test fonts::tests::han_glyphs_come_from_the_installed_heiti ... ok
+test tests::an_unavailable_history_file_is_reported_and_startup_continues ... ok
+test tests::an_unavailable_keychain_degrades_to_machine_translation_with_a_notice ... ok
+test tests::an_existing_config_is_sanitized_and_terms_survive ... ok
+test tests::legacy_glossary_is_imported_once_and_the_config_is_marked_for_saving ... ok
+test system::single_instance::tests::pid_alive_rejects_dangerous_values ... ok
+test tests::several_problems_are_joined_into_one_notice ... ok
+test theme::tests::apply_sets_theme_and_scale_together ... ok
+test theme::tests::every_tone_has_its_own_color ... ok
+test theme::tests::font_scale_is_idempotent_across_frames ... ok
+test theme::tests::font_scale_is_clamped_to_the_legal_range ... ok
+test theme::tests::font_scale_multiplies_the_egui_defaults ... ok
+test theme::tests::hover_sinks_and_darkens_in_light_and_lightens_in_dark ... ok
+test theme::tests::line_spacing_is_applied_once_per_frame ... ok
+test theme::tests::mix_interpolates_each_channel_and_clamps_t ... ok
+test theme::tests::monospace_keeps_its_font_family ... ok
+test theme::tests::pane_font_multiplies_the_ui_scale_rather_than_replacing_it ... ok
+test system::single_instance::tests::stale_lock_from_dead_pid_is_taken_over ... ok
+test theme::tests::letter_spacing_reaches_the_laid_out_line ... ok
+test theme::tests::surface_fill_is_eguis_own_input_token ... ok
+test theme::tests::the_title_ramp_has_many_more_steps_than_characters ... ok
+test theme::tests::theme_maps_to_the_three_preferences ... ok
+test theme::tests::pane_line_height_follows_spacing_and_font_size ... ok
+test theme::tests::title_ramp_walks_three_stops ... ok
+test theme::tests::title_bands_are_clamped ... ok
+test theme::tests::widget_contrast_is_idempotent_across_frames ... ok
+test theme::tests::widgets_get_a_visible_border_in_both_themes ... ok
+test tests::the_legacy_file_is_never_touched ... ok
+test views::compact::tests::a_failure_shows_its_reason_and_keeps_the_source ... ok
+test views::compact::tests::a_row_that_cannot_fit_wraps_instead_of_overflowing ... ok
+test views::compact::tests::a_short_translation_does_not_invent_a_scrollbar ... ok
+test views::compact::tests::a_long_translation_scrolls_inside_the_compact_pane ... ok
+test views::compact::tests::a_wider_window_does_not_overflow_and_keeps_every_control ... ok
+test views::compact::tests::a_source_beyond_the_cap_scrolls_inside_the_input_box ... ok
+test views::compact::tests::all_three_states_show_both_icons_and_no_text ... ok
+test views::compact::tests::ai_is_disabled_when_it_is_not_configured ... ok
+test views::compact::tests::every_control_fits_the_minimum_compact_window ... ok
+test views::compact::tests::the_action_buttons_keep_the_normal_height ... ok
+test views::compact::tests::the_action_row_has_no_quit_button ... ok
+test views::compact::tests::the_action_row_has_no_topmost_text_switch ... ok
+test views::compact::tests::the_action_row_stays_on_one_line_at_the_minimum_width ... ok
+test views::compact::tests::the_bands_are_separated_by_the_gap_and_never_overlap ... ok
+test views::compact::tests::the_copy_button_queues_the_translation_without_touching_the_clipboard ... ok
+test views::compact::tests::the_engine_segment_switches_engines_and_retranslates ... ok
+test views::compact::tests::the_blank_between_the_row_and_the_theme_switch_is_a_handle ... ok
+test views::compact::tests::the_input_row_is_the_first_band_now_the_handle_bar_is_gone ... ok
+test views::compact::tests::the_slot_mapping_has_three_positions_with_hysteresis ... ok
+test views::compact::tests::the_settings_button_asks_to_open_the_settings_tab ... ok
+test views::compact::tests::the_theme_switch_picks_the_slot_under_the_pointer ... ok
+test views::compact::tests::the_theme_switch_is_pinned_to_the_bottom_right ... ok
+test views::compact::tests::the_translation_band_does_not_repeat_the_engine_name ... ok
+test views::compact::tests::the_two_bands_split_equally_and_fall_back_to_one_input_line ... ok
+test views::compact::tests::the_handles_start_a_native_drag_and_nothing_else_does ... ok
+test views::compact::tests::the_input_band_keeps_its_share_when_the_source_gets_long ... ok
+test views::full::tests::a_narrow_window_wraps_the_bar_instead_of_overflowing ... ok
+test views::full::tests::a_result_still_on_screen_while_refreshing_says_updating ... ok
+test views::full::tests::a_cached_result_reports_the_cache_and_no_elapsed_time ... ok
+test views::compact::tests::the_translation_viewport_never_grows_past_its_own_pane ... ok
+test views::full::tests::copy_bilingual_queues_source_and_translation ... ok
+test views::full::tests::copy_buttons_refuse_to_touch_the_clipboard_without_a_translation ... ok
+test views::full::tests::copy_translation_queues_only_the_translation ... ok
+test views::full::tests::both_panes_get_the_same_box ... ok
+test views::full::tests::failure_action_go_settings_switches_tab_and_focuses_the_key_field ... ok
+test views::full::tests::failure_action_use_machine_resubmits_with_the_machine_engine ... ok
+test views::full::tests::each_pane_font_scale_moves_only_its_own_column ... ok
+test views::full::tests::source_editor_focus_is_recorded_for_the_next_frame ... ok
+test views::full::tests::the_bar_meta_line_carries_every_result_marker ... ok
+test views::full::tests::the_bar_meta_line_stays_quiet_without_a_result ... ok
+test views::full::tests::the_bar_shrinks_before_it_wraps ... ok
+test views::full::tests::the_bottom_bar_occupies_its_own_row_below_both_panes ... ok
+test views::full::tests::the_full_window_has_the_same_theme_switch_at_its_bottom_right ... ok
+test views::full::tests::letter_and_line_spacing_act_on_both_body_columns ... ok
+test views::full::tests::the_pane_boxes_reach_down_to_the_bottom_bar ... ok
+test views::full::tests::a_huge_paste_keeps_the_source_editor_inside_its_pane ... ok
+test views::full::tests::the_pane_titles_are_centered_over_their_pane ... ok
+test views::full::tests::the_title_is_painted_as_clipped_bands_of_the_whole_word ... ok
+test views::full::tests::title_inset_centers_the_row_and_never_pushes_it_outside ... ok
+test views::history::tests::an_unreadable_history_file_reports_a_reason ... ok
+test views::history::tests::civil_from_days_matches_known_dates ... ok
+test views::history::tests::control_characters_are_flattened_not_rendered ... ok
+test views::history::tests::corrupt_history_lines_are_skipped_and_the_page_stays_usable ... ok
+test views::history::tests::picking_a_row_fills_the_text_page_without_translating ... ok
+test views::history::tests::picking_an_absent_row_is_a_no_op ... ok
+test views::full::tests::the_last_line_stops_above_the_bottom_bar ... ok
+test views::history::tests::row_text_is_single_line_and_truncated ... ok
+test views::history::tests::stamp_formatting_is_zero_padded ... ok
+test views::history::tests::unix_epoch_zero_is_a_valid_stamp ... ok
+test views::image::tests::auto_detection_reads_as_auto ... ok
+test views::history::tests::rendering_the_history_page_does_not_submit_anything ... ok
+test views::image::tests::language_pair_is_reflected_in_the_footnote ... ok
+test views::image::tests::placeholder_page_never_changes_state ... ok
+test views::settings::tests::a_configured_key_shows_only_its_length ... ok
+test views::settings::tests::adding_a_term_pushes_the_new_glossary_to_the_dispatcher ... ok
+test views::settings::tests::an_empty_key_is_never_handed_over ... ok
+test views::settings::tests::an_incomplete_term_is_rejected_silently ... ok
+test views::image::tests::placeholder_page_renders_the_five_regions_without_panicking ... ok
+test views::settings::tests::ark_preset_asks_for_a_model_name ... ok
+test views::settings::tests::changing_the_default_engine_also_switches_the_live_one ... ok
+test views::settings::tests::custom_provider_without_a_url_is_not_ready ... ok
+test views::settings::tests::manual_values_survive_a_preset_selection_and_still_win ... ok
+test views::settings::tests::optional_languages_exclude_the_always_visible_ones ... ok
+test views::settings::tests::provider_preset_fills_the_edit_buffers ... ok
+test views::settings::tests::removing_a_term_also_syncs_and_dirties_the_config ... ok
+test views::settings::tests::saving_a_key_hands_over_the_plaintext_once_and_clears_the_buffer ... ok
+test views::full::tests::twenty_thousand_characters_layout_within_budget ... ok
+test views::settings::tests::rendering_the_settings_page_has_no_side_effects ... ok
+test views::settings::tests::the_whole_page_renders_with_a_key_configured_and_a_full_glossary ... ok
+test views::settings::tests::the_window_group_buttons_are_visible_without_scrolling_at_the_default_size ... ok
+test views::settings::tests::theme_labels_cover_all_three_states ... ok
+test views::full::tests::both_panes_scroll_when_the_content_does_not_fit ... ok
+test views::tests::at_most_three_toasts_are_kept ... ok
+test views::settings::tests::the_window_group_buttons_set_their_intent ... ok
+test views::tests::a_click_on_a_toast_does_not_dismiss_it ... ok
+test views::tests::rendering_does_not_invent_requests_or_side_effects ... ok
+test views::tests::the_text_page_bottom_bar_hugs_the_status_bar ... ok
+test views::tests::the_toolbar_separator_matches_the_bottom_bar_and_has_no_frame ... ok
+test views::settings::tests::the_window_group_buttons_survive_the_narrowest_full_window ... ok
+test views::tests::every_tab_renders_without_panicking_at_the_minimum_size ... ok
+test views::tests::toast_is_queued_and_expires_on_its_own ... ok
+test views::tests::the_toolbar_takes_one_row_so_the_panes_sit_right_under_it ... ok
+test views::tests::toasts_are_painted_at_the_window_centre ... ok
+test views::tests::tab_state_survives_a_round_trip_through_every_tab ... ok
+test tests::the_embedded_app_icon_survives_decode_and_is_downscaled_for_the_dock ... ok
+test jobs::tests::a_slow_job_does_not_block_the_ui_thread ... ok
+test app::tests::a_native_titlebar_drag_arms_the_settler_and_snaps ... ok
+test app::tests::a_held_drag_stays_put_until_the_button_is_released ... ok
+test app::tests::a_geometry_change_is_written_within_the_throttle_window ... ok
+test app::tests::restoring_from_the_dock_is_noticed_by_the_logic_hook ... ok
+
+test result: ok. 320 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+
+
+running 58 tests
+test config::tests::every_preset_except_custom_has_an_address ... ok
+test config::tests::custom_without_url_is_not_ready ... ok
+test config::tests::manual_values_beat_the_preset ... ok
+test config::tests::ai_not_ready_without_key ... ok
+test config::tests::corrupt_config_is_rejected_not_panic ... ok
+test config::tests::ai_endpoint_accepts_both_forms ... ok
+test config::tests::preset_provider_supplies_url_and_model ... ok
+test config::tests::remember_target_keeps_five_and_most_recent_first ... ok
+test config::tests::sanitize_clamps_out_of_range_values ... ok
+test config::tests::config_without_provider_field_still_loads ... ok
+test config::tests::partial_config_uses_defaults_for_missing_sections ... ok
+test config::tests::roundtrip_keeps_values ... ok
+test config::tests::sanitize_keeps_the_typography_fields_inside_their_bands ... ok
+test config::tests::sanitize_keeps_the_unfocused_alpha_inside_its_band ... ok
+test config::tests::sanitize_leaves_a_larger_compact_rect_alone ... ok
+test config::tests::sanitize_lifts_a_hand_edited_compact_rect_to_the_native_floor ... ok
+test config::tests::load_at_missing_file_returns_defaults_without_reason ... ok
+test config::tests::thinking_off_field_follows_each_vendors_spelling ... ok
+test config::tests::visible_languages_always_includes_preferred ... ok
+test config::tests::window_off_screen_detection ... ok
+test detect::tests::a_tie_goes_to_chinese_and_english_needs_one_more_term_than_that ... ok
+test detect::tests::accented_latin_is_flagged_as_low_confidence ... ok
+test detect::tests::detects_common_scripts ... ok
+test detect::tests::digits_inside_a_term_are_not_a_word_on_their_own ... ok
+test detect::tests::digits_symbols_and_empty_are_not_guessed ... ok
+test detect::tests::greek_wins_over_a_few_cjk_chars ... ok
+test detect::tests::japanese_with_kanji_still_reads_as_japanese ... ok
+test detect::tests::mixed_chinese_english_reads_as_chinese_with_lower_confidence ... ok
+test detect::tests::mixed_instances_read_as_their_grammar_not_their_letter_count ... ok
+test config::tests::load_at_falls_back_to_defaults_with_reason ... ok
+test detect::tests::mostly_english_with_one_cjk_term_reads_as_english ... ok
+test detect::tests::one_long_identifier_counts_as_one_term_however_many_letters_it_has ... ok
+test detect::tests::traditional_chinese_separated_from_simplified ... ok
+test document::tests::font_size_never_below_floor ... ok
+test document::tests::merged_text_skips_disabled_and_blank_blocks ... ok
+test document::tests::rect_union_covers_both ... ok
+test document::tests::vertical_gap_is_negative_when_overlapping_rows ... ok
+test glossary::tests::case_sensitive_term_only_matches_exact ... ok
+test glossary::tests::post_substitute_replaces_residual_source_case_insensitively ... ok
+test glossary::tests::prompt_fragment_empty_when_no_terms ... ok
+test glossary::tests::replace_case_insensitive_does_not_cut_multibyte ... ok
+test glossary::tests::substitute_handles_cjk_and_repeated_occurrences ... ok
+test glossary::tests::upsert_is_idempotent_and_remove_works ... ok
+test glossary::tests::terms_render_as_term_tables_inside_config ... ok
+test glossary::tests::write_to_config_dedupes_and_sorts ... ok
+test glossary::tests::import_legacy_reads_old_file_without_touching_it ... ok
+test glossary::tests::import_legacy_is_idempotent_once_config_has_terms ... ok
+test glossary::tests::import_legacy_degrades_on_corrupt_or_missing_file ... ok
+test glossary::tests::prompt_fragment_caps_at_limit ... ok
+test config::tests::save_at_creates_dirs_and_leaves_no_temp_file ... ok
+test language::tests::code_roundtrip ... ok
+test language::tests::preferred_is_subset_of_all ... ok
+test language::tests::from_code_normalizes_case_and_underscore ... ok
+test history::tests::clear_empties_history ... ok
+test history::tests::append_and_recent_is_newest_first ... ok
+test history::tests::search_matches_both_sides_case_insensitively ... ok
+test history::tests::corrupt_line_is_skipped_not_fatal ... ok
+test history::tests::trims_to_capacity_keeping_newest ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 62 tests
+test ai::tests::fingerprint_is_stable_and_short ... ok
+test ai::tests::preset_endpoint_has_no_duplicate_suffix ... ok
+test ai::tests::debug_output_hides_the_key ... ok
+test ai::tests::temperature_is_sent_when_configured ... ok
+test ai::tests::missing_placeholder_from_model_is_a_failure ... ok
+test ai::tests::request_body_follows_openai_shape ... ok
+test ai::tests::unavailable_without_key_or_config ... ok
+test cache::tests::different_engine_is_different_entry ... ok
+test cache::tests::evicts_least_recently_used ... ok
+test ai::tests::glossary_and_target_appear_in_system_prompt ... ok
+test ai::tests::error_text_never_carries_the_source_text ... ok
+test cache::tests::hit_and_miss_counted ... ok
+test ai::tests::one_segment_failure_fails_the_whole_request_not_half_output ... ok
+test dispatcher::tests::ai_channel_receives_glossary_hint ... ok
+test dispatcher::tests::different_engines_do_not_share_cache_entries ... ok
+test dispatcher::tests::empty_input_never_reaches_engine ... ok
+test dispatcher::tests::second_identical_request_hits_cache_and_skips_engine ... ok
+test dispatcher::tests::glossary_applies_to_cached_result_without_new_request ... ok
+test error::tests::long_error_bodies_are_clipped ... ok
+test dispatcher::tests::unavailable_engine_is_refused_before_request ... ok
+test dispatcher::tests::unregistered_engine_reports_not_configured_for_ai ... ok
+test error::tests::rate_limit_is_user_retryable_but_never_auto_retried ... ok
+test error::tests::query_string_is_scrubbed_from_error_text ... ok
+test error::tests::status_codes_map_to_distinct_readable_errors ... ok
+test machine::tests::auto_detected_source_matching_target_is_also_refused ... ok
+test ai::tests::translates_single_segment ... ok
+test ai::tests::auth_and_rate_limit_map_to_distinct_errors ... ok
+test machine::tests::auto_source_uses_local_detection ... ok
+test machine::tests::connection_refused_says_unreachable_not_rejected ... ok
+test machine::tests::body_level_error_is_not_mistaken_for_translation ... ok
+test machine::tests::same_source_and_target_is_refused_before_any_request ... ok
+test machine::tests::empty_translation_is_a_failure_not_empty_success ... ok
+test machine::tests::explicit_source_is_used_and_not_echoed_as_detection ... ok
+test machine::tests::protected_content_survives_a_service_that_mangles_numbers ... ok
+test machine::tests::unrecognized_status_shape_is_decode_failure ... ok
+test machine::tests::undetectable_source_falls_back_to_english_without_echo ... ok
+test parallel::tests::one_failure_fails_whole_request_and_cancels_the_rest ... ok
+test ai::tests::thinking_is_switched_off_per_vendor_spelling ... ok
+test protect::tests::a_leading_newline_does_not_steal_the_cut_from_a_later_period ... ok
+test parallel::tests::single_segment_needs_no_window ... ok
+test protect::tests::chunk_never_splits_a_placeholder ... ok
+test protect::tests::chunks_respect_char_limit_and_order ... ok
+test protect::tests::existing_bracket_placeholder_in_source_is_escaped ... ok
+test protect::tests::fenced_code_block_is_protected_as_a_whole ... ok
+test protect::tests::identity_roundtrip_keeps_every_byte ... ok
+test protect::tests::missing_placeholder_is_reported_as_lost ... ok
+test protect::tests::no_near_empty_chunks ... ok
+test protect::tests::ordinary_capitalized_words_are_not_protected ... ok
+test protect::tests::plain_text_gets_no_placeholder ... ok
+test protect::tests::prefer_line_break_over_hard_cut ... ok
+test protect::tests::oversized_code_block_never_reaches_the_chunk_limit ... ok
+test protect::tests::protects_the_declared_kinds_of_untranslatable_content ... ok
+test protect::tests::reordered_placeholders_still_restore ... ok
+test protect::tests::same_identifier_is_restored_everywhere ... ok
+test parallel::tests::more_than_the_window_never_runs_at_once ... ok
+test parallel::tests::results_come_back_in_segment_order ... ok
+test ai::tests::segments_join_in_order_and_keep_the_line_break ... ok
+test machine::tests::long_text_is_chunked_under_the_limit_and_rejoined ... ok
+test machine::tests::long_text_sends_several_blocks_at_the_same_time ... ok
+test ai::tests::long_text_is_split_and_later_segments_get_the_previous_source ... ok
+test ai::tests::long_text_sends_several_segments_at_the_same_time ... ok
+test machine::tests::timeout_is_reported_with_retry_count ... ok
+
+test result: ok. 62 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.92s
+
+
+running 5 tests
+test ai_live_deepseek ... ignored, 会向 AI 服务发真实请求，可能消耗账号额度，需显式 --ignored
+test ai_live_long_text_is_split_and_parallel ... ignored, 会向 AI 服务发真实请求，可能消耗账号额度，需显式 --ignored
+test machine_latency_p50_over_twenty_samples ... ignored, 会向第三方公开服务发 20+11 次真实请求（带限速停顿），需显式 --ignored
+test machine_live_long_text_is_chunked ... ignored, 会向第三方公开服务发真实请求，需显式 --ignored
+test machine_live_short ... ignored, 会向第三方公开服务发真实请求，需显式 --ignored
+
+test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.14s
+     Running unittests src/main.rs (target/debug/deps/ice_translator-7962fd8dea0fefe4)
+     Running unittests src/lib.rs (target/debug/deps/ice_core-73eb2751a788ba5f)
+     Running unittests src/lib.rs (target/debug/deps/ice_providers-7ec7c09a5ef9a3ce)
+     Running tests/live.rs (target/debug/deps/live-f79915624d4b43e7)
+     Running unittests src/lib.rs (target/debug/deps/ice_vision-b549bdee2b6ad302)
+   Doc-tests ice_core
+   Doc-tests ice_providers
+   Doc-tests ice_vision

@@ -21,15 +21,15 @@
 
 | 需求 | 级 | 设计 | 实现 | 验证 | 结果 |
 |---|---|---|---|---|---|
-| FR-2.1 四种图片来源 | M | 04 §1 S0 | `ice-app::views::image` | TC-2.1-a..d | 待 P6 |
-| FR-2.2 本地 OCR 带坐标与置信度 | M | 04 §1 S1~S3、ADR-002 | `ice-vision::{ocr,vision_sys,layout}` | TC-2.2-a/b + 样图集 | 待 P6 |
-| FR-2.3 识别结果可编辑 | M | 03 §2 I-03 | `ice-app::views::image` | TC-2.3-a | 待 P6 |
+| FR-2.1 四种图片来源 | M | 04 §1 S0 | `ice-app::views::image` | TC-2.1-a..d | 待 P6（规格就绪：CHG-005 v0.1 · REQ-001） |
+| FR-2.2 本地 OCR 带坐标与置信度 | M | 04 §1 S1~S3、ADR-002 | `ice-vision::{ocr,vision_sys,layout}` | TC-2.2-a/b + 样图集 | 待 P6（规格就绪：CHG-005 v0.1 · REQ-002/003/004，度量分层见 REQ-008） |
+| FR-2.3 识别结果可编辑 | M | 03 §2 I-03 | `ice-app::views::image` | TC-2.3-a | 待 P6（规格就绪：CHG-005 v0.1 · REQ-005；判据后半句"生成图反映修改"随回填归 P7） |
 | FR-2.4 擦除并回填生成副本 | M | 04 §1 S5~S7、ADR-003 | `ice-vision::composite` | TC-2.4-a/b + 人工评分 | 待 P7 |
 | FR-2.5 覆盖层模式 | M | 04 §3、ADR-003 | `ice-vision::bg` + `composite` | TC-2.5-a/b | 待 P7 |
 | FR-2.6 导出 PNG/剪贴板 | M | 04 §1 S8 | `ice-app::views::image` | TC-2.6-a/b | 待 P7 |
 | FR-2.7 字号自适应与降级 | S | 04 §4 | `ice-vision::composite` | TC-2.7-a | 待 P7 |
 | FR-2.8 颜色与对齐还原 | S | 04 §3 | `ice-vision::bg` | TC-2.8-a | 待 P7 |
-| FR-2.9 阶段进度与取消 | S | 04 §1 状态机 | `ice-app::jobs` | TC-2.9-a/b | 待 P7 |
+| FR-2.9 阶段进度与取消 | S | 04 §1 状态机 | `ice-app::jobs` | TC-2.9-a/b | 待 P7（CHG-005 只承担"识别"那一段：REQ-006 已写明取消在 objc2 绑定上只能是丢弃结果，`VNRequest::cancel` 因 `!Send` 拿不到） |
 | FR-2.10 区域截图 | C | — | — | — | 延期项（立项书 §3） |
 
 ## 双界面
