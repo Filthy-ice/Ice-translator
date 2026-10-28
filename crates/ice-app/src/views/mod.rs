@@ -60,7 +60,9 @@ pub struct Effects {
     /// 切换置顶（K-09）。快捷键那条路径直接在 `app.rs::run` 里做，这里给标题栏图钉用
     ///（变更 I：简洁窗动作行那颗文字开关删了，界面侧只剩 `system::pin` 一个入口）
     pub toggle_topmost: bool,
-    /// 退出程序（REQ-011）：两种形态各有一颗看得见的按钮，走的都是 `Action::Quit` 那一条路径
+    /// 退出程序（REQ-011）：界面侧只剩设置页那一颗按钮（用户 2026-10-28 变更 J 把悬浮窗
+    /// 右下角那颗也删了："我既然用悬浮窗了，大概率是长期使用了"），另加 `Cmd+Q`。
+    /// 走的都是 `Action::Quit` 这一条路径，不另开第二条退出实现。
     pub quit: bool,
     /// 把两个尺寸槽恢复成默认值（REQ-011 落点②：尺寸被历史版本写坏了，程序不自动改，用户显式恢复）
     pub reset_geometry: bool,
@@ -239,6 +241,169 @@ fn status_bar(ui: &mut egui::Ui, state: &mut AppState, ai_available: bool) {
                 }
             });
         });
+}
+
+/// 主题滑动开关。用户 2026-10-28 变更 J 的原话："放在右下做成一个类似于开关左右推动的效果…
+/// 你可以做成开关盖住太阳，露出月亮，就是暗色，如果盖住月亮，露出太阳就是浅色，在中间就是
+/// 自动。而且全量界面也要有这个开关，不需要提示，看到的人都懂。也在右下角。"
+///
+/// 所以判据是**露出来的那一侧**，不是滑块所在的一侧：滑块压在马上（左端）时太阳被盖住、
+/// 月亮露着 = 深色；滑块压在右端时反过来 = 浅色；停在中间两枚都露一半 = 自动。
+///
+/// 三条口径：
+/// ① 三态仍是既有的 `config::Theme::{Light, Dark, System}`，这里只写
+///    `state.config.ui.theme` + 标脏，生效仍在 `theme::apply`（`app.rs` 每帧调）——
+///    与设置页外观分区那组单选、与那颗框都是**同一个配置项**，不另开第二套深浅色实现；
+/// ② **没有悬停提示、没有文字**（"不需要提示，看到的人都懂"），变更 F 那档「自动」两字
+///    随之作废；
+/// ③ 太阳/月亮是矢量线稿，不是 `☀`/`☾` 字符——egui 自带字体没这些字形，真机落成豆腐块
+///    （P4 缺陷 D-5 那条教训）。
+///
+/// `salt` 用来把矩形记进 `Context::data`，让两种形态各自的测试能同时找到那格。
+pub(crate) const THEME_SWITCH_W: f32 = 40.0;
+/// 轨道高 = 滑块直径 + 一道笔画，竖向不撑高所在那一行（同一行还有约 28px 的按钮）。
+pub(crate) const THEME_SWITCH_H: f32 = 20.0;
+/// 滑块半径：太阳光芒外沿 7.6、月亮半径 7，8px 的实心圆刚好把它们整个盖住——
+/// "盖住"是这块控件的全部语义，盖不住就等于没做到。
+pub(crate) const KNOB_RADIUS: f32 = 8.0;
+
+/// 三档在轨道上的位置（0 = 左端盖住太阳，1 = 右端盖住月亮）
+pub(crate) fn theme_slot(theme: ice_core::config::Theme) -> f32 {
+    use ice_core::config::Theme;
+    match theme {
+        Theme::Dark => 0.0,
+        Theme::System => 0.5,
+        Theme::Light => 1.0,
+    }
+}
+
+/// 轨道上某一点落在哪一档：取最近的一档，所以左四分之一是深色、右四分之一是浅色、
+/// 中间一半都是自动。拖动时不会在两档边界抖——指针要退回 0.25 才换档。
+pub(crate) fn theme_at(t: f32) -> ice_core::config::Theme {
+    use ice_core::config::Theme;
+    if t < 0.25 {
+        Theme::Dark
+    } else if t > 0.75 {
+        Theme::Light
+    } else {
+        Theme::System
+    }
+}
+
+fn theme_switch_id(salt: &'static str) -> egui::Id {
+    egui::Id::NULL
+        .with("ice-translator.theme-switch")
+        .with(salt)
+}
+
+pub(crate) fn theme_switch(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    salt: &'static str,
+) -> egui::Rect {
+    // 只占位不响应（`allocate_at_least` 会自带一次 interact，两次点击判定会让同一枚
+    // 指针被两个响应者各消费一遍）；真正的命中交给下面那个带稳定 `Id` 的 `interact`
+    let (_auto_id, rect) = ui.allocate_space(egui::vec2(THEME_SWITCH_W, THEME_SWITCH_H));
+    let visuals = ui.visuals();
+    let painter = ui.painter_at(rect);
+    let center_y = rect.center().y;
+    // 两端滑块的圆心：滑块贴着轨道两头，所以内缩一个半径
+    let left_x = rect.min.x + KNOB_RADIUS;
+    let right_x = rect.max.x - KNOB_RADIUS;
+    let icon_stroke = egui::Stroke::new(1.5, visuals.widgets.inactive.fg_stroke.color);
+
+    painter.rect_filled(
+        rect,
+        rect.height() / 2.0,
+        visuals.widgets.noninteractive.bg_fill,
+    );
+    painter.rect_stroke(
+        rect,
+        rect.height() / 2.0,
+        visuals.widgets.noninteractive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    draw_sun(&painter, egui::pos2(left_x, center_y), icon_stroke);
+    draw_moon(&painter, egui::pos2(right_x, center_y), icon_stroke);
+    // 滑块最后画：它是不透明的那块圆，盖住哪一侧就露出另一侧
+    let t = theme_slot(state.config.ui.theme);
+    let knob = egui::pos2(left_x + (right_x - left_x) * t, center_y);
+    painter.circle_filled(knob, KNOB_RADIUS, visuals.widgets.inactive.bg_fill);
+    painter.circle_stroke(knob, KNOB_RADIUS, icon_stroke);
+
+    let response = ui.interact(rect, theme_switch_id(salt), egui::Sense::click_and_drag());
+    if response.dragged() || response.clicked() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let t = ((pos.x - rect.min.x) / rect.width().max(1.0)).clamp(0.0, 1.0);
+            let next = theme_at(t);
+            if next != state.config.ui.theme {
+                state.config.ui.theme = next;
+                state.mark_config_dirty();
+            }
+        }
+    }
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(theme_switch_id(salt), rect));
+    rect
+}
+
+#[cfg(test)]
+pub(crate) fn recorded_theme_switch(ctx: &egui::Context, salt: &'static str) -> egui::Rect {
+    ctx.data_mut(|d| d.get_temp::<egui::Rect>(theme_switch_id(salt)))
+        .unwrap_or_else(|| panic!("{salt} 那一侧的主题开关没有记下矩形"))
+}
+
+/// 一段圆弧采样成折线（epaint 0.37 没有圆弧图元，只能自己按角度取点）
+fn arc_points(
+    center: egui::Pos2,
+    radius: f32,
+    from: f32,
+    to: f32,
+    steps: usize,
+) -> Vec<egui::Pos2> {
+    (0..=steps)
+        .map(|i| {
+            let angle = from + (to - from) * i as f32 / steps as f32;
+            center + egui::vec2(angle.cos(), angle.sin()) * radius
+        })
+        .collect()
+}
+
+/// 太阳：一圈描边的圆 + 八道光芒。全是线稿，与月亮同一套笔画粗细。
+fn draw_sun(painter: &egui::Painter, at: egui::Pos2, stroke: egui::Stroke) {
+    painter.circle_stroke(at, 3.6, stroke);
+    for index in 0..8 {
+        let angle = std::f32::consts::TAU * index as f32 / 8.0;
+        let dir = egui::vec2(angle.cos(), angle.sin());
+        painter.line_segment([at + dir * 5.4, at + dir * 7.6], stroke);
+    }
+}
+
+/// 月亮：月牙轮廓 = 外弧 + 内弧，两段弧共用两个尖端。
+///
+/// 只描边不填充：`PathShape` 的 `fill` 只支持凸多边形（`path_shape.rs:16`），月牙不是凸的，
+/// 填出来会画歪。外弧取整圆的左侧 230°，内弧的圆心右移 `BIAS`、半径取到同样穿过那两个
+/// 尖端，两弧之间剩下的就是月牙。
+fn draw_moon(painter: &egui::Painter, at: egui::Pos2, stroke: egui::Stroke) {
+    const TIP: f32 = 65.0_f32.to_radians();
+    const R: f32 = 7.0;
+    const BIAS: f32 = 3.2;
+    const STEPS: usize = 20;
+    let inner_center = at + egui::vec2(BIAS, 0.0);
+    // `+y` 朝下，所以这是月牙朝下的那个尖端；它的极角就是内弧的端点角
+    let tip = at + egui::vec2(R * TIP.cos(), R * TIP.sin());
+    let offset = tip - inner_center;
+    let mut points = arc_points(at, R, TIP, std::f32::consts::TAU - TIP, STEPS);
+    points.extend(arc_points(
+        inner_center,
+        offset.length(),
+        std::f32::consts::TAU - offset.angle(),
+        offset.angle(),
+        STEPS,
+    ));
+    painter.add(egui::Shape::Path(egui::epaint::PathShape::closed_line(
+        points, stroke,
+    )));
 }
 
 /// 提示条：**窗口正中**，最多三条，出生即开始线性淡出，`TOAST_LIFETIME`（500ms）到点消失。
