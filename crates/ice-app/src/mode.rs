@@ -559,6 +559,44 @@ pub fn resend_commands(cfg: &UiConfig, mode: UiMode, target: Vec2) -> Vec<Viewpo
     ]
 }
 
+/// 双击标题栏"铺满"要下发的那组命令（任务 #25）。
+///
+/// `area` 是窗口所在那块屏的**可用区**（`system::screen::work_area`），不是整块 `frame`：
+/// 菜单栏和 Dock 的窗口层级本来就压在我们之上（普通层 0、置顶也只有 3，菜单栏是 24），
+/// 铺到整块屏的结果是这条标题栏被菜单栏盖掉一截——红绿灯与图钉点不着，看起来是"坏了"
+/// 而不是"铺满了"。可用区也正是 Windows 上"最大化"的含义：铺满你能用的那块。
+///
+/// 命令发的是**内**尺寸，`area` 是外框目标，所以 [`fill_size`] 先减掉这套装饰占掉的宽高。
+/// 尺寸与原点各恰好一条，与 REQ-004 同一纪律：多发一条就多发一次原生 resize 事件。
+pub fn fill_commands(area: Rect, size: Vec2) -> Vec<ViewportCommand> {
+    vec![
+        ViewportCommand::InnerSize(size),
+        ViewportCommand::OuterPosition(area.min),
+    ]
+}
+
+/// 铺满时的目标内尺寸 = 可用区尺寸 − 当帧量到的装饰尺寸。
+///
+/// 装饰那条轴取实测（外框减内框），不写死 32：改成无边框或 `fullSizeContentView` 时它自己
+/// 就变成 0，不需要有人记得回来改这里。两轴各自 `max(0.0)` 兜住"外框反而比内框小"的怪值，
+/// 宁可铺小也不发一个负尺寸——负数会被原生静默忽略，命令发了窗口不动，比铺小更难查。
+pub fn fill_size(area: Rect, inner: Vec2, outer: Vec2) -> Vec2 {
+    let chrome = Vec2::new((outer.x - inner.x).max(0.0), (outer.y - inner.y).max(0.0));
+    Vec2::new(
+        (area.width() - chrome.x).max(0.0),
+        (area.height() - chrome.y).max(0.0),
+    )
+}
+
+/// 再双击还原：把全量槽记着的那组几何再下发一次（FR-3.6）。
+///
+/// 复用 [`resend_commands`] 那两条（尺寸 + 原点），不是图省事：铺满只改过尺寸与位置，
+/// 还原也就不该顺带重发装饰与下限。目标尺寸走 [`target_size`]，与 `pending` 记的那个
+/// 同一个出处——两处取到不同的数，护栏判的就不是发出去的那一件事（D-6 的原罪）。
+pub fn restore_commands(cfg: &UiConfig) -> Vec<ViewportCommand> {
+    resend_commands(cfg, UiMode::Full, target_size(cfg, UiMode::Full))
+}
+
 /// 切到指定形态。源文、译文、语言对、页签一律保留，且不重发请求（FR-3.3）。
 ///
 /// 窗口收起时（`state.hidden`）只改配置里的目标形态，一条几何命令都不发，也不把窗口
@@ -572,6 +610,7 @@ pub fn apply(
 ) {
     if state.hidden {
         state.set_mode(mode);
+        state.filled = false;
         return;
     }
     // 先把当前几何记回配置，否则切回来时会跳到上一次的旧位置。
@@ -579,6 +618,9 @@ pub fn apply(
     // 尺寸记进目标槽（缺陷 D-13，见 `AppState::next_mode`）。
     capture(ctx, state, pending);
     state.set_mode(mode);
+    // 换形态就是放弃铺满，且**必须在 `capture` 之后**清：铺满期间 `capture` 靠这个标记
+    // 不写任何东西，实时的那个整屏尺寸因此从来没进过槽，切回来的几何还是"铺满之前"的。
+    state.filled = false;
     let target = target_size(&state.config.ui, mode);
     tracing::debug!(?mode, w = target.x, h = target.y, "下发形态切换的几何命令");
     for command in commands_for_mode(&state.config.ui, mode) {
@@ -617,11 +659,19 @@ pub const CONFIG_SAVE_INTERVAL: Duration = Duration::from_millis(500);
 /// 记住窗口位置与大小（FR-3.6）。屏幕拔掉后旧坐标会落到可用区外，启动时回屏幕中心。
 ///
 /// `pending` 是 D-6 的护栏：切换后还没落定的那几帧只写位置轴，尺寸轴沿用槽里的旧值。
+/// 铺满整屏期间（`state.filled`）整个函数直接返回，见函数体第一句。
 ///
 /// 几何一变就立一个 `CONFIG_SAVE_INTERVAL` 的重绘钟（REQ-009）：`flush_config(false)`
 /// 只在有帧跑的时候才被调用，而拖动结束后没有任何东西再请求重绘——脏标记会一直挂着，
 /// 强杀就丢（SIGTERM 不走 `on_exit`，P1 实测）。
 pub fn capture(ctx: &egui::Context, state: &mut AppState, pending: &mut PendingGeometry) {
+    // 铺满期间整块几何是"这一屏可用区多大"决定的，不是用户选的尺寸（任务 #25）。让它写进槽
+    // 就是把 D-6/D-10 那一类缺陷换个入口重犯一遍：还原时已经没有"铺满之前"可回，而 FR-3.6
+    // 记着的也会变成整屏，重启后窗口再也不是用户上次的大小。位置轴一并抑制——铺满时拖动
+    // 窗口量到的原点同样属于"临时的观看姿势"，不属于记着的几何。
+    if state.filled {
+        return;
+    }
     let (inner, outer) = ctx.input(|i| {
         let viewport = i.viewport();
         (viewport.inner_rect, viewport.outer_rect)
@@ -778,6 +828,10 @@ impl RevealGuard {
 /// 画面就成了一张被非等比拉伸的旧图——文字变窄变扁、鼠标放上去也没有任何反馈。
 pub fn reveal(ctx: &egui::Context, state: &mut AppState, pending: &mut PendingGeometry) {
     state.hidden = false;
+    // 收起前若是铺满的（任务 #25），这一次重发本身就把它还原了：`commands_for_mode` 用的
+    // 是槽里记着的几何，而铺满期间那个槽没被写过。标记跟着清，否则下一次双击会走"还原"
+    // 那一支，窗口原地不动。
+    state.filled = false;
     tracing::debug!(mode = ?state.config.ui.mode, "窗口恢复可见，重发几何");
     // 与 hide 的 `Minimized(true)` 对上：AppKit 那边若还认为自己是最小化的，
     // 这一步才真的把它叫回来；已经可见时是空操作。
@@ -1302,9 +1356,14 @@ mod tests {
         let ctx = egui::Context::default();
         let mut state = state();
         state.hidden = true;
+        state.filled = true;
 
         reveal(&ctx, &mut state, &mut PendingGeometry::default());
 
+        assert!(
+            !state.filled,
+            "重发的就是槽里的几何，等于已经还原；标记留着会让下一次双击原地不动"
+        );
         let commands = queued(&ctx);
         for expected in commands_for_mode(&state.config.ui, state.config.ui.mode) {
             assert!(commands.contains(&expected), "少发了 {expected:?}");
@@ -1981,6 +2040,131 @@ mod tests {
             Some(Vec2::new(460.0, 160.0))
         );
         assert!(queued(&ctx).contains(&ViewportCommand::InnerSize(Vec2::new(460.0, 160.0))));
+    }
+
+    /// 任务 #25 的第一半：铺满请求的是**当帧量到的可用区减掉装饰**，尺寸与原点各一条。
+    ///
+    /// 32pt 那条来自本机观测（`07-acceptance.md` 的几何基线：带装饰的窗口外框比内容高 32pt）。
+    /// 不写死它是因为 `fill_size` 拿的是实测差值——这条测试要锁的是"减了"，不是"减 32"。
+    #[test]
+    fn filling_asks_for_the_work_area_minus_the_chrome() {
+        let inner = Vec2::new(1080.0, 720.0);
+        let outer = Vec2::new(1080.0, 752.0);
+        let size = fill_size(area(), inner, outer);
+        assert_eq!(
+            size,
+            Vec2::new(1440.0, 773.0),
+            "可用区 1440×805 减掉 0×32 的装饰；没减就是外框溢出屏幕 32pt"
+        );
+        assert_eq!(
+            fill_commands(area(), size),
+            vec![
+                ViewportCommand::InnerSize(Vec2::new(1440.0, 773.0)),
+                ViewportCommand::OuterPosition(Pos2::new(0.0, 25.0)),
+            ],
+            "两条各恰好一条，原点是可用区的顶（菜单栏下面），不是 (0,0)"
+        );
+    }
+
+    /// 装饰差值读出来是怪值（零、甚至负）时不许发负尺寸：负数会被原生静默忽略，
+    /// 命令发了、窗口一动不动，比"铺小了一点"难查得多。
+    #[test]
+    fn a_strange_chrome_reading_never_produces_a_negative_size() {
+        let borderless = Vec2::new(1080.0, 720.0);
+        assert_eq!(
+            fill_size(area(), borderless, borderless),
+            Vec2::new(1440.0, 805.0),
+            "无边框时装饰是 0，铺满就是完整可用区"
+        );
+        let upside_down = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(10.0, 8.0));
+        assert_eq!(
+            fill_size(
+                upside_down,
+                Vec2::new(100.0, 100.0),
+                Vec2::new(600.0, 600.0)
+            ),
+            Vec2::new(0.0, 0.0),
+            "可用区比装饰还小（不可能，但判据不许发负数）"
+        );
+    }
+
+    /// 任务 #25 的第二半：还原回到槽里记着的那组几何，并且不顺带改装饰与下限
+    #[test]
+    fn restoring_gives_back_the_remembered_rect_not_the_screen() {
+        let cfg = UiConfig {
+            full_rect: WindowRect {
+                x: 120.0,
+                y: 80.0,
+                w: 900.0,
+                h: 600.0,
+            },
+            ..UiConfig::default()
+        };
+        assert_eq!(
+            restore_commands(&cfg),
+            vec![
+                ViewportCommand::InnerSize(Vec2::new(900.0, 600.0)),
+                ViewportCommand::OuterPosition(Pos2::new(120.0, 80.0)),
+            ]
+        );
+        assert!(
+            !restore_commands(&cfg).contains(&ViewportCommand::Decorations(true)),
+            "铺满没改过装饰与下限，还原也就不该顺带重发"
+        );
+        assert_eq!(
+            target_size(&cfg, UiMode::Full),
+            Vec2::new(900.0, 600.0),
+            "护栏要记的那个值必须与命令里发出去的是同一个出处"
+        );
+    }
+
+    /// 铺满期间实时几何就是整屏，让它进槽等于把 D-6/D-10 换个入口重犯：还原无源可回，
+    /// 而且 FR-3.6 记着的会变成整屏尺寸（重启后窗口再也不是用户上次的大小）。
+    #[test]
+    fn a_filled_window_writes_nothing_into_the_slots() {
+        let ctx = egui::Context::default();
+        let mut state = state();
+        let remembered = state.config.ui.full_rect;
+        state.filled = true;
+        feed_live(
+            &ctx,
+            Rect::from_min_size(Pos2::new(0.0, 25.0), Vec2::new(1440.0, 780.0)),
+        );
+
+        capture(&ctx, &mut state, &mut PendingGeometry::default());
+
+        assert_eq!(state.config.ui.full_rect, remembered, "整屏尺寸不许进槽");
+        assert!(
+            !state.config_dirty,
+            "什么都没写就不该标脏，否则每帧白落一次盘"
+        );
+    }
+
+    /// 铺满时切形态：`capture` 被抑制，全量槽保持铺满之前的尺寸；标记跟着清，
+    /// 免得回到简洁窗之后还留着"下次双击是还原"的状态。
+    #[test]
+    fn a_mode_switch_while_filled_gives_up_the_fill() {
+        let ctx = egui::Context::default();
+        let mut state = state();
+        state.filled = true;
+        feed_live(
+            &ctx,
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(1440.0, 780.0)),
+        );
+
+        let mode = toggle(&ctx, &mut state, &mut PendingGeometry::default());
+
+        assert_eq!(mode, UiMode::Compact);
+        assert!(!state.filled, "换形态就是放弃铺满");
+        assert!(
+            queued(&ctx).contains(&ViewportCommand::InnerSize(Vec2::new(460.0, 160.0))),
+            "切简洁请求的仍是简洁尺寸，而不是被整屏写脏后的那个值"
+        );
+        assert_eq!(
+            (state.config.ui.full_rect.w, state.config.ui.full_rect.h),
+            (1080.0, 720.0),
+            "全量槽没被铺满的实时尺寸冲掉"
+        );
     }
 
     /// 带着停靠态启动时窗口层级就要是 `AlwaysOnTop`，不能等第一帧的 `watch_dock` 再补：

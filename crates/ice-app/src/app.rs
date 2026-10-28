@@ -24,6 +24,7 @@ use crate::mode;
 use crate::state::{self, AppState, KeyState, Tab, Tone};
 use crate::system::alpha;
 use crate::system::clipboard::{self, CopyKind};
+use crate::system::dblclick;
 use crate::system::hotkeys::{self, Action};
 use crate::system::mouse;
 use crate::system::pin;
@@ -123,6 +124,8 @@ pub struct IceApp {
     zoom_outcome: Option<titlebar::Outcome>,
     /// 上一帧标题栏图钉的挂载结果（见 `apply_pin`）。`None` = 还没下过。
     pin_outcome: Option<pin::Outcome>,
+    /// 上一帧标题栏双击监视器的装载结果（见 `apply_dblclick_hook`）。`None` = 还没下过。
+    dblclick_outcome: Option<dblclick::Outcome>,
 }
 
 impl IceApp {
@@ -174,6 +177,7 @@ impl IceApp {
             native_alpha: None,
             zoom_outcome: None,
             pin_outcome: None,
+            dblclick_outcome: None,
         }
     }
 
@@ -610,6 +614,61 @@ impl IceApp {
         }
     }
 
+    /// 帧首取走标题栏双击（任务 #25，用户"双击标题栏：铺满整屏 + 再双击还原"）。
+    ///
+    /// 与 `poll_titlebar_click`、`poll_pin_click` 同一形状：只把"被双击了"翻译成一条 effect，
+    /// 铺满还是还原全部在 `toggle_fill` 里判，原生那条路径上不做任何业务判断。
+    /// 取走这件事本身无条件执行——不收的话标记会一直挂着，等窗口回来时凭空多铺一次。
+    fn poll_dblclick(&mut self, effects: &mut Effects) {
+        if dblclick::take_double_click() && !self.state.hidden {
+            effects.toggle_fill = true;
+        }
+    }
+
+    /// 铺满 ↔ 还原（任务 #25）。两条路径都只发尺寸与原点，且都上护栏。
+    ///
+    /// 护栏是必须的：命令是异步请求，还原那一帧量到的**还是整屏**，`capture` 那时刚解除抑制，
+    /// 不拦就会把整屏尺寸当成"用户选的尺寸"写进 `full_rect`——D-6 换了一个入口重犯。
+    fn toggle_fill(&mut self, ctx: &egui::Context) {
+        let (Some(inner), Some(outer)) = (
+            ctx.input(|i| i.viewport().inner_rect),
+            ctx.input(|i| i.viewport().outer_rect),
+        ) else {
+            // 几何还没报到（建窗当帧）：这一帧既算不出装饰差值也定不了铺满目标，下一帧再来
+            return;
+        };
+        let (commands, target, filled) = if self.state.filled {
+            (
+                mode::restore_commands(&self.state.config.ui),
+                mode::target_size(&self.state.config.ui, UiMode::Full),
+                false,
+            )
+        } else {
+            // 可用区按**窗口所在那块屏**取（`work_area`），不是整个桌面并集：两块屏的用户
+            // 双击要铺满的是自己眼前那块，`desktop` 的并集会把窗口拉过接缝、跨到另一屏上。
+            let Some(area) = screen::work_area(ctx, outer) else {
+                return;
+            };
+            let size = mode::fill_size(area, inner.size(), outer.size());
+            (mode::fill_commands(area, size), size, true)
+        };
+        if fill_is_no_op(filled, target, &self.state.config.ui) {
+            return;
+        }
+        self.state.filled = filled;
+        for command in commands {
+            ctx.send_viewport_cmd(command);
+        }
+        self.pending_geometry.set(target, Instant::now());
+        tracing::debug!(
+            filled,
+            w = target.x,
+            h = target.y,
+            "双击标题栏：下发铺满/还原的几何命令"
+        );
+        ctx.request_repaint();
+    }
+
     /// 按当前置顶档位刷新标题栏图钉（空心躺着 ↔ 实心立起来变蓝）。
     /// 两种形态共用同一个 `NSWindow`，所以这一句在分支外调用一次就够——
     /// 全量窗也一起有了（用户点名要的那句"全量界面也要有"）。
@@ -627,6 +686,30 @@ impl IceApp {
             pin::Outcome::Unavailable => {
                 if !PIN_UNMOUNTED_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
                     tracing::warn!("接不上标题栏图钉，置顶只剩 Cmd+Shift+P 与设置页那一格");
+                }
+            }
+        }
+    }
+
+    /// 只在**全量窗**盯着标题栏双击（任务 #25；悬浮条铺满整屏不是它该做的事）。
+    /// 原生细节、吞哪些落点、以及"双击之后立刻按住拖动会失效"这条代价见 `system::dblclick`。
+    ///
+    /// 每帧核对现状，**只在结果变了才记日志**（与 `apply_zoom_hook`、`apply_pin` 同一手法）：
+    /// 装没装上是真机上唯一能区分"双击没被拦"和"拦了但铺满命令没发出去"的现场证据。
+    fn apply_dblclick_hook(&mut self, frame: &eframe::Frame, want: bool) {
+        let outcome = dblclick::sync(frame, want);
+        if self.dblclick_outcome == Some(outcome) {
+            return;
+        }
+        self.dblclick_outcome = Some(outcome);
+        match outcome {
+            dblclick::Outcome::Watching => {
+                tracing::debug!("标题栏双击改道：铺满整屏 / 再双击还原")
+            }
+            dblclick::Outcome::Idle => tracing::debug!("标题栏双击交回系统默认（简洁窗）"),
+            dblclick::Outcome::Unavailable => {
+                if !DBLCLICK_UNWATCHED_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    tracing::warn!("拦不下标题栏双击，双击仍是系统设置里那一档（默认多为最小化）");
                 }
             }
         }
@@ -936,6 +1019,9 @@ impl IceApp {
         if effects.toggle_topmost {
             self.toggle_topmost(ctx);
         }
+        if effects.toggle_fill {
+            self.toggle_fill(ctx);
+        }
         if effects.clear_history {
             self.state.clear_history(&self.history);
         }
@@ -1108,6 +1194,21 @@ static ZOOM_UNHOOKED_WARNED: std::sync::atomic::AtomicBool =
 static PIN_UNMOUNTED_WARNED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// 标题栏双击拦不住也只发一次警告（`apply_dblclick_hook`；监视器每帧都会再试装一次）
+static DBLCLICK_UNWATCHED_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 这一次双击是不是空操作（`toggle_fill` 的判定核心，抽出来才能无头断言）。
+///
+/// `filled` 是这一次判完之后**要落到** `state.filled` 上的值，`target` 是即将下发的内尺寸。
+/// 还原一侧永远不空：把窗口送回槽里记着的那组几何就是它的目的，量对不对都由它兜。
+/// 铺满只在"槽里记的已经是这个整屏尺寸"时空转——典型成因是上一轮铺满被原生拒绝、护栏在
+/// D-10 第二段把整屏采纳进了槽。此时命令发出去窗口一动不动，`filled` 却翻成 true、
+/// `capture` 跟着停写，下一次双击就变成"还原到一个整屏的槽"，用户看不到任何反应。
+fn fill_is_no_op(filled: bool, target: egui::Vec2, cfg: &UiConfig) -> bool {
+    filled && target == mode::target_size(cfg, UiMode::Full)
+}
+
 /// 这一档不透明度要不要真的下发给窗口服务器（`apply_native_alpha` 的判定核心，抽出来才能无头断言）。
 ///
 /// `applied` 是上一帧**成功**下到的值，`None` 表示还没下过或上次没走通。相同就跳过：
@@ -1154,6 +1255,7 @@ impl eframe::App for IceApp {
         let mut effects = Effects::default();
         self.poll_titlebar_click(&mut effects);
         self.poll_pin_click(&mut effects);
+        self.poll_dblclick(&mut effects);
         for action in actions {
             self.run(action, &ctx, &mut effects);
         }
@@ -1172,6 +1274,8 @@ impl eframe::App for IceApp {
         // 图钉放在形态分支之外同步：两种形态共用同一个原生窗口，一句话就同时管住
         // 悬浮窗与全量窗（用户 2026-10-28："全量界面也要有"）
         self.apply_pin(frame);
+        // 双击标题栏的改道只属于全量窗：形态在这里，判定也只在这一句
+        self.apply_dblclick_hook(frame, self.state.mode() == UiMode::Full);
         match self.state.mode() {
             UiMode::Full => {
                 // 全量窗永不半透明（REQ-007 第四条），但这一档要在这里显式写回 100%：
@@ -2698,6 +2802,160 @@ mod tests {
         assert_eq!(
             via_key.toggle_mode, effects.toggle_mode,
             "快捷键与绿键不是同一条路径"
+        );
+    }
+
+    /// 任务 #25（用户"双击标题栏：铺满整屏 + 再双击还原"）：原生监视器的那一笔必须落到
+    /// `effects.toggle_fill` 上，而且**一次双击只兑现一次**——与 `poll_titlebar_click`、
+    /// `poll_pin_click` 同一条纪律。取走标记是无条件的：窗口收起时不兑现，也不许留给下一帧。
+    #[test]
+    fn a_title_bar_double_click_queues_the_fill_effect_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+
+        dblclick::note_double_click();
+        let mut effects = Effects::default();
+        app.poll_dblclick(&mut effects);
+        assert!(effects.toggle_fill, "双击没接进 effects，标题栏白挨一下");
+
+        let mut second = Effects::default();
+        app.poll_dblclick(&mut second);
+        assert!(
+            !second.toggle_fill,
+            "同一次双击兑了两次：铺满和还原互相抵消"
+        );
+
+        dblclick::note_double_click();
+        app.state.hidden = true;
+        let mut hidden = Effects::default();
+        app.poll_dblclick(&mut hidden);
+        assert!(!hidden.toggle_fill, "窗口收起来了还铺什么满");
+        assert!(
+            !dblclick::take_double_click(),
+            "标记要一并清掉，否则窗口回来那一帧凭空铺满一次"
+        );
+    }
+
+    /// 喂一帧铺满判定要的输入：内框、外框（两者之差就是这套装饰的厚度，本机实测 32pt）、
+    /// 以及整块屏的尺寸。无头测试里 `screen::probe()` 一定拿不到屏幕列表（不在主线程），
+    /// 可用区走的正是 `fallback_area` 那条近似（顶部内缩 25pt，Dock 拿不到所以不缩底）。
+    fn feed_window(ctx: &egui::Context, inner: Rect, outer: Rect, monitor: egui::Vec2) {
+        let info = egui::ViewportInfo {
+            inner_rect: Some(inner),
+            outer_rect: Some(outer),
+            focused: Some(true),
+            monitor_size: Some(monitor),
+            ..Default::default()
+        };
+        let mut raw = egui::RawInput::default();
+        raw.viewports.insert(egui::ViewportId::ROOT, info);
+        ctx.run_ui(raw, |_| {}).drop_without_applying_deltas();
+    }
+
+    /// 1440×900 的屏上，一个 1080×720（外框 752 高）的全量窗被双击：
+    /// 要铺到可用区 (0,25)-(1440,900)，也就是内尺寸 1440×(875-32)=1440×843。
+    /// 护栏同时上膛——还原那一帧量到的还是整屏，不拦就被写进 `full_rect`（D-6 换个入口）。
+    #[test]
+    fn a_double_click_fills_the_work_area_and_arms_the_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        let c = ctx();
+        feed_window(
+            &c,
+            Rect::from_min_size(Pos2::new(120.0, 110.0), egui::Vec2::new(1080.0, 720.0)),
+            Rect::from_min_size(Pos2::new(120.0, 78.0), egui::Vec2::new(1080.0, 752.0)),
+            egui::Vec2::new(1440.0, 900.0),
+        );
+
+        let effects = Effects {
+            toggle_fill: true,
+            ..Effects::default()
+        };
+        app.run_effects(&c, effects);
+
+        let commands = queued(&c);
+        assert!(
+            commands.contains(&ViewportCommand::InnerSize(egui::Vec2::new(1440.0, 843.0))),
+            "没减掉 32pt 装饰条，或者铺的是整块 frame 而不是可用区：{commands:?}"
+        );
+        assert!(
+            commands.contains(&ViewportCommand::OuterPosition(Pos2::new(0.0, 25.0))),
+            "原点要落在可用区的顶，菜单栏下面：{commands:?}"
+        );
+        assert!(app.state.filled);
+        assert!(
+            app.pending_geometry.is_pending(),
+            "铺满的目标没进护栏，还原时拦不住实时尺寸"
+        );
+        assert_eq!(
+            (
+                app.state.config.ui.full_rect.w,
+                app.state.config.ui.full_rect.h
+            ),
+            (1080.0, 720.0),
+            "铺满当帧就把实时尺寸写进了槽"
+        );
+    }
+
+    /// 再双击一次还原：发的是槽里记着的那组几何（不是可用区、也不是当前实时尺寸），
+    /// 并且不顺带重发装饰与下限。
+    #[test]
+    fn a_second_double_click_gives_the_remembered_rect_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        let c = ctx();
+        let rect = app.state.config.ui.full_rect;
+        app.state.filled = true;
+        // 实时几何是"已经铺满"的那一档：还原请求发出去之后它还没变，正是护栏要挡的那几帧
+        feed_window(
+            &c,
+            Rect::from_min_size(Pos2::new(0.0, 57.0), egui::Vec2::new(1440.0, 843.0)),
+            Rect::from_min_size(Pos2::new(0.0, 25.0), egui::Vec2::new(1440.0, 875.0)),
+            egui::Vec2::new(1440.0, 900.0),
+        );
+
+        app.toggle_fill(&c);
+
+        let commands = queued(&c);
+        assert!(
+            commands.contains(&ViewportCommand::InnerSize(egui::Vec2::new(rect.w, rect.h))),
+            "还原发的不是槽里那组尺寸：{commands:?}"
+        );
+        assert!(commands.contains(&ViewportCommand::OuterPosition(Pos2::new(rect.x, rect.y))));
+        assert!(
+            !commands.contains(&ViewportCommand::Decorations(true)),
+            "铺满没改过装饰，还原不该顺带重发：{commands:?}"
+        );
+        assert!(!app.state.filled, "还原完就不该还说自己是铺满的");
+        assert!(
+            app.pending_geometry.is_pending(),
+            "还原也是一组异步请求，护栏要跟着上（D-6）"
+        );
+    }
+
+    /// 上一轮铺满被原生拒绝、护栏在 D-10 第二段把整屏尺寸采纳进了槽之后，再双击"铺满"
+    /// 是空操作：命令发出去窗口一动不动，`filled` 却翻成 true、`capture` 跟着停写，
+    /// 下一次双击就变成"还原到一个整屏的槽"，用户看到的是第一下没反应。
+    #[test]
+    fn filling_to_the_size_already_recorded_is_refused() {
+        let already_filled = UiConfig {
+            full_rect: WindowRect {
+                x: 0.0,
+                y: 25.0,
+                w: 1440.0,
+                h: 843.0,
+            },
+            ..UiConfig::default()
+        };
+        let target = egui::Vec2::new(1440.0, 843.0);
+        assert!(fill_is_no_op(true, target, &already_filled));
+        assert!(
+            !fill_is_no_op(true, target, &UiConfig::default()),
+            "槽里记的还是常规尺寸，这一刀要照做"
+        );
+        assert!(
+            !fill_is_no_op(false, target, &already_filled),
+            "还原永远不是空操作：送回槽里的几何就是它的目的"
         );
     }
 

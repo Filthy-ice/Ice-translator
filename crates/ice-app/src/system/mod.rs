@@ -2,6 +2,7 @@
 
 pub mod alpha;
 pub mod clipboard;
+pub mod dblclick;
 pub mod hotkeys;
 pub mod mouse;
 pub mod pin;

@@ -53,6 +53,13 @@ pub fn take_click() -> bool {
 /// `pin` 出厂是斜 45°，转这个数之后钉尖朝下。
 pub const PIN_UPRIGHT_DEG: f64 = 45.0;
 
+/// 图钉那一格从窗口右边缘往里占的宽度（pt），与 `macos::PIN_SIZE` 的宽**同一个数**。
+///
+/// 单列出来给 `system::dblclick` 用：算标题栏双击的落点区间时，右端必须把这一格让开——
+/// 那颗图钉也是按钮，吞掉它第二下的 `mouseDown` 就变成"图钉点不动"（缺陷 D-9 那一类：
+/// 两处各自写一遍尺寸，出的就是"一边有效一边无效"）。
+pub const PIN_ZONE_W: f64 = 28.0;
+
 /// 图钉该长什么样。**纯数据 + 纯函数**：真机上那颗按钮只是把这三项照抄一遍，
 /// 而"置顶 = 蓝色 + 垂直"这条语义由 [`look_for`] 在无头侧锁住。
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -118,10 +125,11 @@ mod macos {
     };
     use objc2_foundation::{NSAffineTransform, NSObject, NSPoint, NSRect, NSSize, NSString};
 
-    use super::{Look, Outcome, look_for, mark_click, tip_for};
+    use super::{Look, Outcome, PIN_ZONE_W, look_for, mark_click, tip_for};
 
     /// 图钉那一带的尺寸。宽度比图标多一点，点在边缘上不至于落到标题栏空白里被当成拖窗。
-    const PIN_SIZE: NSSize = NSSize::new(28.0, 22.0);
+    /// 宽度用 [`PIN_ZONE_W`]：标题栏双击的落点区间要从右边缘让开这一格，两处共用一个数。
+    const PIN_SIZE: NSSize = NSSize::new(PIN_ZONE_W, 22.0);
     /// 容器与图标共用同一个原点：按钮贴在容器左下角，高度差由标题栏自己居中
     const POS_ZERO: NSPoint = NSPoint::new(0.0, 0.0);
 
