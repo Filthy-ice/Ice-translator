@@ -139,6 +139,16 @@ mod tests {
     }
 
     #[test]
+    fn rate_limit_is_user_retryable_but_never_auto_retried() {
+        let err = from_status(429, "");
+        assert!(err.retryable(), "限流时界面应允许用户手动再试");
+        assert!(
+            !should_retry(&err),
+            "自动立刻重试只会延长端点的封禁，把一次限流放大成几十次"
+        );
+    }
+
+    #[test]
     fn long_error_bodies_are_clipped() {
         let body = "x".repeat(5000);
         let err = from_status(500, &body);
