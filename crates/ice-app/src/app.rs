@@ -26,6 +26,7 @@ use crate::system::alpha;
 use crate::system::clipboard::{self, CopyKind};
 use crate::system::hotkeys::{self, Action};
 use crate::system::mouse;
+use crate::system::pin;
 use crate::system::screen;
 use crate::system::secrets;
 use crate::system::single_instance::InstanceLock;
@@ -120,6 +121,8 @@ pub struct IceApp {
     native_alpha: Option<f32>,
     /// 上一帧标题栏绿键的改道结果（见 `apply_zoom_hook`）。`None` = 还没下过。
     zoom_outcome: Option<titlebar::Outcome>,
+    /// 上一帧标题栏图钉的挂载结果（见 `apply_pin`）。`None` = 还没下过。
+    pin_outcome: Option<pin::Outcome>,
 }
 
 impl IceApp {
@@ -170,6 +173,7 @@ impl IceApp {
             geometry_seen: None,
             native_alpha: None,
             zoom_outcome: None,
+            pin_outcome: None,
         }
     }
 
@@ -201,7 +205,7 @@ impl IceApp {
         }
     }
 
-    /// 切换置顶（K-09）。快捷键与简洁窗动作行的按钮共用这一条路径。
+    /// 切换置顶（K-09）。快捷键、标题栏图钉（`system::pin`，变更 I）与设置页那一格共用这一条路径。
     fn toggle_topmost(&mut self, ctx: &egui::Context) {
         let on = self.state.toggle_topmost();
         mode::apply_topmost(ctx, &mut self.state);
@@ -590,6 +594,39 @@ impl IceApp {
             titlebar::Outcome::Unavailable => {
                 if !ZOOM_UNHOOKED_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
                     tracing::warn!("接不上标题栏绿键，从悬浮窗切回全量只剩 Cmd+Shift+M");
+                }
+            }
+        }
+    }
+
+    /// 帧首取走标题栏图钉的点击（用户 2026-10-28 变更 I："置顶不应该是文字……
+    /// 在标题栏最右侧有一个类似于钉子的图标"）。
+    ///
+    /// 这里只把"被点了"翻译成 `effects.toggle_topmost = true`——与 `Cmd+Shift+P`
+    /// 落在同一个字段上，置顶本身一个实现，不在原生路径上重做一遍判断。
+    fn poll_pin_click(&mut self, effects: &mut Effects) {
+        if pin::take_click() {
+            effects.toggle_topmost = true;
+        }
+    }
+
+    /// 按当前置顶档位刷新标题栏图钉（空心躺着 ↔ 实心立起来变蓝）。
+    /// 两种形态共用同一个 `NSWindow`，所以这一句在分支外调用一次就够——
+    /// 全量窗也一起有了（用户点名要的那句"全量界面也要有"）。
+    ///
+    /// 每帧核对现状，但**只在结果变了才记日志**（与 `apply_zoom_hook` 同一手法）：
+    /// "挂上了没有"是真机上唯一能区分"图钉没画"和"画了但点不动"的现场证据。
+    fn apply_pin(&mut self, frame: &eframe::Frame) {
+        let outcome = pin::sync(frame, self.state.config.ui.always_on_top);
+        if self.pin_outcome == Some(outcome) {
+            return;
+        }
+        self.pin_outcome = Some(outcome);
+        match outcome {
+            pin::Outcome::Mounted => tracing::debug!("标题栏图钉已挂上：点击切置顶"),
+            pin::Outcome::Unavailable => {
+                if !PIN_UNMOUNTED_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    tracing::warn!("接不上标题栏图钉，置顶只剩 Cmd+Shift+P 与设置页那一格");
                 }
             }
         }
@@ -1067,6 +1104,10 @@ static ALPHA_FALLBACK_WARNED: std::sync::atomic::AtomicBool =
 static ZOOM_UNHOOKED_WARNED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// 标题栏图钉挂不上也只发一次警告（`apply_pin`；同一帧一次，逐帧打会刷屏）
+static PIN_UNMOUNTED_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// 这一档不透明度要不要真的下发给窗口服务器（`apply_native_alpha` 的判定核心，抽出来才能无头断言）。
 ///
 /// `applied` 是上一帧**成功**下到的值，`None` 表示还没下过或上次没走通。相同就跳过：
@@ -1112,6 +1153,7 @@ impl eframe::App for IceApp {
 
         let mut effects = Effects::default();
         self.poll_titlebar_click(&mut effects);
+        self.poll_pin_click(&mut effects);
         for action in actions {
             self.run(action, &ctx, &mut effects);
         }
@@ -1127,6 +1169,9 @@ impl eframe::App for IceApp {
         self.rescue_offscreen(&ctx, |outer| screen::work_area(&ctx, outer));
 
         let ai_available = self.ai_available();
+        // 图钉放在形态分支之外同步：两种形态共用同一个原生窗口，一句话就同时管住
+        // 悬浮窗与全量窗（用户 2026-10-28："全量界面也要有"）
+        self.apply_pin(frame);
         match self.state.mode() {
             UiMode::Full => {
                 // 全量窗永不半透明（REQ-007 第四条），但这一档要在这里显式写回 100%：
@@ -1167,8 +1212,9 @@ impl eframe::App for IceApp {
             ctx.request_repaint();
         }
         if !self.state.toasts.is_empty() {
-            // 让提示条到点自己消失：不常驻重绘，空闲时 CPU 才能压到 1% 以下（NFR-2）
-            ctx.request_repaint_after(state::TOAST_VISIBLE);
+            // 淡出要一帧一帧才看得出动：按 `TOAST_FADE_STEP`（16ms，500ms 约 30 帧）续重绘，
+            // 提示条一消失就停——不常驻重绘，空闲时 CPU 才能压到 1% 以下（NFR-2）
+            ctx.request_repaint_after(state::TOAST_FADE_STEP);
         }
         self.flush_config(false);
     }
@@ -2939,17 +2985,25 @@ mod tests {
         assert!(!app.drag_settler.is_armed());
     }
 
-    /// 动作行的置顶按钮与 Cmd+Shift+P 共用同一条路径：写回配置 + 下发 WindowLevel + 提示
+    /// 标题栏图钉（变更 I）与 `Cmd+Shift+P` 共用同一条路径：写回配置 + 下发 WindowLevel + 提示。
+    /// 动作行那颗文字开关没了，置顶在界面上只剩这两条入口（外加设置页那一格），
+    /// 判据不变：谁点的都一样，`toggle_topmost` 一条通道、`WindowLevel` 一次下发。
     #[test]
-    fn the_topmost_button_and_the_hotkey_share_one_path() {
+    fn the_titlebar_pin_and_the_hotkey_share_one_path() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = app(dir.path(), compact_state());
         let c = ctx();
 
-        let effects = Effects {
-            toggle_topmost: true,
-            ..Default::default()
-        };
+        let _ = pin::take_click(); // 别的测试可能留了残留，先清干净再模拟点击
+        pin::mark_click();
+        let mut effects = Effects::default();
+        app.poll_pin_click(&mut effects);
+        assert!(effects.toggle_topmost, "点了图钉没有置置顶意图");
+        assert!(
+            !pin::take_click(),
+            "一次点击只兑一次：意图已经取走，再来一帧不该重复切"
+        );
+
         app.run_effects(&c, effects);
 
         assert!(app.state.config.ui.always_on_top);

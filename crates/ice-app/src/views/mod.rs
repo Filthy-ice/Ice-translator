@@ -31,9 +31,6 @@ const TOOLBAR_Y_MARGIN: i8 = 6;
 /// 状态条的高度（`03-ui-design.md` §1）
 pub const STATUS_HEIGHT: f32 = 28.0;
 
-/// 全量模式提示条离窗口顶部的距离（简洁窗按输入行的实际底边算，见 `compact::toast_offset`）
-pub const TOAST_OFFSET: f32 = 12.0;
-
 /// 一帧里 view 想让外部世界做的事。
 ///
 /// view 只改 `AppState`，副作用记在这里、帧末由 `app.rs` 统一执行；这样 view 函数能无头调用，
@@ -60,7 +57,8 @@ pub struct Effects {
     pub start_drag: bool,
     /// 简洁窗的"设置"：切回全量并打开设置页（REQ-005）
     pub open_settings: bool,
-    /// 切换置顶（K-09）。快捷键那条路径直接在 `app.rs::run` 里做，这里给界面按钮用
+    /// 切换置顶（K-09）。快捷键那条路径直接在 `app.rs::run` 里做，这里给标题栏图钉用
+    ///（变更 I：简洁窗动作行那颗文字开关删了，界面侧只剩 `system::pin` 一个入口）
     pub toggle_topmost: bool,
     /// 退出程序（REQ-011）：两种形态各有一颗看得见的按钮，走的都是 `Action::Quit` 那一条路径
     pub quit: bool,
@@ -102,7 +100,7 @@ pub fn show(
     });
 
     let ctx = ui.ctx().clone();
-    toasts(&ctx, state, TOAST_OFFSET);
+    toasts(&ctx, state);
     confirm(&ctx, state, effects);
 }
 
@@ -243,42 +241,54 @@ fn status_bar(ui: &mut egui::Ui, state: &mut AppState, ai_available: bool) {
         });
 }
 
-/// 提示条：顶部居中，最多三条，四秒自动消失，也可以点掉。
+/// 提示条：**窗口正中**，最多三条，出生即开始线性淡出，`TOAST_LIFETIME`（500ms）到点消失。
 ///
-/// `offset_y` 是离窗口顶部的距离：全量窗给 `TOAST_OFFSET`，简洁窗要越过输入行——
-/// 那一行会随内容长高（REQ-005 的"位置不遮住输入行文字"）。
-pub(crate) fn toasts(ctx: &egui::Context, state: &mut AppState, offset_y: f32) {
+/// 用户 2026-10-28 变更 I 的原话："所有的提示类弹窗都是中心弹窗500ms内淡化消失，
+/// 不应该有关闭的操作和按钮。"三条各自对应一处删除：
+/// ① 不再挂在顶部（原来全量窗贴顶 12px、简洁窗另算一套越过输入行的偏移）而落在正中；
+/// ② 不再四秒常驻，整条 lifetime 就是那次淡出；
+/// ③ 那颗 `×` 连同 `AppState::dismiss_toast` 一起没了，Area 也改成 `interactable(false)`——
+///    不只是"少画一颗按钮"，而是**这一层根本不参与命中测试**，提示条盖住的按钮照样能点。
+///
+/// 淡的是整块（底色、描边、投影、文字一起乘同一个 alpha），所以不会出现"框还在、字先没了"。
+/// 二次确认框（`confirm`）不在这条规矩里：它要用户做决定，不是"说一声就走"的提示。
+pub(crate) fn toasts(ctx: &egui::Context, state: &mut AppState) {
     if state.toasts.is_empty() {
         return;
     }
-    let mut dismissed = None;
-    egui::Area::new(egui::Id::unique("toasts"))
-        .anchor(Align2::CENTER_TOP, [0.0, offset_y])
+    let band = egui::Area::new(egui::Id::unique("toasts"))
+        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
         .order(Order::Foreground)
-        .interactable(true)
+        .interactable(false)
         .show(ctx, |ui| {
             ui.vertical(|ui| {
-                for (index, toast) in state.toasts.iter().enumerate() {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        // 关闭符排在文字后面同一行：竖排会把它甩到文字下方，像个孤立的方块
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
+                for toast in state.toasts.iter() {
+                    let alpha = toast.opacity();
+                    // `multiply_with_opacity` 一次处理底色、描边、投影（egui 自己那三行就是它）
+                    egui::Frame::popup(ui.style())
+                        .multiply_with_opacity(alpha)
+                        .show(ui, |ui| {
                             ui.label(
-                                RichText::new(&toast.text).color(theme::tone_color(toast.tone)),
+                                RichText::new(&toast.text)
+                                    .color(theme::tone_color(toast.tone).gamma_multiply(alpha)),
                             );
-                            // 关闭符号只用 Latin-1 的 ×：⌗ ✕ ▣ 这类装饰字形既不在 egui 内置字体里，
-                            // macOS 的系统字体回退也找不到，真机上会显示成豆腐块（走查发现）
-                            if ui.small_button("×").clicked() {
-                                dismissed = Some(index);
-                            }
                         });
-                    });
                 }
             });
-        });
-    if let Some(index) = dismissed {
-        state.dismiss_toast(index);
-    }
+        })
+        .response
+        .rect;
+    ctx.data_mut(|d| d.insert_temp(toast_band_id(), band));
+}
+
+/// 提示条那一带的矩形，只给无头断言用（判"是不是落在窗口正中"、"点上去会不会把它点掉"）
+#[cfg(test)]
+pub(crate) fn recorded_toast_band(ctx: &egui::Context) -> Option<egui::Rect> {
+    ctx.data_mut(|d| d.get_temp::<egui::Rect>(toast_band_id()))
+}
+
+fn toast_band_id() -> egui::Id {
+    egui::Id::NULL.with("ice-translator.toast-band")
 }
 
 /// 破坏性操作的二次确认（清空历史、清除 Key）
@@ -596,10 +606,97 @@ mod tests {
         assert_eq!(state.toasts.len(), 1);
         assert!(!state.tick_toasts());
         assert_eq!(state.toasts.len(), 1);
-        // 直接把时间戳拨到过期之后，免得测试真等四秒
-        state.toasts[0].shown_at -= crate::state::TOAST_VISIBLE * 2;
+        // 直接把时间戳拨过整条 lifetime，免得测试真等那 500ms
+        state.toasts[0].shown_at -= crate::state::TOAST_LIFETIME * 2;
         assert!(state.tick_toasts());
         assert!(state.toasts.is_empty());
+    }
+
+    /// 变更 I 的前半句："所有的提示类弹窗都是中心弹窗"（用户 2026-10-28）。
+    /// 判据落在实测矩形上：提示条那一带的中心就是窗口中心——横竖都居中，
+    /// 不再贴顶 12px，也不再为简洁窗另算一套"越过输入行"的偏移。
+    #[test]
+    fn toasts_are_painted_at_the_window_centre() {
+        let (_dir, store) = temp_history();
+        let mut state = state();
+        state.toast(Tone::Info, "已复制到剪贴板");
+        let mut effects = Effects::default();
+        let screen = egui::vec2(1080.0, 720.0);
+        let ctx = run_frame(&mut state, &mut effects, &store, screen, 2);
+
+        let band = recorded_toast_band(&ctx).expect("提示条那一带要记录下来");
+        let centre = band.center();
+        let want = egui::pos2(screen.x / 2.0, screen.y / 2.0);
+        assert!(
+            centre.distance(want) <= 1.0,
+            "提示条没落在窗口正中：量到 {centre:?}，期望 {want:?}（带子 {band:?}）"
+        );
+    }
+
+    /// 变更 I 的后半句："不应该有关闭的操作和按钮"。
+    /// 这里不数按钮，量的是**行为**：把鼠标移到提示条正中间按下再松开，那条还在——
+    /// 提示条只剩"自己到点淡出"这一种结束方式。将来谁再补一颗 `×`，这条会红。
+    #[test]
+    fn a_click_on_a_toast_does_not_dismiss_it() {
+        let (_dir, store) = temp_history();
+        let mut state = state();
+        state.toast(Tone::Info, "已复制到剪贴板");
+        let mut effects = Effects::default();
+        let screen = egui::vec2(1080.0, 720.0);
+        let ctx = run_frame(&mut state, &mut effects, &store, screen, 2);
+        let at = recorded_toast_band(&ctx)
+            .expect("先量到提示条那一带")
+            .center();
+
+        run_click(&mut state, &mut effects, &store, screen, at);
+        assert_eq!(
+            state.toasts.len(),
+            1,
+            "点在提示条上就把它点掉了——变更 I 要求提示类弹窗没有关闭操作"
+        );
+    }
+
+    /// `run_frame` 只喂空事件，这里要的是"真的点一下"，所以单独一个入口
+    ///（与 `run_shapes` 同一先例：不为一条测试去改大家都用的那个）。
+    fn run_click(
+        state: &mut AppState,
+        effects: &mut Effects,
+        history: &HistoryStore,
+        screen: egui::Vec2,
+        at: egui::Pos2,
+    ) -> egui::Context {
+        let ctx = egui::Context::default();
+        let mut time = 1.0;
+        let steps = [
+            vec![],
+            vec![egui::Event::PointerMoved(at)],
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        ];
+        for events in steps {
+            let mut raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
+                ..Default::default()
+            };
+            raw.time = Some(time);
+            time += 1.0 / 60.0;
+            raw.events = events;
+            let output = ctx.run_ui(raw, |ui| {
+                show(ui, state, effects, history, false);
+            });
+            output.drop_without_applying_deltas();
+        }
+        ctx
     }
 
     #[test]
