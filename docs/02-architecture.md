@@ -31,7 +31,7 @@
 | `config` | `Config`、`UiConfig`、`TranslationConfig`、`AiConfig`、`WindowRect`、`UiMode`、`DockEdge`、`Theme` | 配置读写（原子替换 + 损坏回退 + sanitize 夹取）。**主题三态在 2026-10-28 变更 J 之后这里只剩数据**：那颗滑块按**落点位置**取档（映射在 `ice-app::views::theme_slot` / `theme_at`），不再有点三下的循环，所以 `Theme::next()` 与它的测试一起删除——领域层不该留一个没人调的换档式子 | FR-3.6、FR-4.1~4.3 |
 | `history` | `HistoryRecord`、`HistoryStore` | JSONL 追加、容量裁剪、搜索、坏行跳过 | FR-4.4 |
 | `glossary` | `Term`、`Glossary` | 术语读写、`prompt_fragment()`、`post_substitute()` | FR-4.5 |
-| `detect` | `guess_language()` | 按字符集构成做语言粗判，用于自动检测回显 | FR-1.2 |
+| `detect` | `guess_language()` | 按字符集构成做语言粗判，用于自动检测回显。**计数按翻译单元不按字符**（2026-10-28 复核）：汉字一字一单元、拉丁一段词一单元，中英相等判中文——按字符比会让借词按字母投票，中文句子被判成英语、连 REQ-006 的方向一起带错。复核实例与判据在 `examples/detect_probe.rs` | FR-1.2 |
 
 ### ice-providers
 
