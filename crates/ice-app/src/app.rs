@@ -25,6 +25,7 @@ use crate::state::{self, AppState, KeyState, Tab, Tone};
 use crate::system::alpha;
 use crate::system::clipboard::{self, CopyKind};
 use crate::system::hotkeys::{self, Action};
+use crate::system::mouse;
 use crate::system::screen;
 use crate::system::secrets;
 use crate::system::single_instance::InstanceLock;
@@ -238,12 +239,29 @@ impl IceApp {
     /// 拖动/缩放静止之后跑一次：吸附（REQ-003）+ 立即落盘（REQ-009）。
     ///
     /// 原生拖拽期间 egui 收不到 pointer 事件（`StartDrag` 把控制权交给了 AppKit，
-    /// macOS 那边进的是嵌套事件循环），"松手"这个时刻应用侧无从得知，
-    /// 只能靠 `DragSettler` 的静止判定。
+    /// macOS 那边进的是嵌套事件循环），所以"松手了没有"要**另外问**：`held_for` 给的是
+    /// 硬件此刻的按键状态（`system::mouse`），问不到（`None`）才退回纯几何静止判定。
+    ///
+    /// **为什么非问不可**（缺陷 D-16，2026-10-28 用户原话"虽然我将其拖动到边上，但我还没有
+    /// 松手，他就着急往里面收入，导致我只要一直不松手，鼠标和界面的距离会越来越大"）：
+    /// 只看"几何连续 150ms 不变"的话，用户拖到边上**停住但没松手**就被判成松手，窗口当场被
+    /// 吸附+藏到边外，而 AppKit 的拖拽还在跟手——于是窗口从指针底下滑走，按住越久差得越远。
+    ///
     /// `area` 由调用方注入（同 `watch_dock` 的理由：真机要读屏幕，测试给一块固定的桌面）
-    fn settle_drag(&mut self, ctx: &egui::Context, area_for: impl Fn() -> Option<Rect>) {
+    fn settle_drag(
+        &mut self,
+        ctx: &egui::Context,
+        area_for: impl Fn() -> Option<Rect>,
+        held_for: impl Fn() -> Option<bool>,
+    ) {
         let outer = ctx.input(|i| i.viewport().outer_rect);
         self.observe_native_move(outer);
+        if self.drag_settler.is_armed() && held_for() == Some(true) {
+            // 还按着：几何再静也一个结论都不下，把静止计时重新起算，并留住下一帧
+            self.drag_settler.postpone(Instant::now());
+            ctx.request_repaint_after(mode::DRAG_SETTLE);
+            return;
+        }
         match self.drag_settler.feed(outer, Instant::now()) {
             Some(settled) => {
                 let area = (self.state.mode() == UiMode::Compact)
@@ -1104,7 +1122,7 @@ impl eframe::App for IceApp {
 
         self.refresh_geometry(&ctx);
         self.trace_geometry(&ctx);
-        self.settle_drag(&ctx, || screen::desktop(&ctx));
+        self.settle_drag(&ctx, || screen::desktop(&ctx), mouse::left_button_down);
         self.watch_dock(&ctx, || screen::desktop(&ctx));
         self.rescue_offscreen(&ctx, |outer| screen::work_area(&ctx, outer));
 
@@ -1893,14 +1911,14 @@ mod tests {
         let free = Rect::from_min_size(Pos2::new(600.0, 400.0), SIZE);
         for _ in 0..=STILL_BEFORE_DRAG {
             feed_geometry(&c, Some(free), Some(true));
-            app.settle_drag(&c, || Some(area()));
+            app.settle_drag(&c, || Some(area()), || None);
         }
         assert!(!app.drag_settler.is_armed(), "窗口停着不算拖动");
 
         // 推到离右边缘 10px 处（阈值 40）：没有 pointer 事件、没有 StartDrag，只有位置变了
         let near_edge = Rect::from_min_size(Pos2::new(area().max.x - SIZE.x - 10.0, 400.0), SIZE);
         feed_geometry(&c, Some(near_edge), Some(true));
-        app.settle_drag(&c, || Some(area()));
+        app.settle_drag(&c, || Some(area()), || None);
         assert!(
             app.drag_settler.is_armed(),
             "原生标题栏的拖动没人 arm，吸附与停靠就一次都不会跑"
@@ -1908,8 +1926,73 @@ mod tests {
 
         std::thread::sleep(mode::DRAG_SETTLE + std::time::Duration::from_millis(30));
         feed_geometry(&c, Some(near_edge), Some(true));
-        app.settle_drag(&c, || Some(area()));
+        app.settle_drag(&c, || Some(area()), || None);
         assert_eq!(app.state.config.ui.docked_edge, DockEdge::Right);
+    }
+
+    /// D-16 的锁：拖到边上**按住不放**不许收，松手之后才收。
+    ///
+    /// 2026-10-28 用户原话"虽然我将其拖动到边上，但我还没有松手，他就着急往里面收入，
+    /// 导致我只要一直不松手，鼠标和界面的距离会越来越大"。故障的形状是：几何停住 150ms
+    /// 就被当成松手，吸附把窗口从指针底下搬走，而 AppKit 的拖拽还在跟手。
+    /// 这里两段几何完全一样，唯一变量是 `held_for` 说没说"还按着"。
+    #[test]
+    fn a_held_drag_stays_put_until_the_button_is_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), compact_state());
+        let c = ctx();
+        let free = Rect::from_min_size(Pos2::new(600.0, 400.0), SIZE);
+        for _ in 0..=STILL_BEFORE_DRAG {
+            feed_geometry(&c, Some(free), Some(true));
+            app.settle_drag(&c, || Some(area()), || None);
+        }
+
+        let near_edge = Rect::from_min_size(Pos2::new(area().max.x - SIZE.x - 10.0, 400.0), SIZE);
+        feed_geometry(&c, Some(near_edge), Some(true));
+        app.settle_drag(&c, || Some(area()), || Some(true));
+        assert!(app.drag_settler.is_armed(), "拖到边上要开始等松手");
+
+        // 停住超过两个静止阈值，但**手还按着**：一个结论都不许下
+        std::thread::sleep(mode::DRAG_SETTLE * 2);
+        for _ in 0..3 {
+            feed_geometry(&c, Some(near_edge), Some(true));
+            app.settle_drag(&c, || Some(area()), || Some(true));
+        }
+        assert_eq!(
+            app.state.config.ui.docked_edge,
+            DockEdge::None,
+            "还没松手就收，窗口会从指针底下滑走"
+        );
+        assert!(
+            !queued(&c)
+                .iter()
+                .any(|cmd| matches!(cmd, ViewportCommand::OuterPosition(_))),
+            "按住期间不许下发任何挪窗命令"
+        );
+        assert!(
+            app.drag_settler.is_armed(),
+            "按住不动期间判定要一直挂着，且每帧续重绘"
+        );
+
+        // 松手后第一帧：整段按住期间没喂过几何（按住那几帧直接 return 了），这一帧只用来
+        // 把松手处的几何立成参照，所以还不该收——延迟就是松手后约一个 `DRAG_SETTLE`。
+        feed_geometry(&c, Some(near_edge), Some(true));
+        app.settle_drag(&c, || Some(area()), || Some(false));
+        assert_eq!(
+            app.state.config.ui.docked_edge,
+            DockEdge::None,
+            "松手的第一帧只立参照，不该当场收"
+        );
+
+        // 参照之后停满一个阈值：照常吸附+停靠
+        std::thread::sleep(mode::DRAG_SETTLE + std::time::Duration::from_millis(30));
+        feed_geometry(&c, Some(near_edge), Some(true));
+        app.settle_drag(&c, || Some(area()), || Some(false));
+        assert_eq!(
+            app.state.config.ui.docked_edge,
+            DockEdge::Right,
+            "松手了就必须收，不能因为问过硬件就永远不吸附"
+        );
     }
 
     /// 反过来：我们自己下发的那次移动不能当成用户拖动。`show_dock` 把窗口挪到贴着边缘的
@@ -1923,13 +2006,13 @@ mod tests {
         let free = Rect::from_min_size(Pos2::new(600.0, 400.0), SIZE);
         for _ in 0..=STILL_BEFORE_DRAG {
             feed_geometry(&c, Some(free), Some(true));
-            app.settle_drag(&c, || Some(area()));
+            app.settle_drag(&c, || Some(area()), || None);
         }
 
         let shown = Rect::from_min_size(Pos2::new(SHOWN_X, 400.0), SIZE);
         app.place_compact(&c, shown.min, DockEdge::Right);
         feed_geometry(&c, Some(shown), Some(true));
-        app.settle_drag(&c, || Some(area()));
+        app.settle_drag(&c, || Some(area()), || None);
         assert!(
             !app.drag_settler.is_armed(),
             "自己要求的移动到了位，不该被当成拖动"
@@ -1942,11 +2025,11 @@ mod tests {
         // 停稳之后再动一次：这回必须 arm，否则用户真的拖标题栏时又没吸附了
         for _ in 0..STILL_BEFORE_DRAG {
             feed_geometry(&c, Some(shown), Some(true));
-            app.settle_drag(&c, || Some(area()));
+            app.settle_drag(&c, || Some(area()), || None);
         }
         let dragged = Rect::from_min_size(Pos2::new(SHOWN_X - 120.0, 400.0), SIZE);
         feed_geometry(&c, Some(dragged), Some(true));
-        app.settle_drag(&c, || Some(area()));
+        app.settle_drag(&c, || Some(area()), || None);
         assert!(
             app.drag_settler.is_armed(),
             "门禁放开之后要立刻认出下一次拖动"
@@ -2039,7 +2122,7 @@ mod tests {
                 let outer = Rect::from_min_size(Pos2::new(300.0 + step as f32 * 60.0, 300.0), size);
                 feed_geometry(&c, Some(outer), Some(true));
                 app.refresh_geometry(&c);
-                app.settle_drag(&c, || Some(area()));
+                app.settle_drag(&c, || Some(area()), || None);
                 for command in queued(&c) {
                     assert!(
                         !matches!(
