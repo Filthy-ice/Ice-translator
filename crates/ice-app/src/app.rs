@@ -28,6 +28,7 @@ use crate::system::hotkeys::{self, Action};
 use crate::system::screen;
 use crate::system::secrets;
 use crate::system::single_instance::InstanceLock;
+use crate::system::titlebar;
 use crate::theme;
 use crate::views::{self, Effects};
 
@@ -116,6 +117,8 @@ pub struct IceApp {
     /// 上一帧下到原生层的整窗不透明度（FR-3.7，见 `apply_native_alpha`）。
     /// `None` = 还没下过或上一次没走通。
     native_alpha: Option<f32>,
+    /// 上一帧标题栏绿键的改道结果（见 `apply_zoom_hook`）。`None` = 还没下过。
+    zoom_outcome: Option<titlebar::Outcome>,
 }
 
 impl IceApp {
@@ -165,6 +168,7 @@ impl IceApp {
             geometry_rescued: false,
             geometry_seen: None,
             native_alpha: None,
+            zoom_outcome: None,
         }
     }
 
@@ -536,6 +540,41 @@ impl IceApp {
             tracing::warn!("原生整窗不透明度下不发，失焦只淡窗内底色（标题栏不会跟着淡）");
         }
         applied
+    }
+
+    /// 帧首取走标题栏绿键的点击（用户 2026-10-28："悬浮窗更换全量的按钮可以不要，
+    /// 将标题栏最大化功能替换为切换全量"）。
+    ///
+    /// 这里只把"被点了"翻译成 `effects.toggle_mode = true`——与 `Action::ToggleMode`
+    /// （`Cmd+Shift+M`）落在同一个字段上，切换本身一个实现，不在原生路径上重做一遍判断。
+    fn poll_titlebar_click(&mut self, effects: &mut Effects) {
+        if titlebar::take_click() {
+            effects.toggle_mode = true;
+        }
+    }
+
+    /// 把标题栏绿键按形态接到该接的人身上：简洁窗归我们（点它切全量），
+    /// 全量窗交回 AppKit（点它最大化）。原生细节与四条非显然的约束见 `system::titlebar`。
+    ///
+    /// 每帧都问一遍按钮现状，但**只在结果变了才记日志**：这一句在画帧路径上，
+    /// 逐帧记会把 `/tmp/ice.log` 刷满（与 `apply_native_alpha` 同一手法）。
+    fn apply_zoom_hook(&mut self, frame: &eframe::Frame, want: bool) {
+        let outcome = titlebar::sync(frame, want);
+        if self.zoom_outcome == Some(outcome) {
+            return;
+        }
+        self.zoom_outcome = Some(outcome);
+        match outcome {
+            titlebar::Outcome::Hooked => tracing::debug!("标题栏绿键改道：点击切到全量窗"),
+            titlebar::Outcome::Released => {
+                tracing::debug!("标题栏绿键交回 AppKit：点击是最大化")
+            }
+            titlebar::Outcome::Unavailable => {
+                if !ZOOM_UNHOOKED_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    tracing::warn!("接不上标题栏绿键，从悬浮窗切回全量只剩 Cmd+Shift+M");
+                }
+            }
+        }
     }
 
     /// 启动后的离屏校验（REQ-009）：盘上记的几何整块落在当前可用区之外（外接屏拔掉、
@@ -1006,6 +1045,10 @@ fn reason_text(state: &KeyState) -> String {
 static ALPHA_FALLBACK_WARNED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// 标题栏绿键接不上只发一次警告（`apply_zoom_hook`；接不上时每帧都会再试一次）
+static ZOOM_UNHOOKED_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// 这一档不透明度要不要真的下发给窗口服务器（`apply_native_alpha` 的判定核心，抽出来才能无头断言）。
 ///
 /// `applied` 是上一帧**成功**下到的值，`None` 表示还没下过或上次没走通。相同就跳过：
@@ -1050,6 +1093,7 @@ impl eframe::App for IceApp {
         let close_requested = ctx.input(|i| i.viewport().close_requested());
 
         let mut effects = Effects::default();
+        self.poll_titlebar_click(&mut effects);
         for action in actions {
             self.run(action, &ctx, &mut effects);
         }
@@ -1070,6 +1114,8 @@ impl eframe::App for IceApp {
                 // 全量窗永不半透明（REQ-007 第四条），但这一档要在这里显式写回 100%：
                 // 上一帧可能正是失焦的简洁窗，`native_alpha` 还停在 0.85 那一档上
                 self.apply_native_alpha(frame, 1.0);
+                // 绿键也一并交回 AppKit：全量窗里它还是最大化（改道只属于悬浮窗）
+                self.apply_zoom_hook(frame, false);
                 views::show(
                     ui,
                     &mut self.state,
@@ -1079,6 +1125,8 @@ impl eframe::App for IceApp {
                 )
             }
             UiMode::Compact => {
+                // 用户 2026-10-28 把动作行里那颗「全量」按钮删了，切回全量改由绿键承担
+                self.apply_zoom_hook(frame, true);
                 // 失焦半透明（REQ-007）：焦点是窗口级事实，由帧循环读给视图，视图自己不去问
                 let focused = ctx.input(|i| i.viewport().focused) == Some(true);
                 let want = mode::dim_alpha(
@@ -2491,6 +2539,36 @@ mod tests {
             queued(&c).is_empty(),
             "隐藏期一条几何命令都不发：{:?}",
             queued(&c)
+        );
+    }
+
+    /// 变更 G（用户 2026-10-28："将标题栏最大化功能替换为切换全量"）：原生绿键的点击
+    /// 必须落到与 `Cmd+Shift+M` **同一个** `effects` 字段上，而且一次点击只兑现一次。
+    ///
+    /// 无头拿不到 `NSWindow`，所以这条测的是"点击 → 切换"这段接线（`poll_titlebar_click`），
+    /// 不是 AppKit 那一头（`sync` 走没走到绿键只能看 `/tmp/ice.log` 的那行 debug）。
+    #[test]
+    fn a_title_bar_click_toggles_through_the_same_effect_as_the_shortcut() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+
+        titlebar::mark_click();
+        let mut effects = Effects::default();
+        app.poll_titlebar_click(&mut effects);
+        assert!(
+            effects.toggle_mode,
+            "绿键的点击没接进 effects，标题栏那颗按钮点了没反应"
+        );
+
+        let mut second = Effects::default();
+        app.poll_titlebar_click(&mut second);
+        assert!(!second.toggle_mode, "同一次点击被兑了两次，形态会被切回去");
+
+        let mut via_key = Effects::default();
+        app.run(Action::ToggleMode, &ctx(), &mut via_key);
+        assert_eq!(
+            via_key.toggle_mode, effects.toggle_mode,
+            "快捷键与绿键不是同一条路径"
         );
     }
 
