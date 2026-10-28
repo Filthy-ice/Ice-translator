@@ -46,6 +46,8 @@ tempfile = "3"
 # 再加 `NSButton`/`NSControl` 两个模块——标题栏绿键的 target-action 挂在 NSButton 上，
 # 而 `standardWindowButton:` 的返回类型、`setTarget:`/`setAction:` 分别要这两个模块才存在
 # （`NSWindow.rs:1642` 的 cfg 就是这两个 + `NSView`）。
+# 还要 `NSEvent`——原生拖拽期间 egui 拿不到鼠标抬起，松手判定只能问 `+pressedMouseButtons`
+# 这个窗口服务器维护的按键掩码（缺陷 D-16，见 `system::mouse`）。
 # `objc2-core-foundation` 不是可选项：`NSWindow::setAlphaValue:` 的参数类型是 `CGFloat`，
 # objc2-app-kit 把带 CGFloat 的方法整体关在这个 feature 后面，不开就连方法都看不到。
 objc2 = "0.6"
@@ -55,6 +57,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSWindow",
     "NSButton",
     "NSControl",
+    "NSEvent",
     "objc2-core-foundation",
 ] }
 # `NSObject` 是运行时那个改道 target 的父类，`NSString` 是绿键的悬停提示文案

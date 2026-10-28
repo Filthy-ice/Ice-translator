@@ -248,8 +248,8 @@ pub fn fit_into_area(rect: Rect, area: Rect) -> Rect {
 /// 拖动/缩放静止判定阈值。
 ///
 /// 原生拖拽期间 egui 收不到任何 pointer 事件（`StartDrag` 把控制权交给了 AppKit），
-/// "松手"这个时刻应用侧无从得知，只能看几何：连续这么久不变就当松手了。
-/// 150ms 比一帧长得多、又短到用户感觉不出延迟。
+/// "松手"这个时刻应用侧只能**另问**（见 `system::mouse`），问不到时才退回看几何：
+/// 连续这么久不变就当松手了。150ms 比一帧长得多、又短到用户感觉不出延迟。
 pub const DRAG_SETTLE: Duration = Duration::from_millis(150);
 
 /// 几何比较的容差（px）。`outer_rect` 每帧回读，缩放因子换算会带来亚像素抖动，
@@ -258,6 +258,9 @@ const SETTLE_TOLERANCE: f32 = 0.5;
 
 /// 静止判定器：`start_drag` 发出后 `arm`，此后每帧 `feed` 一次窗口外框，
 /// 连续 `DRAG_SETTLE` 不变就返回最终矩形（**只返回一次**，随后自动解除）。
+///
+/// 几何静止只是"松手了"的**代理指标**：能问到硬件按键状态时，按住的那几帧要走
+/// [`DragSettler::postpone`] 把计时重新起算，否则"停住但没松手"会被误判成松手（缺陷 D-16）。
 ///
 /// 返回后必须解除，否则吸附把窗口挪到新位置 → 几何又变了 → 150ms 后再返回一次，
 /// 如此往复每 150ms 写一次盘（REQ-009 的落盘节流会被打穿）。
@@ -307,6 +310,20 @@ impl DragSettler {
         }
         *self = Self::default();
         Some(rect)
+    }
+
+    /// 鼠标**还按着**（原生问出来的物理按键状态）：把静止计时重新起算，一个结论都不下。
+    ///
+    /// 为什么必须有这一步：用户拖到边上**停住但没松手**，几何恰好连续 150ms 不变，
+    /// 只看时间的判定会把这一刻当成"松手了"，当场把窗口吸附+藏到边外；而 AppKit 的拖拽
+    /// 还在跟手，于是窗口从指针底下跑掉，用户不动手就一直看着鼠标和界面的距离越拉越大
+    /// （2026-10-28 用户原话"虽然我将其拖动到边上，但我还没有松手，他就着急往里面收入"）。
+    ///
+    /// 只在 `arm` 之后有用；没在拖动中就一个字段都不动。
+    pub fn postpone(&mut self, now: Instant) {
+        if self.armed_at.is_some() {
+            self.last_move = Some(now);
+        }
     }
 
     /// arm 之后一直没等到静止（例如切了形态）：调用方可以主动放弃这次判定
@@ -1742,6 +1759,58 @@ mod tests {
             settler.feed(Some(at(100.3, 100.2)), t0 + DRAG_SETTLE),
             Some(at(100.3, 100.2))
         );
+    }
+
+    /// D-16：鼠标还按着的时候，几何静多少个 150ms 都不许下结论；松手之后照常等满再返回。
+    #[test]
+    fn a_held_button_postpones_the_settle_conclusion() {
+        let mut settler = DragSettler::default();
+        let t0 = Instant::now();
+        let edge = at(1410.0, 300.0);
+        settler.arm(t0);
+        assert_eq!(settler.feed(Some(edge), t0), None);
+        for step in 1..=6 {
+            settler.postpone(t0 + DRAG_SETTLE * step);
+            assert_eq!(
+                settler.feed(Some(edge), t0 + DRAG_SETTLE * step),
+                None,
+                "按住不动的第 {step} 个 150ms 不能当成松手，否则窗口从指针底下溜走"
+            );
+        }
+
+        // 松手（不再 postpone）：从这一刻重新起算，等满一个 `DRAG_SETTLE` 才给结论
+        let released = t0 + DRAG_SETTLE * 6;
+        assert_eq!(settler.feed(Some(edge), released), None);
+        assert_eq!(
+            settler.feed(Some(edge), released + DRAG_SETTLE),
+            Some(edge),
+            "松手之后必须照常吸附，不许因为问过硬件就永远不吸"
+        );
+
+        // 结论给过之后已自动解除：此时再 postpone 一个字段都不该动
+        settler.postpone(released + DRAG_SETTLE * 2);
+        assert_eq!(settler.feed(Some(edge), released + DRAG_SETTLE * 9), None);
+        assert!(!settler.is_armed());
+    }
+
+    /// 真机上整段按住期间一次 `feed` 都不会跑（按住那一帧 `app` 直接 return），
+    /// 所以松手那一帧只能用来立参照，下一个阈值才给结论。延迟必须**有界**。
+    #[test]
+    fn postponing_without_feeding_baselines_on_release() {
+        let mut settler = DragSettler::default();
+        let t0 = Instant::now();
+        let edge = at(1410.0, 300.0);
+        settler.arm(t0);
+        for step in 1..=4 {
+            settler.postpone(t0 + DRAG_SETTLE * step);
+        }
+        let released = t0 + DRAG_SETTLE * 5;
+        assert_eq!(
+            settler.feed(Some(edge), released),
+            None,
+            "松手第一帧只立参照，别当场下结论"
+        );
+        assert_eq!(settler.feed(Some(edge), released + DRAG_SETTLE), Some(edge));
     }
 
     /// D-6：切换后待生效的那几帧，尺寸轴不许被实时几何冲掉；命中目标才放行。
