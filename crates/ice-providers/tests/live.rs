@@ -7,8 +7,10 @@
 use std::time::Duration;
 
 use ice_core::config::{AiConfig, AiProvider, Config, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE};
-use ice_core::language::{LangPair, Language};
-use ice_providers::{AiEngine, MachineTranslateEngine, TranslationEngine, TranslationRequest};
+use ice_core::language::{EngineKind, LangPair, Language};
+use ice_providers::{
+    AiEngine, MachineTranslateEngine, TranslationEngine, TranslationRequest, Translator,
+};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -116,6 +118,128 @@ async fn ai_live_deepseek() {
     );
     assert!(protected.text.contains("12 MB"), "{}", protected.text);
     assert!(protected.text.contains("getUserInfo"), "{}", protected.text);
+}
+
+/// NFR-1 的**正式判定**：机翻冷路径 P50 < 800ms（20 次采样）+ 热路径（缓存命中）< 5ms（10 次）。
+///
+/// P3 收口时只有单次样本（731ms），P5 又见过 2,133ms 的抖动，所以"NFR-1 达标"一直没被判定过，
+/// 挂在 `07-acceptance.md` §P4 遗留 ⑤，采样脚本本身挂在 P8 的 TC-P-1。这条把两笔账一起结掉：
+/// 同一句 200 字符英文连发 20 次（每次都真发请求，引擎层没有缓存），报出全部样本与 P50/P90/极差；
+/// 再把同一句交给带缓存的 `Translator` 跑 11 次，第一次必然穿透、后 10 次必然命中，量的是命中那 10 次。
+///
+/// **每次冷采样之间停 `PACING_MS`**，这不是照顾本机的网络，而是照顾端点的配额：2026-10-28 实测
+/// 不限速连发时，第 1 批 20/20 成功、第 2 批 16/20、第 3 批 0/20 全被 HTTP 429 拒掉。429 在
+/// `error.rs` 里刻意**不自动重试**（立刻重试只会放大限流），所以脚本越急促，测到的越是配额而不是延迟。
+/// 真实用户也不会一秒内点二十次翻译，加了停顿反而更贴近 NFR-1 想量的那个数字。
+///
+/// 抖动本身不判失败——免费公开端点的延迟不是本应用能控制的，写死 P99 会让这条测试变成每天随机红。
+/// 真出现整批慢（成功率不足）时**判为"本次测不出"**而不是悄悄通过。
+#[tokio::test]
+#[ignore = "会向第三方公开服务发 20+11 次真实请求（带限速停顿），需显式 --ignored"]
+async fn machine_latency_p50_over_twenty_samples() {
+    const COLD_SAMPLES: usize = 20;
+    const HOT_SAMPLES: usize = 10;
+    const P50_BUDGET_MS: u64 = 800;
+    const HOT_BUDGET_MS: u64 = 5;
+    const MIN_SUCCESS: usize = 15;
+    const PACING_MS: u64 = 1_500;
+
+    let engine = MachineTranslateEngine::from_config(&Config::default());
+    let text = "The caching layer invalidates entries by shard, and the strategy must survive a rolling restart. ".repeat(2);
+    let chars = text.chars().count();
+    assert!(
+        (180..230).contains(&chars),
+        "TC-P-1 规定采样用约 200 字符的一段，实测 {chars}"
+    );
+    let request = || {
+        TranslationRequest::new(
+            text.clone(),
+            LangPair::explicit(Language::En, Language::ZhHans),
+        )
+    };
+
+    let mut cold: Vec<u64> = Vec::with_capacity(COLD_SAMPLES);
+    let mut failed = 0usize;
+    let mut limited = 0usize;
+    for i in 0..COLD_SAMPLES {
+        if i > 0 {
+            tokio::time::sleep(Duration::from_millis(PACING_MS)).await;
+        }
+        let result = engine.translate(&request()).await;
+        match result {
+            Ok(r) if !r.text.trim().is_empty() => cold.push(r.elapsed_ms),
+            other => {
+                failed += 1;
+                let message = other
+                    .err()
+                    .map_or_else(|| String::from("空译文"), |e| e.to_string());
+                if message.contains("429") {
+                    limited += 1;
+                }
+                println!("冷启动第 {i} 次未取得译文：{message}");
+            }
+        }
+    }
+
+    if cold.len() < MIN_SUCCESS {
+        panic!(
+            "{COLD_SAMPLES} 次里只成功 {} 次（失败 {failed}，其中被限流 {limited} 次），端点这次不可靠，NFR-1 判定不成立",
+            cold.len()
+        );
+    }
+    cold.sort_unstable();
+    let n = cold.len();
+    let p50 = if n % 2 == 0 {
+        (cold[n / 2 - 1] + cold[n / 2]) / 2
+    } else {
+        cold[n / 2]
+    };
+    let p90 = cold[((n as f64 * 0.9).ceil() as usize)
+        .saturating_sub(1)
+        .min(n - 1)];
+
+    println!(
+        "NFR-1 机翻冷路径（{chars} 字符，每次间隔 {PACING_MS}ms）：成功 {n}/{COLD_SAMPLES}（失败 {failed}，限流 {limited}）｜样本 {cold:?}｜P50 {p50}ms｜P90 {p90}ms｜最快 {}ms｜最慢 {}ms",
+        cold[0],
+        cold[n - 1]
+    );
+    assert!(
+        p50 < P50_BUDGET_MS,
+        "P50 {p50}ms 未达 NFR-1 的 <{P50_BUDGET_MS}ms（P90 {p90}ms、最慢 {}ms）",
+        cold[n - 1]
+    );
+
+    let mut translator = Translator::new();
+    translator.register(std::sync::Arc::new(engine));
+    let mut hot: Vec<u64> = Vec::with_capacity(HOT_SAMPLES + 1);
+    for i in 0..=HOT_SAMPLES {
+        if i == 0 {
+            // 只有会真发请求的那一次（第 0 次穿透）需要限速，后面全是本地命中、不打网络
+            tokio::time::sleep(Duration::from_millis(PACING_MS)).await;
+        }
+        let started = std::time::Instant::now();
+        let result = translator.translate(EngineKind::Machine, request()).await;
+        let ms = started.elapsed().as_millis() as u64;
+        if result.is_err() {
+            panic!(
+                "缓存通道第 {i} 次失败（{ms}ms）：{:?}——第 0 次是真实穿透，端点此时不可用则热路径判不出来",
+                result.err()
+            );
+        }
+        hot.push(ms);
+    }
+    let first_is_cold_miss = hot[0];
+    let mut hit = hot[1..].to_vec();
+    hit.sort_unstable();
+    let hit_p50 = hit[hit.len() / 2];
+    let hit_max = *hit.last().unwrap_or(&0);
+    println!(
+        "NFR-1 机翻译热路径（缓存命中 {HOT_SAMPLES} 次，已去掉第一次穿透的 {first_is_cold_miss}ms）：样本 {hit:?}｜P50 {hit_p50}ms｜最慢 {hit_max}ms"
+    );
+    assert!(
+        hit_p50 < HOT_BUDGET_MS,
+        "缓存命中 P50 {hit_p50}ms 未达 TC-P-1 的 <{HOT_BUDGET_MS}ms"
+    );
 }
 
 /// AI 长文提速的真实证据（FR-1.9，2026-10-28 用户要求"并行翻译后拼接，别忘了接口中关闭思考"）。

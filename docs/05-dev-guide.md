@@ -85,13 +85,17 @@ ice-app  ──►  ice-providers  ──►  ice-core
 
 ```bash
 cargo check --workspace                 # 快速全量类型检查
-cargo test  --workspace                 # 全部单元测试（2026-10-28 变更 J 起 420 项通过 + 4 项 ignore）
-cargo test  -p ice-core                 # 只测领域层（54 项）
-cargo test  -p ice-providers            # 只测引擎层（61 项，HTTP 走本地假服务，不联网）
-cargo test  -p ice-app                  # 只测界面层（297 项，无头跑帧，不碰网络/剪贴板/钥匙串）
+cargo test  --workspace                 # 全部单元测试（2026-10-28 NFR-1 采样起 425 项通过 + 5 项 ignore）
+cargo test  -p ice-core                 # 只测领域层（58 项）
+cargo test  -p ice-providers            # 只测引擎层（62 项，HTTP 走本地假服务，不联网）
+cargo test  -p ice-app                  # 只测界面层（305 项，无头跑帧，不碰网络/剪贴板/钥匙串）
+cargo run   -p ice-core --example detect_probe
+                                        # 中英混排检测探针：14 条实例逐条判方向，判错即非零退出
 cargo test  --workspace -- --ignored    # 跑需要真实网络/真机的集成测试
 cargo test  -p ice-providers --test live -- --ignored --nocapture machine
                                         # 只验机翻真实端点（MyMemory，无需 Key）
+cargo test  -p ice-providers --test live -- --ignored --nocapture machine_latency_p50
+                                        # NFR-1 判定：冷 20 次 + 缓存命中 10 次，约 40s，见下方限流提醒
 cargo test  -p ice-providers --test live -- --ignored --nocapture ai
                                         # 只验 AI 真实通道，需先在钥匙串存 Key（见 §6 末）
 cargo clippy --workspace --all-targets -- -D warnings
@@ -102,6 +106,8 @@ cargo run  -p ice-app --example viewport_probe
 cargo build --release -p ice-app        # 发布构建
 RUST_LOG=debug cargo run -p ice-app     # 带调试日志运行
 ```
+
+**跑 live 之前先看这条（2026-10-28 量出来的）**：MyMemory 免费端点对同一 IP 的急促调用会**拉黑一段时间**，不是"每秒几次"的短窗口限速。当晚实测顺序是 20/20 → 16/20 → 0/20（全 HTTP 429），此后即使每次间隔 1.5s 也仍然整批被拒，恢复要等更久。所以：一次会话里别把 `-- --ignored` 全表反复跑；`machine_latency_p50_over_twenty_samples` 自身已带 `PACING_MS = 1500` 的采样间隔，成功样本不足 15 条时它会**判"本次测不出"而红**，那不是回归缺陷，等配额回来再跑即可。429 在应用侧一律不自动重试（`error.rs` 的 `should_retry`，由 `rate_limit_is_user_retryable_but_never_auto_retried` 钉住），自动重试只会把封禁拖得更长。
 
 SDD 工作区（规格、批准、追踪、证据）：
 
@@ -225,4 +231,4 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 | 失败日志只有 `error="Status"` | 变体名之外还需要状态码才能定位 | 已补 `status=` 字段（`jobs::status_code`）；状态码不是秘密，响应体已截断、查询串已洗掉 |
 | **应用跑着却一行日志都没有** | `RUST_LOG` 的 target 写错：二进制 crate 名是 **`ice_translator`**，不是目录名 `ice-app`。`RUST_LOG=ice_app=debug` 会把全部日志过滤掉，且进程照常运行、看不出异常 | 用 `RUST_LOG=ice_translator=debug,info ./target/debug/ice-translator > /tmp/ice.log 2>&1`。**真机取证前先看一眼日志有没有行**——P4 第四轮就因为这一条丢了钥匙串写入/清除的日志证据，只能改用用户口述 + 指纹变化间接印证 |
 | **`pbcopy` 灌中文样本，用户粘出来是空的** | 无 locale 的 shell 里 `pbcopy` 遇到非 ASCII 会**静默失败**（exit 0、剪贴板为空），ASCII 内容不受影响 | `LC_ALL=en_US.UTF-8 pbcopy < /tmp/sample.txt`，再用 `LC_ALL=en_US.UTF-8 pbpaste \| wc -m` 回验非零，才交给用户粘贴 |
-| 大文本走 AI 通道报"被限流（HTTP 429）" | 18,000 字符会切成 6 段连发，撞供应商配额；不是缺陷 | 换机翻引擎跑同一份样本（实测 6 段 11.85s 出结果），或减小样本、隔几分钟再试。日志只记 `error="RateLimited" status=429`，不含源文 |
+| 大文本走 AI 通道报"被限流（HTTP 429）" | 18,000 字符会切成 6 段连发，撞供应商配额；不是缺陷。机翻侧同样会撞：2026-10-28 不限速连发 20 次就把本机 IP 打进一段时间的封禁（见 §4 的 live 提醒） | 换机翻引擎跑同一份样本（实测 6 段 11.85s 出结果），或减小样本、隔几分钟再试。日志只记 `error="RateLimited" status=429`，不含源文 |
