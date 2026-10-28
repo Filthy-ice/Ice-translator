@@ -1,0 +1,67 @@
+
+running 53 tests
+test config::tests::every_preset_except_custom_has_an_address ... ok
+test config::tests::custom_without_url_is_not_ready ... ok
+test config::tests::ai_not_ready_without_key ... ok
+test config::tests::manual_values_beat_the_preset ... ok
+test config::tests::ai_endpoint_accepts_both_forms ... ok
+test config::tests::corrupt_config_is_rejected_not_panic ... ok
+test config::tests::preset_provider_supplies_url_and_model ... ok
+test config::tests::remember_target_keeps_five_and_most_recent_first ... ok
+test config::tests::sanitize_clamps_out_of_range_values ... ok
+test config::tests::config_without_provider_field_still_loads ... ok
+test config::tests::sanitize_keeps_the_unfocused_alpha_inside_its_band ... ok
+test config::tests::sanitize_leaves_a_larger_compact_rect_alone ... ok
+test config::tests::partial_config_uses_defaults_for_missing_sections ... ok
+test config::tests::sanitize_lifts_a_hand_edited_compact_rect_to_the_native_floor ... ok
+test config::tests::thinking_off_field_follows_each_vendors_spelling ... ok
+test config::tests::roundtrip_keeps_values ... ok
+test detect::tests::accented_latin_is_flagged_as_low_confidence ... ok
+test config::tests::visible_languages_always_includes_preferred ... ok
+test config::tests::window_off_screen_detection ... ok
+test detect::tests::detects_common_scripts ... ok
+test detect::tests::digits_symbols_and_empty_are_not_guessed ... ok
+test detect::tests::greek_wins_over_a_few_cjk_chars ... ok
+test detect::tests::japanese_with_kanji_still_reads_as_japanese ... ok
+test detect::tests::mixed_chinese_english_reads_as_chinese_with_lower_confidence ... ok
+test detect::tests::mostly_english_with_one_cjk_term_reads_as_english ... ok
+test config::tests::load_at_falls_back_to_defaults_with_reason ... ok
+test detect::tests::traditional_chinese_separated_from_simplified ... ok
+test document::tests::font_size_never_below_floor ... ok
+test document::tests::merged_text_skips_disabled_and_blank_blocks ... ok
+test document::tests::rect_union_covers_both ... ok
+test document::tests::vertical_gap_is_negative_when_overlapping_rows ... ok
+test glossary::tests::case_sensitive_term_only_matches_exact ... ok
+test glossary::tests::post_substitute_replaces_residual_source_case_insensitively ... ok
+test glossary::tests::prompt_fragment_empty_when_no_terms ... ok
+test config::tests::load_at_missing_file_returns_defaults_without_reason ... ok
+test glossary::tests::replace_case_insensitive_does_not_cut_multibyte ... ok
+test glossary::tests::substitute_handles_cjk_and_repeated_occurrences ... ok
+test glossary::tests::upsert_is_idempotent_and_remove_works ... ok
+test glossary::tests::write_to_config_dedupes_and_sorts ... ok
+test glossary::tests::terms_render_as_term_tables_inside_config ... ok
+test glossary::tests::import_legacy_degrades_on_corrupt_or_missing_file ... ok
+test glossary::tests::prompt_fragment_caps_at_limit ... ok
+test glossary::tests::import_legacy_is_idempotent_once_config_has_terms ... ok
+test language::tests::code_roundtrip ... ok
+test language::tests::from_code_normalizes_case_and_underscore ... ok
+test language::tests::preferred_is_subset_of_all ... ok
+test config::tests::save_at_creates_dirs_and_leaves_no_temp_file ... ok
+test history::tests::corrupt_line_is_skipped_not_fatal ... ok
+test history::tests::append_and_recent_is_newest_first ... ok
+test glossary::tests::import_legacy_reads_old_file_without_touching_it ... ok
+test history::tests::clear_empties_history ... ok
+test history::tests::search_matches_both_sides_case_insensitively ... ok
+test history::tests::trims_to_capacity_keeping_newest ... ok
+
+test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/ice_core-bd209e2c22d0b7a8)
+   Doc-tests ice_core
