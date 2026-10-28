@@ -729,7 +729,7 @@ mod tests {
         select_provider(&mut state, &mut effects, AiProvider::DeepSeek);
 
         assert_eq!(state.config.ai.base_url, "https://api.deepseek.com");
-        assert_eq!(state.config.ai.model, "deepseek-chat");
+        assert_eq!(state.config.ai.model, "deepseek-flash");
         assert!(state.config_dirty);
         assert!(effects.rebuild_translator);
         assert!(state.toasts.is_empty(), "有默认模型名就不该多嘴");
@@ -762,7 +762,7 @@ mod tests {
             state.config.ai.effective_base_url(),
             "https://proxy.example.com/v1"
         );
-        assert_eq!(state.config.ai.effective_model(), "deepseek-chat");
+        assert_eq!(state.config.ai.effective_model(), "deepseek-flash");
     }
 
     #[test]

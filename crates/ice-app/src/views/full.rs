@@ -29,18 +29,12 @@ const BAR_MARGIN: f32 = 6.0;
 /// 底栏按钮之间的间距（px）
 const BAR_SPACING: f32 = 6.0;
 
-/// 底栏左侧给字数文本留出的宽度：字数可以省略号截断，按钮不行（REQ-013 的退让顺序）
-const CHAR_SLOT: f32 = 160.0;
+/// 底栏左侧那一行元信息留出的宽度（F-07 + F-10）：它可以省略号截断，按钮不行
+/// （REQ-013 的退让顺序）。装得下"字数 18000 · 1583ms · 分 3 段 · 检测：简体中文"。
+const META_SLOT: f32 = 300.0;
 
 /// 正文框的内边距（`Frame::group` 与内部定高算式共用的那一个数）
 const GROUP_INNER_PAD: f32 = 8.0;
-
-/// 两栏页脚行（徽标）的固定高度。
-///
-/// 徽标比纯文本高（内边距 4 + 小字号），空页脚又是 0 高——页脚高度各算各的，
-/// 两栏的底边就会差出一截，真机走查里"两边窗口大小不一样"正是这么来的。
-/// 固定成一行能装下徽标的高度，两栏底边才永远对齐。
-const PANE_FOOTER_HEIGHT: f32 = 26.0;
 
 /// 底栏的矩形 id：布局测试要拿它跟两栏的正文矩形比"互不重叠"
 fn bottom_bar_id() -> egui::Id {
@@ -276,24 +270,48 @@ fn source_pane(ui: &mut egui::Ui, state: &mut AppState) {
 /// 底栏不在这里扣：它是窗口层的 `Panel::bottom`，在 `CentralPanel` 之前就把那一条占了，
 /// 两栏拿到的可用高度本来就少了它。v0.7 第一版让两栏自己减 `bar_height`，扣的数与画的数
 /// 差 3px 就把条子挤出窗口——交给 egui 排，"扣多少"和"画多高"才是同一个数（REQ-013）。
-/// 徽标行也不在这里扣：它住进译文框内部（见 `translation_pane`），两栏的框因此都是
+/// 徽标行也不在这里扣：它压根不在栏里了（2026-10-28 挪进底栏），两栏的框因此都是
 /// "标题以下满高"，底边天然对齐。
 fn pane_body_height(ui: &egui::Ui) -> f32 {
     ui.available_height().max(80.0)
 }
 
-/// F-07：字数常驻；"检测：xx"只在源语言为自动检测时出现（FR-1.2）
-pub fn char_count_text(state: &AppState) -> String {
-    let mut text = format!("字数 {}", state.char_count);
+/// F-07 + F-10：底栏左侧那一行元信息，按「片段 + 颜色」给出，由 `bottom_bar` 拼成一条文字。
+///
+/// 原先这些是译文框里的一排胶囊徽标，用户 2026-10-28 第二次点名"状态怎么又放译文框里了？
+/// 里面非要有东西你才不难受吗？"——挪进底栏顺带把重复去掉：字数和徽标曾各写一遍"检测：xx"。
+/// 拆成纯函数是为了逐条断言"哪一段在什么条件下才出现"。
+pub fn bar_meta(state: &AppState) -> Vec<(String, egui::Color32)> {
+    let mut meta = vec![(format!("字数 {}", state.char_count), theme::MUTED)];
+    if state.failure.is_some() {
+        // 失败原因已经用红字写在译文区里，这一行不再重复贴标记
+        return meta;
+    }
+    let Some(result) = &state.translation else {
+        return meta;
+    };
+    if state.in_flight.is_some() {
+        meta.push(("更新中".into(), theme::WARN));
+    }
+    // 缓存命中时不显示耗时（此时恒为 0，会误导）
+    if result.cache_hit {
+        meta.push(("缓存".into(), theme::OK));
+    } else {
+        meta.push((format!("{}ms", result.elapsed_ms), theme::MUTED));
+    }
+    if result.segments > 1 {
+        meta.push((format!("分 {} 段", result.segments), theme::MUTED));
+    }
     if state.config.translation.source.is_none() {
-        if let Some(detected) = state.translation.as_ref().and_then(|r| r.detected) {
-            text.push_str(&format!(" · 检测：{}", detected.display_name()));
+        if let Some(detected) = result.detected {
+            meta.push((format!("检测：{}", detected.display_name()), theme::MUTED));
         }
     }
-    text
+    meta
 }
 
-/// C 区：译文展示（F-08）+ 缓存与耗时标记（F-10）。动作按钮在底栏（F-09，REQ-013）。
+/// C 区：译文展示（F-08）。动作按钮在底栏（F-09，REQ-013），耗时/缓存/分段/检测也在
+/// 底栏那一行文字里（F-10）——**框里只放译文**。
 fn translation_pane(ui: &mut egui::Ui, state: &mut AppState) {
     pane_title(ui, "translation", "译文");
     let body = pane_body_height(ui);
@@ -309,24 +327,16 @@ fn translation_pane(ui: &mut egui::Ui, state: &mut AppState) {
         .inner_margin(GROUP_INNER_PAD)
         .fill(fill)
         .show(&mut boxed, |ui| {
-            // 徽标行住在框**里面**（2026-10-28）：挂在框外时，还没翻译的那 26px 就是
-            // 正文框与底栏之间一段滚不到的空白，用户看到的正是"两个框下面空白太多"。
-            // 定高这件事保留在框内——徽标有没有、有几枚，都不许把译文框顶高顶矮。
-            let inner = body - 2.0 * GROUP_INNER_PAD;
-            let text = (inner - ui.spacing().item_spacing.y - PANE_FOOTER_HEIGHT).max(0.0);
             // ScrollArea 的 auto_shrink(false) 会吃光"可用高度"而不是 set_min_height，
             // 不关进一个定高子 Ui，译文框就会比源文框高出一截
-            ui.allocate_ui(egui::vec2(ui.available_width(), text), |ui| {
-                let scrolled = scroll_area("translation").show(ui, |ui| {
-                    translation_body(ui, state);
-                });
-                record_scroll(ui.ctx(), "translation", &scrolled);
-            });
-            exact_row(
-                ui,
-                PANE_FOOTER_HEIGHT,
-                Layout::left_to_right(Align::Center),
-                |ui| badge_row(ui, state),
+            ui.allocate_ui(
+                egui::vec2(ui.available_width(), body - 2.0 * GROUP_INNER_PAD),
+                |ui| {
+                    let scrolled = scroll_area("translation").show(ui, |ui| {
+                        translation_body(ui, state);
+                    });
+                    record_scroll(ui.ctx(), "translation", &scrolled);
+                },
             );
         });
     record_pane_frame(ui.ctx(), "translation", body_rect, fill);
@@ -422,7 +432,7 @@ pub(crate) fn bottom_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut 
     let panel = egui::Panel::bottom("full_bottom_bar")
         .frame(frame)
         .show(ui, |ui| {
-            let (size, rows) = bar_layout(ui.available_width() - CHAR_SLOT, actions.len());
+            let (size, rows) = bar_layout(ui.available_width() - META_SLOT, actions.len());
             let height = bar_height(size, rows) - 2.0 * BAR_MARGIN;
             let rect = egui::Rect::from_min_size(
                 ui.cursor().min,
@@ -433,20 +443,26 @@ pub(crate) fn bottom_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut 
                 egui::UiBuilder::new()
                     .max_rect(egui::Rect::from_min_size(
                         rect.min,
-                        egui::vec2(CHAR_SLOT, height),
+                        egui::vec2(META_SLOT, height),
                     ))
                     .layout(Layout::left_to_right(Align::Center)),
             );
-            left.add_sized(
-                [CHAR_SLOT - 8.0, size.y],
-                egui::Label::new(RichText::new(char_count_text(state)).color(theme::MUTED))
-                    .truncate(),
-            );
+            // 一条文字、多段颜色（`缓存` 绿、`更新中` 黄），不再是一排胶囊：胶囊比文字高，
+            // 挂进译文框就成了用户那句"里面非要有东西"。
+            let font_id = left.style().text_styles[&egui::TextStyle::Body].clone();
+            let mut job = egui::text::LayoutJob::default();
+            for (index, (text, color)) in bar_meta(state).into_iter().enumerate() {
+                let separator = if index == 0 { "" } else { " · " };
+                let muted = egui::TextFormat::simple(font_id.clone(), theme::MUTED);
+                job.append(separator, 0.0, muted);
+                job.append(&text, 0.0, egui::TextFormat::simple(font_id.clone(), color));
+            }
+            left.add_sized([META_SLOT - 8.0, size.y], egui::Label::new(job).truncate());
 
             let mut right = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(egui::Rect::from_min_max(
-                        egui::pos2(rect.min.x + CHAR_SLOT, rect.min.y),
+                        egui::pos2(rect.min.x + META_SLOT, rect.min.y),
                         rect.max,
                     ))
                     .layout(Layout::right_to_left(Align::Center)),
@@ -506,48 +522,6 @@ fn translation_body(ui: &mut egui::Ui, state: &AppState) {
         "尚未翻译：按 Enter 或 Cmd+Enter"
     };
     ui.colored_label(theme::MUTED, hint);
-}
-
-/// F-10：`缓存` / `320ms` / `分 N 段` / `检测：英语`；缓存命中时不显示耗时（此时恒为 0，会误导）
-fn badge_row(ui: &mut egui::Ui, state: &AppState) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        if state.in_flight.is_some() && state.translation.is_some() {
-            badge(ui, theme::WARN, "更新中");
-        }
-        if state.failure.is_some() {
-            return;
-        }
-        let Some(result) = &state.translation else {
-            return;
-        };
-        if result.cache_hit {
-            badge(ui, theme::OK, "缓存");
-        } else {
-            badge(ui, theme::MUTED, &format!("{}ms", result.elapsed_ms));
-        }
-        if result.segments > 1 {
-            badge(ui, theme::MUTED, &format!("分 {} 段", result.segments));
-        }
-        if state.config.translation.source.is_none() {
-            if let Some(detected) = result.detected {
-                badge(
-                    ui,
-                    theme::MUTED,
-                    &format!("检测：{}", detected.display_name()),
-                );
-            }
-        }
-    });
-}
-
-fn badge(ui: &mut egui::Ui, color: egui::Color32, text: &str) {
-    egui::Frame::group(ui.style())
-        .inner_margin(4.0)
-        .fill(color.gamma_multiply(0.15))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).color(color).small());
-        });
 }
 
 /// 两个复制按钮与 Cmd+Shift+C 共用这一条路径。
@@ -1118,18 +1092,12 @@ mod tests {
             inner.max.y,
             bar.min.y
         );
-        // 视口底边到条子上沿之间该有的是：译文栏 `Frame::group` 的下内边距、徽标行
-        // （`PANE_FOOTER_HEIGHT`）和它上面那条行距，再加 `CentralPanel` 的下内边距与底栏的
-        // 分隔线；再多的就是凭空留出的空白（滚不到的那段假滚动条）
+        // 视口底边到条子上沿之间该有的是：译文栏 `Frame::group` 的下内边距、`CentralPanel`
+        // 的下内边距与底栏的分隔线。框里再没有第二样东西（徽标行 2026-10-28 挪进底栏），
+        // 所以这条预算比有页脚那版更紧——多出来的每一像素都是滚不到的空白。
         assert!(
-            bar.min.y - inner.max.y
-                <= PANE_FOOTER_HEIGHT
-                    + 3.0
-                    + GROUP_FRAME_PAD
-                    + CENTRAL_FRAME_PAD
-                    + PANEL_SEPARATOR
-                    + 2.0,
-            "正文与底栏之间空出 {:.1}px，比徽标行那一条还多",
+            bar.min.y - inner.max.y <= GROUP_FRAME_PAD + CENTRAL_FRAME_PAD + PANEL_SEPARATOR + 2.0,
+            "正文与底栏之间空出 {:.1}px，译文框里已经没东西了，这条空白是哪儿来的",
             bar.min.y - inner.max.y
         );
     }
@@ -1230,27 +1198,72 @@ mod tests {
         assert!(state.focus_in_source, "Enter 能不能翻译全靠这个标记");
     }
 
+    /// 底栏那一行元信息按条件拼装：字数常驻，其余随结果出现。
+    /// 这些片段 2026-10-28 之前是译文框里的一排胶囊，被用户退回"里面非要有东西你才不难受吗"。
+    fn meta_texts(state: &AppState) -> Vec<String> {
+        bar_meta(state).into_iter().map(|(text, _)| text).collect()
+    }
+
     #[test]
-    fn char_count_shows_detected_language_only_in_auto_mode() {
+    fn the_bar_meta_line_carries_every_result_marker() {
         let mut state = state();
         state.sync_char_count();
         state.translation = Some(translated("你好"));
-        assert_eq!(char_count_text(&state), "字数 11 · 检测：英语");
+        assert_eq!(meta_texts(&state), ["字数 11", "320ms", "检测：英语"]);
 
+        // 指定了源语言：检测结果不再出现，但耗时这类事实照报
         state.config.translation.source = Some(Language::En);
-        assert_eq!(char_count_text(&state), "字数 11");
+        assert_eq!(meta_texts(&state), ["字数 11", "320ms"]);
+
+        // 分段数只有真的分了段才说（单段时报"分 1 段"是噪声）
+        state.translation.as_mut().unwrap().segments = 3;
+        assert_eq!(
+            meta_texts(&state),
+            ["字数 11", "320ms", "分 3 段"],
+            "长文并行分段后分段数必须看得见，否则用户无法判断慢在哪"
+        );
+    }
+
+    #[test]
+    fn the_bar_meta_line_stays_quiet_without_a_result() {
+        let mut state = state();
+        state.sync_char_count();
+        assert_eq!(meta_texts(&state), ["字数 11"], "没翻译过就别装作有结果");
+
+        // 失败：原因已经红字写在译文区，这一行不重复贴标记
+        state.translation = Some(translated("你好"));
+        state.failure = Some(Failure {
+            message: "机翻服务不可用".into(),
+            action: None,
+        });
+        assert_eq!(meta_texts(&state), ["字数 11"]);
     }
 
     #[test]
     fn a_cached_result_reports_the_cache_and_no_elapsed_time() {
         let mut state = state();
+        state.sync_char_count();
         state.translation = Some(TranslationResult::cached("你好", EngineKind::Machine));
         let mut effects = Effects::default();
-        // 渲染不 panic 即可；标记内容由 result 字段决定，这里断言判定分支
         run_full(&mut state, &mut effects);
-        let result = state.translation.as_ref().unwrap();
-        assert!(result.cache_hit);
-        assert_eq!(result.elapsed_ms, 0);
+        assert_eq!(
+            meta_texts(&state),
+            ["字数 11", "缓存"],
+            "缓存命中时耗时恒为 0，报出来只会让人以为服务突然快了"
+        );
+    }
+
+    #[test]
+    fn a_result_still_on_screen_while_refreshing_says_updating() {
+        let mut state = state();
+        state.sync_char_count();
+        state.translation = Some(translated("你好"));
+        state.in_flight = Some(7);
+        assert_eq!(
+            meta_texts(&state),
+            ["字数 11", "更新中", "320ms", "检测：英语"],
+            "旧译文还在屏上、新请求在飞，这一行必须说清楚"
+        );
     }
 
     /// REQ-002 的 20,000 字符假设（spec 里标 HYPOTHESIS，实现第一天出结论）。

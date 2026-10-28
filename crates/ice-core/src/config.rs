@@ -274,10 +274,11 @@ impl AiProvider {
     }
 
     /// 预设的默认模型名。方舟没有可用默认值（要填推理接入点 ID），留空提示用户。
+    /// DeepSeek 用 `deepseek-flash`：`deepseek-chat` 这个型号名已经不用了（用户 2026-10-28 确认）。
     pub const fn preset_model(self) -> &'static str {
         match self {
             AiProvider::Bailian => "qwen-plus",
-            AiProvider::DeepSeek => "deepseek-chat",
+            AiProvider::DeepSeek => "deepseek-flash",
             AiProvider::Zhipu => "glm-4-flash",
             AiProvider::Kimi => "moonshot-v1-8k",
             AiProvider::VolcengineArk => "",
@@ -624,7 +625,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(cfg.endpoint(), "https://api.deepseek.com/chat/completions");
-        assert_eq!(cfg.effective_model(), "deepseek-chat");
+        assert_eq!(cfg.effective_model(), "deepseek-flash");
         assert!(cfg.is_ready(), "选完供应商就能用，不该再要求手填地址");
     }
 
