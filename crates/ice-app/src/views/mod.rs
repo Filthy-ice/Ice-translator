@@ -57,8 +57,8 @@ pub struct Effects {
     pub start_drag: bool,
     /// 简洁窗的"设置"：切回全量并打开设置页（REQ-005）
     pub open_settings: bool,
-    /// 切换置顶（K-09）。快捷键那条路径直接在 `app.rs::run` 里做，这里给标题栏图钉用
-    ///（变更 I：简洁窗动作行那颗文字开关删了，界面侧只剩 `system::pin` 一个入口）
+    /// 切换置顶（K-09）。快捷键那条路径直接在 `app.rs::run` 里做，这里给界面那枚图钉用
+    ///（2026-10-29：`pin_toggle` 画在全量工具条与悬浮窗动作行里，原生标题栏那颗已撤）
     pub toggle_topmost: bool,
     /// 标题栏被双击（任务 #25）：铺满整屏 ↔ 还原。入口只有 `system::dblclick` 那个原生
     /// 监视器——窗内没有按钮，键盘上也没有对应快捷键（双击标题栏本来就是 macOS 的一个习惯，
@@ -130,13 +130,17 @@ fn toolbar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_av
             ui.separator();
             engine_picker(ui, state, effects, ai_available);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
+                let floating = ui
                     .button("悬浮窗")
-                    .on_hover_text("切到简洁悬浮窗（Cmd+Shift+M）")
-                    .clicked()
-                {
+                    .on_hover_text("切到简洁悬浮窗（Cmd+Shift+M）");
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(toolbar_id("floating"), floating.rect));
+                if floating.clicked() {
                     effects.toggle_mode = true;
                 }
+                // 用户 2026-10-29 指定"挪动到精简（悬浮窗）两个字左侧"。这条带子是
+                // `right_to_left`，所以后加的落在左边——顺序反过来就跑到窗口右边缘去了。
+                pin_toggle(ui, state, effects, "full");
             });
         });
     });
@@ -355,6 +359,105 @@ pub(crate) fn theme_switch(
 pub(crate) fn recorded_theme_switch(ctx: &egui::Context, salt: &'static str) -> egui::Rect {
     ctx.data_mut(|d| d.get_temp::<egui::Rect>(theme_switch_id(salt)))
         .unwrap_or_else(|| panic!("{salt} 那一侧的主题开关没有记下矩形"))
+}
+
+/// 置顶图钉那一格（FR-3.4 的可见入口）。
+///
+/// **2026-10-29 从原生标题栏挪进来**（用户走查原话："图钉？哪来的图钉？让你加也没见你加啊"，
+/// 以及"全量窗挪动到精简（悬浮窗）两个字左侧，悬浮窗状态下，放在（右下角）颜色切换左边"）。
+/// 原生那颗挂在 `NSTitlebarAccessoryViewController` 里，位置只有一个——窗口右边缘——挪不到
+/// 用户指定的任何一处；而为了那一格要付的纪律（每帧核对是否还在、`Retained` 自持 target、
+/// `lockFocus` 旋转、一次点击只兑一次）换来的观感是"右上角一个孤零零的小符号"。画在这里它和
+/// 其他控件同族、跟着主题色走，置顶那条通道（`Effects::toggle_topmost`）一个字没变。
+///
+/// 图案是矢量线稿，不用 `📌` 那类字符（egui 字体没有，真机落豆腐块——P4 缺陷 D-5 的教训）。
+/// 两态沿用原生那套语义：**未置顶 = 本色 + 斜躺 + 空心，置顶 = 强调色 + 立正 + 实心**。
+pub(crate) const PIN_TOGGLE_W: f32 = 26.0;
+/// 与主题滑块同高，两种形态右下角那一排里两枚并排时竖向不打架。
+pub(crate) const PIN_TOGGLE_H: f32 = THEME_SWITCH_H;
+/// 未置顶时整枚图钉绕中心躺过去的角度（度）：钉尖落到左下，与原生那颗 `pin` 的出厂方向一致。
+const PIN_TILT_DEG: f32 = 45.0;
+
+/// 悬停提示：说清现在什么状态、点一下会怎样、键盘上等价的那条是什么。
+fn pin_tip(pinned: bool) -> &'static str {
+    if pinned {
+        "已置顶：窗口压在其他应用之上，点一下取消（Cmd+Shift+P）"
+    } else {
+        "置顶：窗口压在其他应用之上（Cmd+Shift+P）"
+    }
+}
+
+fn pin_id(salt: &'static str) -> egui::Id {
+    egui::Id::NULL.with("ice-translator.pin-toggle").with(salt)
+}
+
+/// 画一枚图钉并接住点击。返回它的矩形，和 `theme_switch` 一样把矩形记进 `Context::data`
+/// 让两种形态的测试都找得到那一格。
+pub(crate) fn pin_toggle(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    effects: &mut Effects,
+    salt: &'static str,
+) -> egui::Rect {
+    // 只占位不响应，真正的命中交给下面那个带稳定 `Id` 的 `interact`
+    // （`allocate_space` 自带一次 interact，两次会让同一枚指针被两个响应者各消费一遍）
+    let (_auto_id, rect) = ui.allocate_space(egui::vec2(PIN_TOGGLE_W, PIN_TOGGLE_H));
+    let pinned = state.config.ui.always_on_top;
+    let color = if pinned {
+        theme::ACCENT
+    } else {
+        ui.visuals().widgets.inactive.fg_stroke.color
+    };
+    draw_pin(&ui.painter_at(rect), rect.center(), pinned, color);
+    let response = ui.interact(rect, pin_id(salt), egui::Sense::click());
+    if response.clicked() {
+        effects.toggle_topmost = true;
+    }
+    response.on_hover_text(pin_tip(pinned));
+    ui.ctx().data_mut(|d| d.insert_temp(pin_id(salt), rect));
+    rect
+}
+
+/// 圆头 + 一横底座 + 往下那根针。`pinned` 为假时整枚绕中心转 45° 躺下，头也只剩描边。
+fn draw_pin(painter: &egui::Painter, at: egui::Pos2, pinned: bool, color: egui::Color32) {
+    let stroke = egui::Stroke::new(1.5, color);
+    let angle = if pinned {
+        0.0
+    } else {
+        PIN_TILT_DEG.to_radians()
+    };
+    let (sin, cos) = angle.sin_cos();
+    let spin = |p: egui::Vec2| egui::vec2(p.x * cos - p.y * sin, p.x * sin + p.y * cos);
+    let point = |p: egui::Vec2| at + spin(p);
+    let head = egui::vec2(0.0, -5.0);
+    painter.line_segment(
+        [point(egui::vec2(-3.4, -1.6)), point(egui::vec2(3.4, -1.6))],
+        stroke,
+    );
+    painter.line_segment(
+        [point(egui::vec2(0.0, -1.6)), point(egui::vec2(0.0, 6.2))],
+        stroke,
+    );
+    if pinned {
+        painter.circle_filled(point(head), 3.4, color);
+    }
+    painter.circle_stroke(point(head), 3.4, stroke);
+}
+
+#[cfg(test)]
+pub(crate) fn recorded_pin(ctx: &egui::Context, salt: &'static str) -> egui::Rect {
+    ctx.data_mut(|d| d.get_temp::<egui::Rect>(pin_id(salt)))
+        .unwrap_or_else(|| panic!("{salt} 那一侧的图钉没有记下矩形"))
+}
+
+fn toolbar_id(salt: &'static str) -> egui::Id {
+    egui::Id::NULL.with("ice-translator.toolbar").with(salt)
+}
+
+#[cfg(test)]
+pub(crate) fn recorded_toolbar_rect(ctx: &egui::Context, salt: &'static str) -> egui::Rect {
+    ctx.data_mut(|d| d.get_temp::<egui::Rect>(toolbar_id(salt)))
+        .unwrap_or_else(|| panic!("工具条上的 {salt} 没有记下矩形"))
 }
 
 /// 一段圆弧采样成折线（epaint 0.37 没有圆弧图元，只能自己按角度取点）
@@ -717,6 +820,61 @@ mod tests {
             source.min.y <= 64.0,
             "正文框上沿跑到 {:.1}px，工具条又囤出空转了（钉死 56px 那一版是 82px）",
             source.min.y
+        );
+    }
+
+    /// 图钉没有文字，能教用户那条快捷键的只剩悬停提示——所以**两态都必须带上它**。
+    /// 原生那颗的同一件事由 `tip_for` 承担，模块删了，这条纪律跟着挪到这里。
+    #[test]
+    fn the_pin_tip_names_the_shortcut_in_both_states() {
+        assert!(
+            pin_tip(true).contains("Cmd+Shift+P") && pin_tip(false).contains("Cmd+Shift+P"),
+            "图钉的悬停提示把快捷键的知识弄丢了"
+        );
+        assert_ne!(
+            pin_tip(true),
+            pin_tip(false),
+            "两态提示一字不差，用户点下去之前看不出会往哪边切"
+        );
+    }
+
+    /// 用户 2026-10-29 走查后指定的位置："全量窗挪动到精简（悬浮窗）两个字左侧"。
+    /// 那条带子是 `right_to_left`，「悬浮窗」先占右边缘，图钉落在它左边才叫"左侧"；
+    /// 置顶那条通道一个字没改——点的仍是 `effects.toggle_topmost`，与 `Cmd+Shift+P` 同一个字段。
+    #[test]
+    fn the_pin_sits_left_of_the_floating_button_and_sets_the_same_intent() {
+        let (_dir, store) = temp_history();
+        let mut state = state();
+        let mut effects = Effects::default();
+        let screen = egui::vec2(1080.0, 720.0);
+        let ctx = run_frame(&mut state, &mut effects, &store, screen, 2);
+        let floating = recorded_toolbar_rect(&ctx, "floating");
+        let pin = recorded_pin(&ctx, "full");
+
+        assert!(
+            pin.max.x <= floating.min.x + 0.5,
+            "图钉没有落在「悬浮窗」左侧：{pin:?}（按钮 {floating:?}）"
+        );
+        assert!(
+            pin.width() >= PIN_TOGGLE_W - 0.5,
+            "图钉那一格被工具条压窄了：{pin:?}"
+        );
+
+        effects = Effects::default();
+        run_click(
+            &mut state,
+            &mut effects,
+            &store,
+            screen,
+            recorded_pin(&ctx, "full").center(),
+        );
+        assert!(
+            effects.toggle_topmost,
+            "点了图钉没有置置顶意图——置顶那条通道断在这里"
+        );
+        assert!(
+            !effects.toggle_mode,
+            "点图钉顺带把形态也切了，两块控件的响应区重叠了"
         );
     }
 

@@ -32,7 +32,7 @@ use crate::system::clipboard::CopyKind;
 use crate::system::hotkeys::SOURCE_EDITOR_ID;
 use crate::theme;
 
-use super::{Effects, engine_picker, full, theme_switch, toasts};
+use super::{Effects, engine_picker, full, pin_toggle, theme_switch, toasts};
 
 /// 输入带的最小内容高度：一行 `TextEdit` 加上下内边距。
 /// REQ-012 里它是"两带均分不够时"的退让值——宁可译文带多拿，也不把输入框压到一行字以下。
@@ -223,12 +223,13 @@ fn band_frame<R>(
         .show(ui, add)
 }
 
-/// 动作行：「复制 / 设置 / 机翻|AI —— 主题滑块（钉右）」，
-/// 正常字号、正常按钮内边距，左排与滑块之间剩下的真空白是第三块把手。
+/// 动作行：「复制 / 设置 / 机翻|AI —— 图钉 · 主题滑块（钉右）」，
+/// 正常字号、正常按钮内边距，左排与右排之间剩下的真空白是第三块把手。
 ///
 /// 「置顶」那颗文字开关按用户 2026-10-28 的原话删掉了（"置顶不应该是文字，应该和大部分软件
-/// 一样，可以在标题栏最右侧有一个类似于钉子的图标"）。这一格现在由标题栏那颗图钉承担
-/// （`system::pin`；两种形态共用同一个 `NSWindow`，所以全量窗也一起有了），`Cmd+Shift+P`
+/// 一样，可以在标题栏最右侧有一个类似于钉子的图标"）。那一格先做成过标题栏里的原生图钉，
+/// 2026-10-29 按用户走查后的原话改道到这一行里（"悬浮窗状态下，放在（右下角）颜色切换左边"），
+/// 原生那颗连同 `system::pin` 一起删了。`Cmd+Shift+P`
 /// 与设置页那一格照旧——**删的是文字，不是能力**，点的仍是 `Effects::toggle_topmost`
 /// 那一条通道，不另开第二条置顶实现。
 ///
@@ -246,6 +247,8 @@ fn band_frame<R>(
 /// 也在右下角"）。它和左排那些按钮不是一类东西——按钮按下去就变，滑块停在哪儿就是哪儿——
 /// 所以单独占一条 `right_to_left` 子带：子带的竖向范围取左排**实测**出来的那一格，
 /// 行高仍由左排决定；子带与左排之间那段空白留给把手。
+/// 图钉加在同一条子带里、滑块之后（子带是 `right_to_left`，后落的在左），于是把手的右端
+/// 从"滑块之前"改成"图钉之前"——那一格也是控件，压上去点它就变成拖窗。
 ///
 /// 高度不再 `exact_size`：这一行是自然高度，一行装得下就一行，装不下换行成两行。
 /// 它是 `Panel::bottom`，占掉的高度由 egui 从中央区里扣，`band_heights` 拿到的可用高
@@ -259,8 +262,9 @@ fn band_frame<R>(
 /// 320 那一档「退出」掉到第二行，用户 2026-10-28 要求"按钮不允许换行"，抬到 400；
 /// 同日加了主题切换框后一度抬到 420，删掉「全量」那颗又回到 400），高度下限抬到 160
 /// （REQ-012 两带 1:1 摊开后，130 那一档译文带连两行字都放不下）。
-/// **下限不跟着控件数往下收**：这次又少了一颗按钮、多了一块更窄的滑块，按度量的需求宽度
-/// 降到 262px，`MIN_COMPACT_W` 仍按用户那句"按钮不允许换行"留在 400。
+/// **下限不跟着控件数收放**：变更 J 少了一颗按钮、多了一块更窄的滑块，按度量的需求宽度降到
+/// 262px；2026-10-29 图钉挪进这一行又回到 296px。`MIN_COMPACT_W` 两头都不动，仍按用户那句
+/// "按钮不允许换行"留在 400。
 fn action_row(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_available: bool) {
     let panel = egui::Panel::bottom("compact_bar").show(ui, |ui| {
         let available = ui.max_rect();
@@ -307,14 +311,19 @@ fn action_row(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai
         );
         let switch = theme_switch(&mut right, state, "compact");
         record(&ctx, "btn_theme", switch);
+        // 用户 2026-10-29："悬浮窗状态下，放在（右下角）颜色切换左边"。这条子带是
+        // `right_to_left`，滑块先占走右边缘，图钉后加就落在它左边。
+        let pin = pin_toggle(&mut right, state, effects, "compact");
+        record(&ctx, "btn_pin", pin);
 
-        let used = left.union(switch);
+        let used = left.union(switch).union(pin);
         record(&ctx, "actions", used);
-        // 把手吃的是左排与滑块之间那段真的空白：两头各让开 4px，否则点按钮边缘
+        // 把手吃的是左排与右排之间那段真的空白：两头各让开 4px，否则点按钮边缘
         // 会变成拖窗；挤到零宽时 `drag_handle` 自己跳过（宁少一块把手，也不压住按钮）
+        // 右端取 `pin`：它是右排里最靠左的一枚（子带 `right_to_left`，滑块先占右边缘）
         let gap = Rect::from_min_max(
             Pos2::new(left.max.x + GAP_PADDING, used.min.y),
-            Pos2::new(switch.min.x - GAP_PADDING, used.max.y),
+            Pos2::new(pin.min.x - GAP_PADDING, used.max.y),
         );
         record(&ctx, "bar_gap", gap);
         drag_handle(ui, "compact_handle_bar", gap, effects);
@@ -410,7 +419,7 @@ mod tests {
     use super::*;
     use crate::state::{Failure, KeyState};
     use crate::views::Effects;
-    use crate::views::{KNOB_RADIUS, theme_at, theme_slot};
+    use crate::views::{KNOB_RADIUS, PIN_TOGGLE_W, theme_at, theme_slot};
     use ice_core::config::{Config, MIN_COMPACT_H, MIN_COMPACT_W, Theme};
     use ice_core::glossary::Glossary;
     use ice_core::language::EngineKind;
@@ -778,6 +787,7 @@ mod tests {
             "actions",
             "bar_gap",
             "btn_theme",
+            "btn_pin",
             "btn_copy",
             "btn_settings",
             "engine",
@@ -797,6 +807,7 @@ mod tests {
         // 同一行里的控件两两不重叠（把手更不能压住按钮，否则点按钮会变成拖窗）
         let row = [
             rect(&h.ctx, "btn_theme"),
+            rect(&h.ctx, "btn_pin"),
             rect(&h.ctx, "btn_copy"),
             rect(&h.ctx, "btn_settings"),
             rect(&h.ctx, "engine"),
@@ -942,11 +953,12 @@ mod tests {
         let mut state = state();
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
-        let (input, tail, button, switch) = (
+        let (input, tail, button, switch, pin) = (
             rect(&h.ctx, "input"),
             rect(&h.ctx, "handle_tail"),
             rect(&h.ctx, "btn_copy"),
             rect(&h.ctx, "btn_theme"),
+            rect(&h.ctx, "btn_pin"),
         );
         let size = window().size();
 
@@ -963,29 +975,72 @@ mod tests {
             !drag_probe(size, switch.center()),
             "右下角那格滑块被当成把手，横向推它就变成拖窗了"
         );
+        assert!(
+            !drag_probe(size, pin.center()),
+            "图钉那一格被当成把手，置顶就点不动了"
+        );
     }
 
-    /// 左排与主题滑块中间那段空白才是把手（滑块钉右之后行尾没有空位了）。
+    /// 用户 2026-10-29 指定的位置：悬浮窗右下角那排里，图钉在颜色切换滑块的**左边**。
+    /// 置顶那条通道也不许因为换了位置而变：点的仍然是 `Effects::toggle_topmost`，
+    /// 与 `Cmd+Shift+P`、设置页那一格同一个字段（`app.rs` 里唯一一次下发 WindowLevel）。
+    #[test]
+    fn the_pin_sits_left_of_the_theme_switch_and_shares_the_topmost_channel() {
+        let size = Vec2::new(560.0, 160.0);
+        let mut h = Harness::new(size);
+        let mut state = state();
+        let mut effects = Effects::default();
+        h.warm(&mut state, &mut effects, false);
+        let switch = rect(&h.ctx, "btn_theme");
+        let pin = rect(&h.ctx, "btn_pin");
+        let bar = rect(&h.ctx, "bar");
+
+        assert!(
+            pin.max.x <= switch.min.x + 0.5,
+            "图钉没有落在滑块左边：{pin:?}（滑块 {switch:?}）"
+        );
+        assert!(
+            (bar.max.x - PANEL_X_MARGIN - switch.max.x).abs() <= 0.5,
+            "加进图钉把滑块顶离了行的右边缘——那一格仍是右下角：{switch:?}（行 {bar:?}）"
+        );
+        assert!(
+            pin.width() >= PIN_TOGGLE_W - 0.5,
+            "图钉那一格被行高压窄了：{pin:?}"
+        );
+
+        h.click(&mut state, &mut effects, false, pin.center());
+        assert!(
+            effects.toggle_topmost,
+            "点了图钉没有置置顶意图——置顶那条通道断在这里"
+        );
+        assert!(
+            !effects.start_drag,
+            "点图钉那一下同时触发了拖窗，把手与图钉那一格重叠了"
+        );
+    }
+
+    /// 左排与**右排最靠左那一枚**（2026-10-29 变更 K 起是图钉，之前是滑块）中间那段空白才是把手
+    /// （右排钉右之后行尾没有空位了）。
     /// 只有在真的有空位时它才存在：窗口被压到连一整行按钮都放不下时
     /// （`the_action_row_stays_on_one_line_at_the_minimum_width` 管的就是不让这件事发生在合法
     /// 下限处），那里就没有把手，靠译文尾部那一块也还能拖。
     #[test]
-    fn the_blank_between_the_row_and_the_theme_switch_is_a_handle() {
+    fn the_blank_between_the_row_and_the_pin_is_a_handle() {
         let size = Vec2::new(560.0, 160.0);
         let mut h = Harness::new(size);
         let mut state = state();
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
         let gap = rect(&h.ctx, "bar_gap");
-        let switch = rect(&h.ctx, "btn_theme");
+        let pin = rect(&h.ctx, "btn_pin");
         let engine = rect(&h.ctx, "engine");
         assert!(
             gap.width() >= 20.0,
             "宽窗下中间那段空白应当留下把手：{gap:?}"
         );
         assert!(
-            gap.min.x >= engine.max.x && gap.max.x <= switch.min.x,
-            "把手跑出了\"左排之后、滑块之前\"那一段：{gap:?}（引擎分段 {engine:?}、滑块 {switch:?}）"
+            gap.min.x >= engine.max.x && gap.max.x <= pin.min.x,
+            "把手跑出了\"左排之后、图钉之前\"那一段：{gap:?}（引擎分段 {engine:?}、图钉 {pin:?}）"
         );
         assert!(drag_probe(size, gap.center()), "动作行中间的把手拖不动");
 
@@ -1047,8 +1102,9 @@ mod tests {
     /// 有一个类似于钉子的图标"）：动作行里那颗文字开关下线。
     ///
     /// 这条量的是**没有**——那颗按钮的矩形根本不该被记下来。删的是文字不是能力：
-    /// 置顶现在由标题栏那颗图钉承担（`system::pin`，点击与 `Cmd+Shift+P` 落在
-    /// 同一个 `effects.toggle_topmost` 上），两种形态共用同一个原生窗口所以都有。
+    /// 置顶那一格现在是这一行右端的矢量图钉（`views::pin_toggle`，2026-10-29 从原生标题栏
+    /// 挪进来，位置按用户那句"放在（右下角）颜色切换左边"），点击与 `Cmd+Shift+P` 落在
+    /// 同一个 `effects.toggle_topmost` 上。
     #[test]
     fn the_action_row_has_no_topmost_text_switch() {
         let mut h = Harness::new(window().size());
@@ -1059,7 +1115,7 @@ mod tests {
             h.ctx
                 .data_mut(|d| d.get_temp::<Rect>(rect_id("btn_top")))
                 .is_none(),
-            "动作行里还画着一颗置顶按钮——变更 I 要它变成标题栏的图钉"
+            "动作行里还画着一颗置顶按钮——变更 I 要它变成图钉"
         );
     }
 
@@ -1426,9 +1482,11 @@ mod tests {
         };
         let items: Vec<f32> = labels.iter().map(|label| per_button(label)).collect();
         let switch_px = rect(&h.ctx, "btn_theme").width();
+        let pin_px = rect(&h.ctx, "btn_pin").width();
         let needed = items.iter().sum::<f32>()
             + switch_px
-            + items.len() as f32 * style.spacing.item_spacing.x
+            + pin_px
+            + (items.len() + 1) as f32 * style.spacing.item_spacing.x
             + 2.0 * PANEL_X_MARGIN
             + 2.0 * GAP_PADDING;
 
@@ -1436,9 +1494,10 @@ mod tests {
         // 所以它只能证明"合法下限放得下"，不能反过来说"比它窄一像素就该换行"。
         // 换行机制本身由 `a_row_that_cannot_fit_wraps_instead_of_overflowing` 在 150px 那里锁住。
         // ② 原来那条"必须解释 320 那一档那次换行"的历史判据跟着置顶按钮一起退休了。
-        // ③ 需求宽度从变更 I 那一版的 314px 降到这里（少一整颗 `退出`，右边缘那块滑块只有
-        //    定值的 40px），但 `MIN_COMPACT_W` **不跟着收**——用户 2026-10-28 那句
-        //    "按钮不允许换行"要的是真机上中文变宽也仍然放得下一行；控件数变少不是收回下限的理由。
+        // ③ 需求宽度从变更 I 那一版的 314px 降到 262px（少一整颗 `退出`，右边缘那块滑块只有
+        //    定值的 40px），2026-10-29 图钉从原生标题栏挪进这一行又加回 34px（一枚 26 + 一道
+        //    间距）= 296px。`MIN_COMPACT_W` **两头都不跟着收/放**——用户 2026-10-28 那句
+        //    "按钮不允许换行"要的是真机上中文变宽也仍然放得下一行；控件数变化不是动下限的理由。
         let row = rect(&h.ctx, "actions");
         assert!(
             row.height() < 40.0,
@@ -1451,8 +1510,8 @@ mod tests {
             window().width()
         );
         assert!(
-            (needed - 262.0).abs() <= 1.0,
-            "按度量的需求宽度变了：{needed}（文档 03 §3 末段与 `07-acceptance.md` 记的是 262px）——\
+            (needed - 296.0).abs() <= 1.0,
+            "按度量的需求宽度变了：{needed}（文档 03 §3 末段与 `07-acceptance.md` 记的是 296px）——\
              改了文案、加减了控件或动了间距就要把那两处一起改"
         );
     }
