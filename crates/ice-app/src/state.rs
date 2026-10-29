@@ -99,13 +99,17 @@ pub fn auto_reverse_target(detected: Language, target: Language) -> Option<Langu
     }
 }
 
-/// 提示条从出现到**完全淡出**的总时长（用户 2026-10-28 变更 I："所有的提示类弹窗都是中心弹窗
-/// 500ms内淡化消失，不应该有关闭的操作和按钮"）。以前是四秒常驻 + 一颗 `×`，
-/// 现在整条lifetime就是一次线性淡出：到点为 0，不留可点的东西。
-pub const TOAST_LIFETIME: std::time::Duration = std::time::Duration::from_millis(500);
+/// 提示条从出现到**完全淡出**的总时长。整条 lifetime 就是一次线性淡出：到点为 0，
+/// 不留可点的东西。
+///
+/// 用户 2026-10-28 变更 I 定的是 500ms（"所有的提示类弹窗都是中心弹窗500ms内淡化消失，
+/// 不应该有关闭的操作和按钮"），2026-10-29 改判成 1s（"所有弹窗改为1s淡化消失吧，
+/// 500ms太短了"）。**只有这一族受影响**：二次确认框（`Confirm`）要的是用户做一个决定，
+/// 自动消失等于替他答"否"，所以它不计时、也不淡。
+pub const TOAST_LIFETIME: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// 淡出期间的重绘步长。线性降透明度要连续几帧才看得出"在淡"，一帧 16ms 把
-/// `TOAST_LIFETIME` 切成约 30 帧；只在还有提示条在屏上时按这个步长续重绘，
+/// `TOAST_LIFETIME` 切成约 60 帧；只在还有提示条在屏上时按这个步长续重绘，
 /// 空闲时一次都不续（NFR-2 的空闲 1% 不受影响）。
 pub const TOAST_FADE_STEP: std::time::Duration = std::time::Duration::from_millis(16);
 
@@ -737,8 +741,9 @@ mod tests {
 
     /// 变更 I（2026-10-28）：提示条整条 lifetime 就是一次线性淡出。
     /// 判的是"多老有多淡"这条式子本身——画它的那一侧只乘这一个数，别处不再另算一套。
+    /// 名字里不写时长：2026-10-29 用户把那 500ms 抬成了 1s，改判只改常量。
     #[test]
-    fn a_toast_fades_linearly_and_is_gone_at_five_hundred_ms() {
+    fn a_toast_fades_linearly_over_its_whole_lifetime() {
         let mut state = app_with_source("hello");
         state.toasts.clear();
         state.toast(Tone::Info, "已复制");

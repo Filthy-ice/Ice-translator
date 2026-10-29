@@ -513,7 +513,7 @@ fn draw_moon(painter: &egui::Painter, at: egui::Pos2, stroke: egui::Stroke) {
     )));
 }
 
-/// 提示条：**窗口正中**，最多三条，出生即开始线性淡出，`TOAST_LIFETIME`（500ms）到点消失。
+/// 提示条：**窗口正中**，最多三条，出生即开始线性淡出，`TOAST_LIFETIME`（1s）到点消失。
 ///
 /// 用户 2026-10-28 变更 I 的原话："所有的提示类弹窗都是中心弹窗500ms内淡化消失，
 /// 不应该有关闭的操作和按钮。"三条各自对应一处删除：
@@ -521,6 +521,8 @@ fn draw_moon(painter: &egui::Painter, at: egui::Pos2, stroke: egui::Stroke) {
 /// ② 不再四秒常驻，整条 lifetime 就是那次淡出；
 /// ③ 那颗 `×` 连同 `AppState::dismiss_toast` 一起没了，Area 也改成 `interactable(false)`——
 ///    不只是"少画一颗按钮"，而是**这一层根本不参与命中测试**，提示条盖住的按钮照样能点。
+///
+/// 2026-10-29 改判只动了时长：那句里的 500ms 太短，`TOAST_LIFETIME` 抬到 1s，其余三条不变。
 ///
 /// 淡的是整块（底色、描边、投影、文字一起乘同一个 alpha），所以不会出现"框还在、字先没了"。
 /// 二次确认框（`confirm`）不在这条规矩里：它要用户做决定，不是"说一声就走"的提示。
@@ -933,7 +935,7 @@ mod tests {
         assert_eq!(state.toasts.len(), 1);
         assert!(!state.tick_toasts());
         assert_eq!(state.toasts.len(), 1);
-        // 直接把时间戳拨过整条 lifetime，免得测试真等那 500ms
+        // 直接把时间戳拨过整条 lifetime，免得测试真等那一秒
         state.toasts[0].shown_at -= crate::state::TOAST_LIFETIME * 2;
         assert!(state.tick_toasts());
         assert!(state.toasts.is_empty());

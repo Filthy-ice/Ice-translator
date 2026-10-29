@@ -1271,7 +1271,7 @@ impl eframe::App for IceApp {
             ctx.request_repaint();
         }
         if !self.state.toasts.is_empty() {
-            // 淡出要一帧一帧才看得出动：按 `TOAST_FADE_STEP`（16ms，500ms 约 30 帧）续重绘，
+            // 淡出要一帧一帧才看得出动：按 `TOAST_FADE_STEP`（16ms，1s 约 60 帧）续重绘，
             // 提示条一消失就停——不常驻重绘，空闲时 CPU 才能压到 1% 以下（NFR-2）
             ctx.request_repaint_after(state::TOAST_FADE_STEP);
         }
