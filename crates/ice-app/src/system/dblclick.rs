@@ -2,7 +2,8 @@
 //!
 //! 双击标题栏这件事**在 egui 里收不到**：两种形态都带原生标题栏（Q-013），那条 32pt 高的
 //! 带子是 AppKit 的 `NSTitlebarView` 在画，它自己接管 `mouseDown` 用来拖窗（同一颗带子让
-//! 画进标题栏的 egui 图钉点不动，见 `super::pin` 的说明）。系统默认动作还由用户在
+//! 画进标题栏的控件点不动——标题栏里那颗原生图钉就是靠这条路才收得到点击，2026-10-29 已连
+//! 根撤掉）。系统默认动作还由用户在
 //! 系统设置里选的档决定（默认常常是"最小化"），那不是我们能改的公开 API。
 //!
 //! 公开 API 里唯一能既看到又拦下这一次点击的位置，是
@@ -12,8 +13,10 @@
 //!
 //! - 单击、拖动、`mouseMoved` 一律不碰（掩码只有 LeftMouseDown / LeftMouseUp），拖窗那条路
 //!   留在原处；
-//! - `clickCount >= 2` 才算，且必须落在 [`title_band`] 算出的带子里——左右两端各扣掉红绿灯与
-//!   图钉（那颗图钉也是按钮，吞掉它第二下的 `mouseDown` 就变成"图钉点不动"），下边界取内容区
+//! - `clickCount >= 2` 才算，且必须落在 [`title_band`] 算出的带子里——左端扣掉红绿灯
+//!   （那三颗也是按钮，吞掉它们第二下的 `mouseDown` 就变成"关不掉窗口"），右端只留
+//!   [`EDGE_PAD`] 一道余量（标题栏里的原生 accessory 图钉 2026-10-29 撤了，右边缘不再有
+//!   会收点击的东西），下边界取内容区
 //!   的顶，**内容区里的任何双击（译文里连点两下选词、输入框里双击粘贴）都不受影响**；
 //! - 只认装监视器那一刻记下的那颗窗口（[`WATCHED`] 比 `event.window()` 的裸指针）。
 //!
@@ -22,13 +25,13 @@
 //!
 //! 监视器只在**全量窗**装着（`sync` 的 `want` 由帧循环按形态给）：悬浮窗是贴边长条，铺满整屏
 //! 不是它该做的事。取不到原生窗口时返回 [`Outcome::Unavailable`]，界面行为退回系统默认，
-//! 不假装有效。与 `super::titlebar`、`super::pin` 同一纪律：每帧核对现状，只在结果变化时
+//! 不假装有效。与 `super::titlebar` 同一纪律：每帧核对现状，只在结果变化时
 //! 由调用方记日志。
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-/// 带子两端各留的余量（pt）：贴着红绿灯或图钉边沿的那几像素不算"标题栏中间"。
-/// 判据卡在毫厘之间出的就是"图钉点不动"这类查不出来的缺陷。
+/// 带子两端各留的余量（pt）：贴着红绿灯边沿的那几像素不算"标题栏中间"。
+/// 判据卡在毫厘之间出的就是"那颗按钮点不动"这类查不出来的缺陷。
 pub const EDGE_PAD: f64 = 6.0;
 
 /// 标题栏里合格的双击落点区间（**窗口坐标系**：原点在左下角，y 向上）。
@@ -47,21 +50,16 @@ pub struct Band {
 /// 算出那颗窗口的标题栏带子。
 ///
 /// `window_w / window_h` 是**外框**尺寸，`content_h` 是内容视图的高度（外框减标题栏），
-/// `lights_right` 是红绿灯整组的最右边缘，`pin_zone_w` 是图钉那一格从右边缘往里占的宽度
-/// （由 `system::pin` 提供，两处共用同一个数）。
+/// `lights_right` 是红绿灯整组的最右边缘。右端不再让格子出去：标题栏里那颗原生图钉
+/// 2026-10-29 挪进了 egui 工具条（用户指定放在「悬浮窗」二字左侧），那条 accessory 撤了，
+/// 右边缘到窗口边界之间再没有会收点击的东西。
 ///
-/// 带子可能是**空**的（窗宽小于两端禁区之和，或无边框时 `content_h == window_h`）：空区间让
+/// 带子可能是**空**的（窗宽比红绿灯禁区还窄，或无边框时 `content_h == window_h`）：空区间让
 /// [`in_band`] 恒假，也就是"什么都不吞"——判不过的方向是保守的。
-pub const fn title_band(
-    window_w: f64,
-    window_h: f64,
-    content_h: f64,
-    lights_right: f64,
-    pin_zone_w: f64,
-) -> Band {
+pub const fn title_band(window_w: f64, window_h: f64, content_h: f64, lights_right: f64) -> Band {
     Band {
         left: lights_right + EDGE_PAD,
-        right: window_w - pin_zone_w - EDGE_PAD,
+        right: window_w - EDGE_PAD,
         bottom: content_h,
         top: window_h,
     }
@@ -128,7 +126,6 @@ mod macos {
     use objc2_app_kit::{NSEvent, NSEventMask, NSView, NSWindow, NSWindowButton};
 
     use super::{Band, Outcome, WATCHED, in_band, is_watched, note_double_click, title_band};
-    use crate::system::pin::PIN_ZONE_W;
 
     /// 红绿灯是三颗独立的按钮，禁区取它们的最右边缘
     const TRAFFIC: [NSWindowButton; 3] = [
@@ -171,7 +168,6 @@ mod macos {
             frame.size.height,
             content.frame().size.height,
             lights_right(window),
-            PIN_ZONE_W,
         ))
     }
 
@@ -285,7 +281,7 @@ mod tests {
     const LIGHTS: f64 = 70.0;
 
     fn band(w: f64, h: f64) -> Band {
-        title_band(w, h, h - CHROME, LIGHTS, crate::system::pin::PIN_ZONE_W)
+        title_band(w, h, h - CHROME, LIGHTS)
     }
 
     /// 正中间那一下算——铺满/还原的触发点就是这个
@@ -299,13 +295,20 @@ mod tests {
         assert!(in_band(band.right, 1080.0, band));
     }
 
-    /// 红绿灯与图钉那两格不算：吞掉第二下的 `mouseDown` 会让它们点不动
+    /// 红绿灯那三颗与贴边那几像素不算：吞掉第二下的 `mouseDown` 会让它们点不动
     #[test]
     fn clicks_over_the_buttons_are_left_alone() {
         let band = band(1920.0, 1080.0);
         assert!(!in_band(12.0, 1064.0, band), "关闭那颗");
         assert!(!in_band(68.0, 1064.0, band), "绿灯贴着禁区边，也不吞");
-        assert!(!in_band(1900.0, 1064.0, band), "图钉那一格");
+        assert_eq!(
+            band.right, 1_914.0,
+            "右端只剩一道 `EDGE_PAD`，标题栏里已没有别的控件"
+        );
+        assert!(
+            !in_band(1_919.0, 1064.0, band),
+            "贴着窗口右边缘那一下留给拖窗口"
+        );
     }
 
     /// 内容区里的一切都不受影响（译文里连点两下选词、输入框里双击粘贴）
@@ -326,7 +329,7 @@ mod tests {
         for x in [0.0, 40.0, 74.0, 1_000.0] {
             assert!(!in_band(x, 380.0, too_narrow), "{x}");
         }
-        let borderless = title_band(1920.0, 1080.0, 1080.0, LIGHTS, 60.0);
+        let borderless = title_band(1920.0, 1080.0, 1080.0, LIGHTS);
         assert_eq!(borderless.bottom, borderless.top, "没有标题栏带子");
         assert!(!in_band(960.0, 1080.0, borderless));
     }

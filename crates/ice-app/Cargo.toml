@@ -48,13 +48,10 @@ tempfile = "3"
 # （`NSWindow.rs:1642` 的 cfg 就是这两个 + `NSView`）。
 # 还要 `NSEvent`——原生拖拽期间 egui 拿不到鼠标抬起，松手判定只能问 `+pressedMouseButtons`
 # 这个窗口服务器维护的按键掩码（缺陷 D-16，见 `system::mouse`）。
-# 标题栏图钉（FR-3.4，变更 I，见 `system::pin`）再加九个模块，都是那颗按钮要的类型：
-# `NSTitlebarAccessoryViewController` 是"既在标题栏里、又收得到点击"的唯一公开位置
-# （`fullSizeContentView` 里画上去的控件会被 `NSTitlebarView` 自己的 `mouseDown` 吞掉），
-# `NSViewController`/`NSResponder` 是它的父类链——不打开就调不到 `setView:`；
-# `NSLayoutConstraint` 只为了取 `NSLayoutAttribute::Right` 这一个枚举值；
-# `NSImage` + `NSGraphics` 是 SF Symbol `pin` 与"转 45° 立起来"那步（`NSCompositingOperation`）；
-# `NSCell` 是 `NSCellImagePosition::ImageOnly`；`NSColor` 是 `contentTintColor` 那支系统蓝。
+# 标题栏图钉（FR-3.4）曾经为那颗按钮多开九个模块（accessory VC + 父类链 + SF Symbol 重画 +
+# tint 上色）。2026-10-29 变更 K 把图钉挪进界面由 egui 现画，那九个连同 `system::pin` 一起删除：
+# accessory VC 只能钉在标题栏最右端，满足不了用户指定的两个位置（全量窗「悬浮窗」左边、
+# 简洁窗滑块左边）。这一串因此回到"读屏幕 + 改窗口 + 接按钮 + 听事件"四件事所需的最小集合。
 # `objc2-core-foundation` 不是可选项：`NSWindow::setAlphaValue:` 的参数类型是 `CGFloat`，
 # objc2-app-kit 把带 CGFloat 的方法整体关在这个 feature 后面，不开就连方法都看不到。
 # 再加一个 `block2` feature（**不是模块名，是那条特性**）：双击标题栏（任务 #25，见
@@ -71,27 +68,14 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSControl",
     "NSEvent",
     "block2",
-    "NSTitlebarAccessoryViewController",
-    "NSViewController",
-    "NSResponder",
-    "NSImage",
-    "NSGraphics",
-    "NSColor",
-    "NSCell",
-    "NSLayoutConstraint",
-    "NSAffineTransform",
     "objc2-core-foundation",
 ] }
-# `NSObject` 是运行时那两个改道 target 的父类（绿键一个、图钉一个），`NSString` 是悬停提示文案；
-# `NSGeometry` 是 `NSRect/NSPoint/NSSize` 这组别名；`NSAffineTransform` 是图钉转角度用的
-# `translateXBy_yBy:`/`rotateByDegrees:`（`concat` 那半在 app-kit 的同名 feature 里）；
-# `NSArray` 是 `NSImage::representations()` 的返回类型——画完得问它"这张真画出内容了吗"。
+# `NSObject` 是运行时那颗改道 target 的父类（绿键），`NSString` 是悬停提示文案；
+# `NSGeometry` 是 `NSRect/NSPoint/NSSize` 这组别名。
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSGeometry",
     "NSObject",
     "NSString",
-    "NSAffineTransform",
-    "NSArray",
 ] }
 # 从 eframe 拿到原生窗口句柄：`AppKitWindowHandle.ns_view` 指的是 NSView（不是窗口），
 # 再问它要 `window`。只取句柄，不引 winit 本身。

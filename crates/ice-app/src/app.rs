@@ -27,7 +27,6 @@ use crate::system::clipboard::{self, CopyKind};
 use crate::system::dblclick;
 use crate::system::hotkeys::{self, Action};
 use crate::system::mouse;
-use crate::system::pin;
 use crate::system::screen;
 use crate::system::secrets;
 use crate::system::single_instance::InstanceLock;
@@ -122,8 +121,6 @@ pub struct IceApp {
     native_alpha: Option<f32>,
     /// 上一帧标题栏绿键的改道结果（见 `apply_zoom_hook`）。`None` = 还没下过。
     zoom_outcome: Option<titlebar::Outcome>,
-    /// 上一帧标题栏图钉的挂载结果（见 `apply_pin`）。`None` = 还没下过。
-    pin_outcome: Option<pin::Outcome>,
     /// 上一帧标题栏双击监视器的装载结果（见 `apply_dblclick_hook`）。`None` = 还没下过。
     dblclick_outcome: Option<dblclick::Outcome>,
 }
@@ -176,7 +173,6 @@ impl IceApp {
             geometry_seen: None,
             native_alpha: None,
             zoom_outcome: None,
-            pin_outcome: None,
             dblclick_outcome: None,
         }
     }
@@ -209,7 +205,7 @@ impl IceApp {
         }
     }
 
-    /// 切换置顶（K-09）。快捷键、标题栏图钉（`system::pin`，变更 I）与设置页那一格共用这一条路径。
+    /// 切换置顶（K-09）。快捷键、工具条上那枚图钉（`views::pin_toggle`）与设置页那一格共用这一条路径。
     fn toggle_topmost(&mut self, ctx: &egui::Context) {
         let on = self.state.toggle_topmost();
         mode::apply_topmost(ctx, &mut self.state);
@@ -603,20 +599,9 @@ impl IceApp {
         }
     }
 
-    /// 帧首取走标题栏图钉的点击（用户 2026-10-28 变更 I："置顶不应该是文字……
-    /// 在标题栏最右侧有一个类似于钉子的图标"）。
-    ///
-    /// 这里只把"被点了"翻译成 `effects.toggle_topmost = true`——与 `Cmd+Shift+P`
-    /// 落在同一个字段上，置顶本身一个实现，不在原生路径上重做一遍判断。
-    fn poll_pin_click(&mut self, effects: &mut Effects) {
-        if pin::take_click() {
-            effects.toggle_topmost = true;
-        }
-    }
-
     /// 帧首取走标题栏双击（任务 #25，用户"双击标题栏：铺满整屏 + 再双击还原"）。
     ///
-    /// 与 `poll_titlebar_click`、`poll_pin_click` 同一形状：只把"被双击了"翻译成一条 effect，
+    /// 与 `poll_titlebar_click` 同一形状：只把"被双击了"翻译成一条 effect，
     /// 铺满还是还原全部在 `toggle_fill` 里判，原生那条路径上不做任何业务判断。
     /// 取走这件事本身无条件执行——不收的话标记会一直挂着，等窗口回来时凭空多铺一次。
     fn poll_dblclick(&mut self, effects: &mut Effects) {
@@ -669,32 +654,10 @@ impl IceApp {
         ctx.request_repaint();
     }
 
-    /// 按当前置顶档位刷新标题栏图钉（空心躺着 ↔ 实心立起来变蓝）。
-    /// 两种形态共用同一个 `NSWindow`，所以这一句在分支外调用一次就够——
-    /// 全量窗也一起有了（用户点名要的那句"全量界面也要有"）。
-    ///
-    /// 每帧核对现状，但**只在结果变了才记日志**（与 `apply_zoom_hook` 同一手法）：
-    /// "挂上了没有"是真机上唯一能区分"图钉没画"和"画了但点不动"的现场证据。
-    fn apply_pin(&mut self, frame: &eframe::Frame) {
-        let outcome = pin::sync(frame, self.state.config.ui.always_on_top);
-        if self.pin_outcome == Some(outcome) {
-            return;
-        }
-        self.pin_outcome = Some(outcome);
-        match outcome {
-            pin::Outcome::Mounted => tracing::debug!("标题栏图钉已挂上：点击切置顶"),
-            pin::Outcome::Unavailable => {
-                if !PIN_UNMOUNTED_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    tracing::warn!("接不上标题栏图钉，置顶只剩 Cmd+Shift+P 与设置页那一格");
-                }
-            }
-        }
-    }
-
     /// 只在**全量窗**盯着标题栏双击（任务 #25；悬浮条铺满整屏不是它该做的事）。
     /// 原生细节、吞哪些落点、以及"双击之后立刻按住拖动会失效"这条代价见 `system::dblclick`。
     ///
-    /// 每帧核对现状，**只在结果变了才记日志**（与 `apply_zoom_hook`、`apply_pin` 同一手法）：
+    /// 每帧核对现状，**只在结果变了才记日志**（与 `apply_zoom_hook` 同一手法）：
     /// 装没装上是真机上唯一能区分"双击没被拦"和"拦了但铺满命令没发出去"的现场证据。
     fn apply_dblclick_hook(&mut self, frame: &eframe::Frame, want: bool) {
         let outcome = dblclick::sync(frame, want);
@@ -1190,10 +1153,6 @@ static ALPHA_FALLBACK_WARNED: std::sync::atomic::AtomicBool =
 static ZOOM_UNHOOKED_WARNED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// 标题栏图钉挂不上也只发一次警告（`apply_pin`；同一帧一次，逐帧打会刷屏）
-static PIN_UNMOUNTED_WARNED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
 /// 标题栏双击拦不住也只发一次警告（`apply_dblclick_hook`；监视器每帧都会再试装一次）
 static DBLCLICK_UNWATCHED_WARNED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -1254,7 +1213,6 @@ impl eframe::App for IceApp {
 
         let mut effects = Effects::default();
         self.poll_titlebar_click(&mut effects);
-        self.poll_pin_click(&mut effects);
         self.poll_dblclick(&mut effects);
         for action in actions {
             self.run(action, &ctx, &mut effects);
@@ -1271,9 +1229,6 @@ impl eframe::App for IceApp {
         self.rescue_offscreen(&ctx, |outer| screen::work_area(&ctx, outer));
 
         let ai_available = self.ai_available();
-        // 图钉放在形态分支之外同步：两种形态共用同一个原生窗口，一句话就同时管住
-        // 悬浮窗与全量窗（用户 2026-10-28："全量界面也要有"）
-        self.apply_pin(frame);
         // 双击标题栏的改道只属于全量窗：形态在这里，判定也只在这一句
         self.apply_dblclick_hook(frame, self.state.mode() == UiMode::Full);
         match self.state.mode() {
@@ -2806,8 +2761,8 @@ mod tests {
     }
 
     /// 任务 #25（用户"双击标题栏：铺满整屏 + 再双击还原"）：原生监视器的那一笔必须落到
-    /// `effects.toggle_fill` 上，而且**一次双击只兑现一次**——与 `poll_titlebar_click`、
-    /// `poll_pin_click` 同一条纪律。取走标记是无条件的：窗口收起时不兑现，也不许留给下一帧。
+    /// `effects.toggle_fill` 上，而且**一次双击只兑现一次**——与 `poll_titlebar_click`
+    /// 同一条纪律。取走标记是无条件的：窗口收起时不兑现，也不许留给下一帧。
     #[test]
     fn a_title_bar_double_click_queues_the_fill_effect_once() {
         let dir = tempfile::tempdir().unwrap();
@@ -3243,25 +3198,21 @@ mod tests {
         assert!(!app.drag_settler.is_armed());
     }
 
-    /// 标题栏图钉（变更 I）与 `Cmd+Shift+P` 共用同一条路径：写回配置 + 下发 WindowLevel + 提示。
-    /// 动作行那颗文字开关没了，置顶在界面上只剩这两条入口（外加设置页那一格），
-    /// 判据不变：谁点的都一样，`toggle_topmost` 一条通道、`WindowLevel` 一次下发。
+    /// 置顶的两条入口共用同一条路径：界面那枚图钉（`views::pin_toggle`，2026-10-29 从原生
+    /// 标题栏挪进工具条）写的是 `effects.toggle_topmost`，`Cmd+Shift+P` 走
+    /// `Action::ToggleTopmost`，两条最后都落到 `toggle_topmost` 这一个方法上：
+    /// 写回配置 + 下发 WindowLevel + 一条提示，谁点的都一样。
     #[test]
-    fn the_titlebar_pin_and_the_hotkey_share_one_path() {
+    fn the_pin_effect_and_the_hotkey_share_one_path() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = app(dir.path(), compact_state());
         let c = ctx();
 
-        let _ = pin::take_click(); // 别的测试可能留了残留，先清干净再模拟点击
-        pin::mark_click();
-        let mut effects = Effects::default();
-        app.poll_pin_click(&mut effects);
-        assert!(effects.toggle_topmost, "点了图钉没有置置顶意图");
-        assert!(
-            !pin::take_click(),
-            "一次点击只兑一次：意图已经取走，再来一帧不该重复切"
-        );
-
+        // 图钉那一格点击在 view 侧置的就是这个字段
+        let effects = Effects {
+            toggle_topmost: true,
+            ..Default::default()
+        };
         app.run_effects(&c, effects);
 
         assert!(app.state.config.ui.always_on_top);
@@ -3269,6 +3220,14 @@ mod tests {
             egui::WindowLevel::AlwaysOnTop
         )));
         assert_eq!(app.state.toasts.len(), 1);
+        assert_eq!(
+            queued(&c)
+                .iter()
+                .filter(|cmd| matches!(cmd, ViewportCommand::WindowLevel(_)))
+                .count(),
+            1,
+            "一次点击下发了不止一次层级，置顶本身要只有一个出处"
+        );
 
         let mut effects = Effects::default();
         app.run(Action::ToggleTopmost, &c, &mut effects);
