@@ -63,7 +63,7 @@ WHEN 用户把一张图片文件拖到窗口任意位置
 THEN 系统 SHALL 从 `dropped_files` 取到该文件的**路径**（winit 给的是路径不是字节），读盘、解码、转成 `RgbaImage`，并把这条图交给识别流程；SHALL NOT 让拖拽事件同时触发任何文本粘贴语义（图片页之外拖进来图片时，本包只保证"不 panic、不误当文本"，不承诺跨页签的智能路由）。
 
 WHEN 用户按"粘贴"（或 `Cmd+V` 落在图片页的导入区）且剪贴板里是图片
-THEN 系统 SHALL 走 `arboard::Clipboard::get_image()` 拿到 RGBA 宽高并转成同一形状的 `RgbaImage`；当剪贴板里**没有**图片（只有文本，或空）时 SHALL 给一条 500ms 淡出的提示条而不是报错弹窗（沿用 P5 变更 I 的提示条规则），SHALL NOT 清空已有图片。
+THEN 系统 SHALL 走 `arboard::Clipboard::get_image()` 拿到 RGBA 宽高并转成同一形状的 `RgbaImage`；当剪贴板里**没有**图片（只有文本，或空）时 SHALL 给一条按 `TOAST_LIFETIME` 淡出的提示条而不是报错弹窗（沿用 P5 变更 I 的提示条规则；**时长只写常量名不写数字**——变更 I 定的是 500ms，同日变更 L 按用户"500ms太短了"抬到 1s，本包 draft 于 2026-10-28 夜里，那句话抄的是当时那个数），SHALL NOT 清空已有图片。
 
 WHEN 用户点"打开图片"
 THEN 系统 SHALL 弹出**原生**文件选择面板（`NSOpenPanel`），只允许选文件、允许可解码的格式，选中后走与拖拽同一条解码路径；SHALL NOT 用 `runModal`（那会阻塞 eframe 的帧循环、窗口看起来像死了）， SHALL 用 `beginWithCompletionHandler:` 的异步形态，回调里只把路径交回帧循环。
