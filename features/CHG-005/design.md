@@ -35,9 +35,9 @@ Spec-Hash: UNAPPROVED
 | `objc2-vision 0.3.2` | ice-vision 的 macos 目标依赖 | ADR-002 的唯一识别后端；crate 已在 crates.io，feature 表 55 项无 default，按类开关 | 是（macOS 二进制） |
 | `objc2-core-graphics` | 同上 | `RgbaImage` 直接变 `CGImage`，不落中间文件（spec 事实表已核对 `CGImage::new` 的参数表与 default feature） | 是 |
 | `objc2-app-kit` 的 `NSOpenPanel`/`NSSavePanel`/`NSPanel` + `objc2-foundation` 的 `NSURL` | ice-app 的 macos 目标 feature | Q-002：自接面板，不引入 `rfd` | 否（crate 已在依赖图，只多开模块） |
-| `ab_glyph_rasterizer` + `owned_ttf_parser` | **ice-vision 的 dev-dependencies only** | REQ-008 那条"把已知文本渲染成 PNG"需要一条能画字的路径；本仓现有依赖里没有任何字形光栅器（egui 的字形只在 GPU 管线里成形，拿不到位图）。这两个纯 Rust 小 crate 能读现成的 `.ttc`（含 P5 已经用过的"第 1 面才是黑体-简"那个面索引），且跨平台，将来 P7 的 S7 绘制可直接复用。**代价**：本包只让 `examples/` 用，产品依赖图不受影响；若不接受新增 crate，退路是停止条件 6 —— 自动度量缺位，FR-2.2 的达标状态记"未闭环"而不是 ✅ | 否（dev-only） |
+| `ab_glyph_rasterizer` + `owned_ttf_parser` 提为 dev-dependencies | **ice-vision 的 `[dev-dependencies]` only** | REQ-008 那条"把已知文本渲染成 PNG"需要一条能画字的路径；egui 的字形只在 GPU 管线里成形，拿不到位图。**核对后的事实（2026-11-02）：这两个 crate 不是新增依赖名**——`ab_glyph_rasterizer 0.1.10` 与 `owned_ttf_parser 0.25.1`（连带 `ttf-parser 0.25.1`、`ab_glyph 0.2.32`）**已经在 `Cargo.lock` 里**（经 `sctk-adwaita` → `ab_glyph` 那条 Linux 路径进来），源码也已在 `~/.cargo/registry/src` 解包，所以不新增 crate 名、不需要联网、`cargo tree -p ice-vision -e normal` 那条取证不受影响。真实变化只有一件：它们第一次在 macOS 上被**编译**（仅 examples/tests 面）。API 已核对可用：`Rasterizer::new(w,h)` + `draw_line/draw_quad/draw_cubic` + `for_each_pixel_2d(|x,y| coverage)`，配 `owned_ttf_parser::Face::parse(&bytes, index)`（`.ttc` 的面索引就是 P5 踩过的那条：第 1 面才是黑体-简）与 `outline_glyph`/`glyph_metrics`。**代价**：产品依赖图不受影响；若不接受，退路是停止条件 6 —— 自动度量缺位，FR-2.2 的达标状态记"未闭环"而不是 ✅ | 否（dev-only） |
 
-`image` 的 feature **不动**（Q-005 默认 (a)：只承诺 PNG/JPEG，其余给明确"不支持"提示并登记 L-7）。`arboard` 的 `image-data` 本来就在 default 里，剪贴板图片不需要任何 feature 变更。
+`image` 的 feature **不动**（Q-005 默认 (a)：只承诺 PNG/JPEG，其余给明确"不支持"提示并登记 L-7）。REQ-001 的缩放用 `DynamicImage::thumbnail`——已核对它在 `image 0.25.10` 里**不属于任何 feature 门**（`src/lib.rs:194` 的 `pub mod imageops;` 无 `cfg`，`dynimage.rs:913` 直接落到 `imageops::thumbnail`），所以 `default-features = false, features = ["png","jpeg"]` 那个收窄集合里就有它；那条整数算法有"新尺寸接近旧尺寸时可能出现混叠"的文档警告，本包只在 8000px 上限那一档触发，缩放比极大，不构成风险。`arboard` 的 `image-data` 本来就在 default 里，剪贴板图片不需要任何 feature 变更。
 
 ### 数据流（S0~S3 一条链，S4 之后属 P7）
 
