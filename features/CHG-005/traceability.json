@@ -4,18 +4,280 @@
     {
       "requirement": "REQ-001",
       "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    },
+    {
+      "requirement": "REQ-007",
+      "section": "## REQ-007 实现与验证"
+    },
+    {
+      "requirement": "REQ-008",
+      "section": "## REQ-008 实现与验证"
     }
   ],
   "verifications": [
     {
       "id": "V-001",
       "requirements": [
-        "REQ-001"
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
       ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
-      "environment": "static",
-      "required": true
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "note": "全量单测；含 P4/P5 既有 440 项的回归（文本链路、密钥边界、形态切换、提示条淡出不得回退）；本包新增的 flip_rect / merge_rows / admit / 五动作 / 状态机六组无头断言都在这套里"
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-vision"
+      ],
+      "note": "S1~S3 三段各自单独可测：行观察→文档的转换、坐标翻转与夹取、五条合并判据 + 两条硬上限 + 确定性 + 加权置信度、admit 的解码与 8000px 缩放与四类错误、非 mac 的降级常量"
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-core"
+      ],
+      "note": "TextBlock.source_rows 的 serde 兼容（缺字段的旧 JSON 仍可反序列化）与 enabled_blocks/merged_text 在改字、删块、勾选、合并、拆分五种动作后的行为；config 相关断言不回退"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-001",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
+      "note": "无头断言：图片页一帧渲染出四入口与块列表（量矩形，不 panic、不溢出）、五种编辑动作接到 OcrDocument、识别期间不阻塞 UI 线程、晚到结果丢弃后界面零变化、取消文案含『忽略』且不含『已取消』、不支持平台的提示文案；那两条占位前提测试被替换后其余 P5 断言全绿"
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "note": "含新增 unsafe（CGImage 构造、NSOpenPanel 回调、Vision 请求组装）：clippy 零警告"
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "note": "格式门禁"
+    },
+    {
+      "id": "V-007",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "tree",
+        "-p",
+        "ice-vision",
+        "-e",
+        "normal"
+      ],
+      "note": "依赖图取证：ice-vision 的传递依赖里 SHALL NOT 出现 reqwest/hyper/rustls 等任何带网络能力的 crate（NFR-3 的静态那一半；运行时那一半见 V-010）"
+    },
+    {
+      "id": "V-008",
+      "requirements": [
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "python3",
+        "-B",
+        "tools/check_traceability.py"
+      ],
+      "note": "需求↔用例双向闭合：FR-2.1~2.3 与 TC-2.1~2.3、W-3.1~W-3.6 在 docs/traceability.md 与 docs/06 两侧都对得上"
+    },
+    {
+      "id": "V-009",
+      "requirements": [
+        "REQ-002",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "scan"
+      ],
+      "note": "敏感信息基线扫描（含样图 CSV、nettop 留档、走查证据件）"
+    },
+    {
+      "id": "V-010",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "bash",
+        "-c",
+        "! grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates"
+      ],
+      "note": "Key 形态字符串零命中（NFR-3、ADR-005）；图片链路同样不把识别出的文本写进日志，日志只允许 rows/blocks/elapsed_ms/尺寸/错误码/desc_len"
+    },
+    {
+      "id": "V-011",
+      "requirements": [
+        "REQ-002",
+        "REQ-006",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真机运行：一次真实识别的 rows/blocks/elapsed_ms 观察值（HYPOTHESIS『单张 1080p 截图 <1s』在这里定论）、识别期间 nettop -p <pid> 抓包证零外发并留档、自绘合成图与真样图两层度量的实际数字、『已缩放』『已忽略这次结果』在真界面出现、识别中页签可切窗口可拖；由 ./sdd record 导入脱敏日志"
+    },
+    {
+      "id": "V-012",
+      "requirements": [
+        "REQ-001",
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真机运行：四个入口各导入一张图真的进入识别（拖拽、剪贴板截图、原生面板、手输路径）、面板不阻塞帧循环、原生面板的键盘可达性、改一处错字后 merged_text() 立刻反映修改、低置信行的 ⚠ 在真图上出现；日志与留档只记文件名/尺寸/行数/块数，不含图片字节与识别文本"
+    },
+    {
+      "id": "V-013",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "用户按 docs/06 新增的 W-3.1~W-3.6 真人走查：四入口导入、真实截图的识别观感、结果列表五种动作各做一次、识别中的界面响应与取消、失败与不支持平台的提示、合并分段对不对（docs/04 §5『段落合并正确率』的人工判定），逐行结论写进 docs/07-acceptance.md 的 P6 段"
     }
   ]
 }
