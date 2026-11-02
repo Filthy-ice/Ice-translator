@@ -186,7 +186,7 @@
         "-e",
         "normal"
       ],
-      "note": "依赖图取证：ice-vision 的传递依赖里 SHALL NOT 出现 reqwest/hyper/rustls 等任何带网络能力的 crate（NFR-3 的静态那一半；运行时那一半见 V-010）"
+      "note": "依赖图取证：ice-vision 的传递依赖里 SHALL NOT 出现 reqwest/hyper/rustls 等任何带网络能力的 crate，也 SHALL NOT 出现 objc2-av-foundation/objc2-core-image/objc2-core-media/objc2-core-ml/objc2-core-video/objc2-image-io 这六个可选依赖（判据 2026-11-02 按实测扩宽；image-io 不在里面正是 Q-005 选 (a) 的证据）（NFR-3 的静态那一半；运行时那一半见 V-011）"
     },
     {
       "id": "V-008",

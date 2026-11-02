@@ -32,8 +32,8 @@ Spec-Hash: UNAPPROVED
 
 | 增量 | 位置 | 理由 | 是否影响产物 |
 |---|---|---|---|
-| `objc2-vision 0.3.2` | ice-vision 的 macos 目标依赖 | ADR-002 的唯一识别后端；crate 已在 crates.io，feature 表 55 项无 default，按类开关 | 是（macOS 二进制） |
-| `objc2-core-graphics` | 同上 | `RgbaImage` 直接变 `CGImage`，不落中间文件（spec 事实表已核对 `CGImage::new` 的参数表与 default feature） | 是 |
+| `objc2-vision 0.3.2` | ice-vision 的 macos 目标依赖 | ADR-002 的唯一识别后端。**它是本包唯一真正新增的 crate 名**：索引里最新就是 0.3.2、未 yank，但**不在本机 registry 缓存里**（2026-11-02 实测 `static.crates.io` 那条 .crate 返回 200）⇒ T-001 第一步要联网。feature 表 55 项且**无 default**，除七个 `VN*` 类开关外还要开 `objc2-core-foundation`/`objc2-core-graphics` 两个可选依赖开关（cfg 证据见 REQ-002 那段），其余六个可选依赖一个都不激活 | 是（macOS 二进制） |
+| `objc2-core-graphics` + `objc2-core-foundation` | ice-vision 的 macos 目标依赖（**都已在 `Cargo.lock`，已在本地解包，不新增 crate 名**） | 前者是 `RgbaImage` 直接变 `CGImage` 的那一步（`CGImage::new` 的参数表与 default feature 见 spec 事实表），后者是因为 `boundingBox()` 的返回类型 `CGRect` 住在它里面 | 是（已在锁文件，只是首次进 ice-vision 的编译面） |
 | `objc2-app-kit` 的 `NSOpenPanel`/`NSSavePanel`/`NSPanel` + `objc2-foundation` 的 `NSURL` | ice-app 的 macos 目标 feature | Q-002：自接面板，不引入 `rfd` | 否（crate 已在依赖图，只多开模块） |
 | `ab_glyph_rasterizer` + `owned_ttf_parser` 提为 dev-dependencies | **ice-vision 的 `[dev-dependencies]` only** | REQ-008 那条"把已知文本渲染成 PNG"需要一条能画字的路径；egui 的字形只在 GPU 管线里成形，拿不到位图。**核对后的事实（2026-11-02）：这两个 crate 不是新增依赖名**——`ab_glyph_rasterizer 0.1.10` 与 `owned_ttf_parser 0.25.1`（连带 `ttf-parser 0.25.1`、`ab_glyph 0.2.32`）**已经在 `Cargo.lock` 里**（经 `sctk-adwaita` → `ab_glyph` 那条 Linux 路径进来），源码也已在 `~/.cargo/registry/src` 解包，所以不新增 crate 名、不需要联网、`cargo tree -p ice-vision -e normal` 那条取证不受影响。真实变化只有一件：它们第一次在 macOS 上被**编译**（仅 examples/tests 面）。API 已核对可用：`Rasterizer::new(w,h)` + `draw_line/draw_quad/draw_cubic` + `for_each_pixel_2d(|x,y| coverage)`，配 `owned_ttf_parser::Face::parse(&bytes, index)`（`.ttc` 的面索引就是 P5 踩过的那条：第 1 面才是黑体-简）与 `outline_glyph`/`glyph_metrics`。**代价**：产品依赖图不受影响；若不接受，退路是停止条件 6 —— 自动度量缺位，FR-2.2 的达标状态记"未闭环"而不是 ✅ | 否（dev-only） |
 
@@ -95,7 +95,7 @@ let rows: Vec<RowObservation> = request.results()
     .map(|obs| obs.iter().enumerate().filter_map(|(i, o)| {
         let t = o.topCandidates(1).first()?;                // 只取第一名候选
         Some(RowObservation { text: t.string().to_string(),
-                              normalized_box: t.boundingBox(),
+                              normalized_box: unsafe { o.boundingBox() },  // 框在 observation 上，不在候选文本上
                               confidence: t.confidence(), row_index: i })
     }));
 Ok(rows)                                                     // 纯 Rust 出栈，Retained 全部在此生灭
@@ -106,6 +106,26 @@ Ok(rows)                                                     // 纯 Rust 出栈�
 1. **`automaticallyDetectsLanguage` 关**。绑定注释明写它只在 `VNRecognizeTextRequestRevision3` 起有效、之前是 no-op；开着它等于把"语言候选"这条可控变量变成框架自由发挥，度量结果不可复现。真实截图若出现候选表覆盖不到的语言（纯日文竖排之类），属停止条件 1 的样本证据，回来再议。
 2. **`topCandidates(1)`，不是 10**。候选全塞进 UI 数据等于把"哪条是识别结果"这件事推给用户；FR-2.2 要的是块级 `文本 + 置信度 + bbox`，一名候选就够。
 3. **`NoTextFound` 不是错误**。observations 为空 → `VisionError::NoTextFound`，界面走"未发现文字"这一档中性提示，**不记 WARN、不弹红色失败态**（docs/04 §1 S1 失败列原文就是这个语义）。`performRequests_error` 返回 Err → `Recognition`，日志只记错误码与 `desc_len`（描述长度），**识别出的文本一个字都不进日志**（NFR-3 在图片侧同样成立；日志允许的字段只有 `rows`/`blocks`/`elapsed_ms`/尺寸/错误码/`desc_len`）。
+
+**objc2-vision 的 feature 开关不是一个类一个开关那么直白**（2026-11-02 把 0.3.2 重新解包逐条核对，纠正本包早先"按类开关就够"的说法）：
+
+```toml
+# crates/ice-vision/Cargo.toml，整段挂在 [target.'cfg(target_os = "macos")'.dependencies] 下
+objc2-vision = { version = "0.3.2", default-features = false, features = [
+    "VNError", "VNDefines", "VNTypes", "VNRequest", "VNObservation",
+    "VNRequestHandler", "VNRecognizeTextRequest",
+    "objc2-core-foundation",   # 不开则 VNObservation.rs:6 那行 import 被 cfg 掉，boundingBox() -> CGRect 无类型
+    "objc2-core-graphics",     # 不开则 initWithCGImage_options 整个方法被 cfg 掉（VNRequestHandler.rs:148 → :161）
+] }
+```
+
+四条来自源码的根据与后果：
+
+- `initWithCGImage_options` 只需要 `objc2-core-graphics`，**不需要 ImageIO**（`objc2-vision-0.3.2/src/generated/VNRequestHandler.rs:148` 那一行 cfg 里只有它；带 `objc2-image-io` 的是隔壁那个带 `orientation` 参数的重载 `:167`）。所以 Q-005 选 (a) 时 `objc2-image-io` 真的不进依赖图，HEIC 那条路仍然只在选 (b) 时才打开。
+- `CGRect` 来自可选依赖 `objc2-core-foundation`（`generated/VNObservation.rs:5-7`：那行 `use objc2_core_foundation::*;` 挂在 `#[cfg(feature = "objc2-core-foundation")]` 下），而 `boundingBox()` 的返回类型就是它（`:150`）。**这两个可选依赖恰好是本包唯一要额外点开的两个 crate**，而 `objc2-core-foundation 0.3.2` 与 `objc2-core-graphics 0.3.2` **都已在 `Cargo.lock` 且已在本地 registry 解包**——净新增的 crate 名只有一个：`objc2-vision` 本身。
+- `objc2-vision 0.3.2` **不在本机 registry 缓存里**（`~/.cargo/registry/src` 与 `cache` 两处 grep 都没有；2026-11-02 实测 `static.crates.io/crates/objc2-vision/objc2-vision-0.3.2.crate` 返回 `HTTP/2 200`，索引条目最新就是 0.3.2 且未 yank）。**后果写死在这里：T-001 的第一步必须联网**，离线机器上 P6 连编译都起不来——这是实现前置条件，不是运行期风险。
+- 其余六个可选依赖（`objc2-av-foundation`/`objc2-core-image`/`objc2-core-media`/`objc2-core-ml`/`objc2-core-video`/`objc2-image-io`）**都不在 `Cargo.lock` 里**，而我们上面那九个 feature 一个都不激活它们 ⇒ `V-007` 那条 `cargo tree -p ice-vision -e normal` 取证仍然干净（判据从"没有 reqwest"扩成"没有 reqwest/hyper/rustls，也没有上面那六个"）。
+- 万一 `CGImage` 那条路在实现时出问题（色彩空间、`bytes_per_row` 对齐之类），**未 gated 的退路是 `initWithData_options`**（`generated/VNRequestHandler.rs:293`，签名连 `unsafe` 都不是）：在内存里把 `RgbaImage` 编码成 PNG 字节交 `NSData`，仍然不落盘、仍然零外发，代价是多一次编码与一次解码。这条退路不改 trait、不改任何 REQ 判据，属实现细节。
 
 零外发在结构上是现成的（`ice-vision/Cargo.toml` 没有 reqwest），本包要把它写成可断言的形式：见 REQ-008 的两层取证 + `Cargo.toml` 那条"不许新增带网络能力的 crate"的设计约束。
 
