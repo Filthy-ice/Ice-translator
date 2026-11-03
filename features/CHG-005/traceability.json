@@ -1,5 +1,9 @@
 {
-  "baseline": null,
+  "baseline": {
+    "change": "CHG-005",
+    "version": "v0.1",
+    "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+  },
   "design": [
     {
       "requirement": "REQ-001",

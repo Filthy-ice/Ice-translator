@@ -1,6 +1,6 @@
 Change: CHG-005
 Version: v0.1
-Spec-Hash: UNAPPROVED
+Spec-Hash: 79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [ ] T-001 打开 ice-vision 的 macOS 依赖增量并证明它仍然无网络（第一步就要联网：objc2-vision 0.3.2 不在本机 registry 缓存里，需从 crates.io 拉，离线机器上 P6 编译起不来）：启用 Cargo.toml 里注释掉的 [target.'cfg(target_os = "macos")'.dependencies] 段，开 objc2-vision 的七个 VN* 类 feature （VNError/VNDefines/VNTypes/VNRequest/VNObservation/VNRequestHandler/VNRecognizeTextRequest）外加它两个可选依赖开关 objc2-core-foundation（boundingBox 的 CGRect）与 objc2-core-graphics（initWithCGImage_options 的 cfg 门），直接依赖补 objc2-core-graphics 与 objc2-foundation 的 NSString/NSArray（两个 core-* crate 都已在 Cargo.lock，不新增 crate 名）；av-foundation/core-image/core-media/core-ml/core-video/image-io 六个 SHALL NOT 被激活；完成后 cargo tree -p ice-vision -e normal 的输出里 SHALL NOT 出现 reqwest/hyper/rustls；新增 vision_sys.rs 作为全 crate 唯一碰 Vision 的文件（整文件 mac gate） | ice-translator | REQ-002
