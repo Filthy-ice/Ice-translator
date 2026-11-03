@@ -1,0 +1,48 @@
+
+running 33 tests
+test layout::tests::a_box_at_normalized_zero_lands_on_the_bottom_row ... ok
+test layout::tests::a_box_at_normalized_one_lands_on_the_top_row ... ok
+test import::tests::a_directory_reads_as_not_found ... ok
+test layout::tests::flipping_keeps_top_below_bottom_for_every_row ... ok
+test layout::tests::flipping_subtracts_the_box_height_not_just_the_origin ... ok
+test layout::tests::merge::empty_input_produces_no_blocks ... ok
+test layout::tests::merge::indented_row_after_an_unfilled_line_starts_a_new_paragraph ... ok
+test layout::tests::merge::indented_row_after_a_full_line_stays_in_the_same_paragraph ... ok
+test layout::tests::merge::a_clean_paragraph_becomes_one_block ... ok
+test layout::tests::merge::insufficient_horizontal_overlap_breaks_the_paragraph ... ok
+test layout::tests::merge::misaligned_left_edge_starts_a_new_block ... ok
+test import::tests::the_two_failure_kinds_share_the_error_type_but_not_the_text ... ok
+test layout::tests::merge::the_block_box_covers_every_member_row ... ok
+test layout::tests::merge::the_alignment_threshold_is_the_only_difference ... ok
+test layout::tests::merge::table_rows_never_merge_across_columns ... ok
+test layout::tests::merge::the_block_confidence_is_weighted_by_characters ... ok
+test layout::tests::merge::the_character_cap_breaks_before_the_merge ... ok
+test layout::tests::merge::the_grouping_is_deterministic_and_order_independent ... ok
+test layout::tests::merge::too_much_vertical_gap_breaks_the_paragraph ... ok
+test layout::tests::merge::the_twelfth_row_is_the_last_one_in_a_block ... ok
+test layout::tests::merge::vertically_overlapping_rows_do_not_merge ... ok
+test layout::tests::out_of_range_boxes_are_clipped_inward_instead_of_moved ... ok
+test layout::tests::the_pixel_size_follows_the_size_given_not_any_other_size ... ok
+test layout::tests::x_and_w_scale_by_image_width_independently_of_height ... ok
+test layout::tests::zero_sized_boxes_stay_zero_and_never_negative ... ok
+test tests::an_inverted_gate_does_not_count_as_a_gate ... ok
+test tests::the_scanner_catches_each_way_of_escaping_the_gate ... ok
+test import::tests::bytes_and_rgba_land_on_the_same_shape ... ok
+test tests::every_vision_sys_reference_is_behind_a_macos_gate ... ok
+test import::tests::an_oversize_image_is_scaled_and_the_reported_size_is_the_scaled_one ... ok
+test ocr::tests::the_document_size_is_the_admitted_size ... ok
+test ocr::tests::a_blank_image_travels_the_whole_pipeline_without_a_framework_error ... ok
+test ocr::tests::the_rows_handed_back_are_the_ones_the_blocks_were_built_from ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+   Compiling ice-vision v0.1.0 (/Users/filthy-ice/Desktop/my-translator/Ice-translator/crates/ice-vision)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1.09s
+     Running unittests src/lib.rs (target/debug/deps/ice_vision-0cb575937d9ed37c)
+   Doc-tests ice_vision

@@ -574,7 +574,7 @@ pub fn failure_action(state: &mut AppState, effects: &mut Effects, action: Failu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Failure, KeyState};
+    use crate::state::{Failure, Job, KeyState};
     use crate::views::recorded_theme_switch;
     use ice_core::config::{Config, MAX_LETTER_SPACING, MAX_LINE_SPACING, Theme};
     use ice_core::glossary::Glossary;
@@ -1255,8 +1255,14 @@ mod tests {
         failure_action(&mut state, &mut effects, FailureAction::UseMachine);
 
         let job = effects.job.expect("应立即重译");
-        assert_eq!(job.engine, EngineKind::Machine);
-        assert_eq!(job.request.text, "hello world");
+        let Job::Translation {
+            engine, request, ..
+        } = &job
+        else {
+            panic!("错误动作「改用机翻」只派发文本任务");
+        };
+        assert_eq!(*engine, EngineKind::Machine);
+        assert_eq!(request.text, "hello world");
         assert_eq!(state.engine, EngineKind::Machine);
         assert!(state.failure.is_none(), "重译时旧错误要清掉");
     }

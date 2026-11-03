@@ -656,6 +656,7 @@ fn term_list(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::Job;
     use ice_core::config::Config;
     use ice_core::glossary::Glossary;
 
@@ -998,7 +999,10 @@ mod tests {
         select_default_engine(&mut state, &mut effects, EngineKind::Ai);
 
         let job = effects.job.expect("有源文就该重译");
-        assert_eq!(job.engine, EngineKind::Ai);
+        let Job::Translation { engine, .. } = &job else {
+            panic!("改默认引擎只派发文本任务");
+        };
+        assert_eq!(*engine, EngineKind::Ai);
         assert_eq!(state.engine, EngineKind::Ai);
         assert_eq!(state.config.translation.default_engine, EngineKind::Ai);
         assert!(state.config_dirty, "默认值是配置项，必须落盘");

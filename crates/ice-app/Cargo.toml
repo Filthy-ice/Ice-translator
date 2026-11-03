@@ -60,6 +60,16 @@ tempfile = "3"
 # 不开就只剩一个收 `DynBlock` 之外的版本都没有，方法直接看不到。
 objc2 = "0.6"
 block2 = "0.6"
+# 图片页的"打开图片"（CHG-005 Q-002：自接 `NSOpenPanel`，不引 `rfd`）再加四个模块，
+# 每一个都是编译面证据，不是照着清单凑数：
+# - `NSOpenPanel`/`NSSavePanel`：面板本体，`URL()`/`URLs()` 挂在 `NSSavePanel` 上，
+#   `openPanel(mtm)` 挂在 `NSOpenPanel` 上，两个都得开；
+# - `NSPanel`：`NSOpenPanel : NSSavePanel : NSPanel : NSWindow` 这条父类链中间那一环，
+#   关掉它 `objc2-app-kit` 生成的 `Deref`/`parent` 就指向一个不存在的类型；
+# - `NSApplication`：`beginWithCompletionHandler:` 整个方法 `#[cfg(all(feature = "NSApplication",
+#   feature = "block2"))]`（`NSSavePanel.rs:421`），回调参数 `NSModalResponse` 那几个常量也
+#   锁在它里面（`NSWindow.rs:69`）。不开就没有异步入口，只剩被禁的 `runModal`。
+# 它只多打开 objc2-foundation 已有 crate 的模块（NSArray/NSData/NSDate/…），不新增 crate 名。
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSScreen",
     "NSView",
@@ -67,15 +77,23 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSButton",
     "NSControl",
     "NSEvent",
+    "NSOpenPanel",
+    "NSSavePanel",
+    "NSPanel",
+    "NSApplication",
     "block2",
     "objc2-core-foundation",
 ] }
-# `NSObject` 是运行时那颗改道 target 的父类（绿键），`NSString` 是悬停提示文案；
+# `NSString` 是悬停提示文案；`NSURL`/`NSArray` 是面板回调里把路径交回帧循环的那两步
+# （`NSSavePanel::URL() -> Option<Retained<NSURL>>`、`NSOpenPanel::URLs()` 的返回类型住在它们里面）。
+# `NSObject` 是标题栏绿键那颗改道 target 的父类（`system::titlebar` 的 `define_class!`）。
 # `NSGeometry` 是 `NSRect/NSPoint/NSSize` 这组别名。
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSGeometry",
     "NSObject",
     "NSString",
+    "NSURL",
+    "NSArray",
 ] }
 # 从 eframe 拿到原生窗口句柄：`AppKitWindowHandle.ns_view` 指的是 NSView（不是窗口），
 # 再问它要 `window`。只取句柄，不引 winit 本身。

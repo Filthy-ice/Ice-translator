@@ -21,12 +21,13 @@ use tokio::sync::mpsc;
 
 use crate::jobs::{self, JobRunner, OutcomeReceiver};
 use crate::mode;
-use crate::state::{self, AppState, KeyState, Tab, Tone};
+use crate::state::{self, AppState, ImageInput, KeyState, Tab, Tone};
 use crate::system::alpha;
 use crate::system::clipboard::{self, CopyKind};
 use crate::system::dblclick;
 use crate::system::hotkeys::{self, Action};
 use crate::system::mouse;
+use crate::system::panel;
 use crate::system::screen;
 use crate::system::secrets;
 use crate::system::single_instance::InstanceLock;
@@ -81,6 +82,11 @@ pub struct IceApp {
     /// 单实例锁。`on_exit` 里显式释放，进程被杀时靠 `Drop`（REQ-009）
     lock: Option<InstanceLock>,
     key_probe: KeyProbeReceiver,
+    /// 「打开图片」面板那头的发信端（CHG-005 REQ-001）。每帧只把它交给 `panel::request_open`，
+    /// 真正的收件在下面这一对里的 `panel_rx`
+    panel_tx: panel::ReplySender,
+    /// 面板回信的接收端。回调跑在 AppKit 的调用栈上，只能往这里塞一条消息
+    panel_rx: panel::ReplyReceiver,
     last_save: Instant,
     /// 恢复判定的去抖（`mode::REVEAL_GRACE`）
     reveal_guard: mode::RevealGuard,
@@ -136,6 +142,7 @@ impl IceApp {
         key_probe: KeyProbeReceiver,
     ) -> Self {
         let (mut runner, outcomes) = JobRunner::new(translator);
+        let (panel_tx, panel_rx) = panel::channel();
         // config.toml 里的术语必须在第一次派发前就进引擎，否则要等用户改一次术语才生效（FR-4.5）
         runner.set_glossary(state.glossary.clone());
         // 启动时的一次性提示（配置损坏降级、旧术语表导入）用提示条给，不进日志以外就没了
@@ -156,6 +163,8 @@ impl IceApp {
             config_path,
             lock,
             key_probe,
+            panel_tx,
+            panel_rx,
             last_save: Instant::now(),
             reveal_guard: mode::RevealGuard::default(),
             drag_settler: mode::DragSettler::default(),
@@ -917,6 +926,59 @@ impl IceApp {
         self.state.toast(Tone::Info, "已用剪贴板新内容自动翻译");
     }
 
+    /// 「打开图片」面板的回信（CHG-005 REQ-001）。
+    ///
+    /// 一次读空而不是只取一条：入口被连着按两次时通道里可能压着两条，留一条在里头就等于
+    /// 下一帧、下下帧才处理，而帧循环并不保证还在跑（窗口一收进后台 `ui` 就停了）。
+    fn poll_panel(&mut self, ctx: &egui::Context) {
+        while let Ok(reply) = self.panel_rx.try_recv() {
+            match reply {
+                panel::Reply::Picked(path) => {
+                    self.dispatch_image(ctx, ImageInput::Path(PathBuf::from(path)));
+                }
+                // 取消是用户自己的选择，不需要一句"你取消了"来打扰
+                panel::Reply::Cancelled => {}
+                panel::Reply::Failed => self.state.toast(
+                    Tone::Error,
+                    "图片面板没有回应；请在图片页的「路径」那一格里手输",
+                ),
+            }
+        }
+    }
+
+    /// 拖进窗口的文件（CHG-005 REQ-001 的第四条入口）：整个窗口都是拖放区。
+    ///
+    /// `dropped_files` 由 eframe 每帧现填，不跨帧残留，所以这里不需要去重记忆。
+    /// 只认第一个带路径的文件——从只给字节的那类应用拖过来，在这里落不了地，
+    /// 那条路交给「打开图片」。
+    fn poll_drops(&mut self, ctx: &egui::Context) {
+        let Some(path) = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .first()
+                .map(|file| file.path().to_path_buf())
+        }) else {
+            return;
+        };
+        self.dispatch_image(ctx, ImageInput::Path(path));
+    }
+
+    /// 三条"入场即识别"的入口（面板、拖拽、粘贴）汇到这一句派发。
+    ///
+    /// 切到图片页不是可选项：识别结果只有那一页画，在文本页派发一次识别而画面不动，
+    /// 用户看到的只是状态条上闪过的一句"识别中"。
+    fn dispatch_image(&mut self, ctx: &egui::Context, input: ImageInput) {
+        let Some(job) = self.state.submit_image(input) else {
+            self.state.toast(
+                Tone::Warn,
+                "上一次识别还在跑：等它结束，或点「忽略这次识别」",
+            );
+            return;
+        };
+        self.state.tab = Tab::Image;
+        self.runner.submit(&self.runtime, job, ctx);
+    }
+
     /// 隐藏期间的看护（缺陷 D-2）。
     ///
     /// 必须挂在 `App::logic` 上：最小化之后 eframe 不再跑 egui pass，只按
@@ -948,6 +1010,34 @@ impl IceApp {
         }
         if let Some(job) = effects.job {
             self.runner.submit(&self.runtime, job, ctx);
+        }
+        // 图片页的三条入口：面板给的是"意图"，路径要等回调回来才有（REQ-001 的"不阻塞"）
+        if effects.open_panel && !panel::request_open(&self.panel_tx, ctx) {
+            self.state.toast(
+                Tone::Error,
+                "这台机器弹不出系统文件面板；请在图片页的「路径」那一格里手输",
+            );
+        }
+        if effects.paste_image {
+            match clipboard::read_image() {
+                Some((bytes, width, height)) => {
+                    self.dispatch_image(
+                        ctx,
+                        ImageInput::Clipboard {
+                            bytes,
+                            width,
+                            height,
+                        },
+                    );
+                }
+                None => self
+                    .state
+                    .toast(Tone::Warn, "剪贴板里没有图片；请先 Cmd+C 复制一张"),
+            }
+        }
+        if effects.ignore_image && self.state.ignore_image_result() {
+            // Q-008：底层那次调用撤不回来，所以这句只说"结果我不收了"，不说"已取消识别"
+            self.state.toast(Tone::Info, "已忽略这次识别的结果");
         }
         if let Some(text) = effects.copy {
             match clipboard::write(&text) {
@@ -1205,6 +1295,8 @@ impl eframe::App for IceApp {
         if let Ok(probe) = self.key_probe.try_recv() {
             self.apply_key_probe(probe);
         }
+        self.poll_panel(&ctx);
+        self.poll_drops(&ctx);
 
         let focus_in_source = self.state.focus_in_source;
         let actions = ctx.input(|i| hotkeys::action_of(i, focus_in_source));
@@ -1364,9 +1456,17 @@ mod tests {
         app.run(Action::Translate, &ctx(), &mut effects);
 
         let job: Job = effects.job.expect("有源文就该派发");
-        assert_eq!(job.engine, EngineKind::Machine);
-        assert_eq!(job.request.text, "hello");
-        assert_eq!(app.state.in_flight, Some(job.id));
+        let Job::Translation {
+            id,
+            engine,
+            request,
+        } = &job
+        else {
+            panic!("文本页的 Translate 只会派发文本任务");
+        };
+        assert_eq!(*engine, EngineKind::Machine);
+        assert_eq!(request.text, "hello");
+        assert_eq!(app.state.in_flight, Some(*id));
     }
 
     #[test]

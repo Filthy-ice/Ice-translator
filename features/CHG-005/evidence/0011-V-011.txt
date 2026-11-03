@@ -1,0 +1,80 @@
+# CHG-005 T-009 / V-011 运行时取证（2026-11-03，本机 arm64 macOS 26.6.2）
+
+## 1. 自动度量第一层：程序自绘合成图（examples/self_metric.rs）
+# 命令：cargo run -p ice-vision --example self_metric -- --repeat 24
+# 字体：/System/Library/Fonts/STHeiti Medium.ttc 第 1 面（黑体-简），字号 28px，画布按字形算，四周留白 28px
+# 输出只有计数与比率，识别文本一个字不落（NFR-3 图片侧口径）
+
+en_plain (纯英文行): rows=3 blocks=1 accuracy=1.0000 elapsed_ms=76
+zh_plain (纯中文行): rows=3 blocks=1 accuracy=1.0000 elapsed_ms=32
+mixed (中英混排): rows=4 blocks=3 accuracy=0.9375 elapsed_ms=36
+paragraph (多行同段落，考 REQ-004 的合并): rows=4 blocks=1 accuracy=1.0000 elapsed_ms=57
+table (两列表格，考表格防护（同行不同列不许并成一块）): rows=8 blocks=7 accuracy=0.7059 elapsed_ms=33
+
+用例 5 类 × 24 轮，共 120 张自绘图
+字符正确率：平均 0.9287，最低 0.7059
+这条自动度量是**下限测试**：程序自绘的干净文字是 Vision 最容易的一类。
+它不替代 docs/06 的 IMG-1~IMG-12 与 ≥0.92 判据（那一层要真实截图 + 人工标注，见 samples_run.rs）。
+
+## 2. 自动度量第二层的工具：真实样图目录为空（examples/samples_run.rs）
+# 命令：cargo run -p ice-vision --example samples_run
+
+filename,rows,blocks,elapsed_ms
+
+样本不足：assets/samples 里没有可识别的图片（当前支持 PNG / JPEG）。
+按停止条件 6，FR-2.2 的 ≥0.92 判据记为**未闭环**，不是通过；自绘度量（self_metric.rs）不能替它。
+# 补充：同一工具对着上面 5 张自绘 PNG 跑通过一次（走的是 admit_path 那条真实解码路径）
+# 列只有文件名/行数/块数/耗时：
+filename,rows,blocks,elapsed_ms
+00-en_plain.png,3,1,250
+00-mixed.png,4,3,35
+00-paragraph.png,4,1,58
+00-table.png,8,7,34
+00-zh_plain.png,3,1,36
+
+
+## 3. 零外发：运行时抓包（TC-2.2-b）+ 静态依赖图
+# TC-2.2-b 运行时零外发取证（2026-11-03，本机 arm64 macOS 26.6.2）
+# 被测进程：./target/debug/examples/self_metric --repeat 24（120 次本地识别，运行窗口 >6s）
+# 采样命令：nettop -p <pid> -L 6 -s 1
+# 判据：输出里不得出现本进程的出站长连接。以下 6 个采样窗口全是表头，零条连接行。
+
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+
+# 阳性对照（同一台机器、同一命令，被测进程换成 curl 一条 HTTPS 下载）：
+# nettop -p <curl 的 pid> -L 3 -s 1 —— 证明上面的零行不是采样器没在工作
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+18:07:50.358755,curl.48731,,,0,326,0,0,0,,,,,,,,,,,,
+18:07:50.356322,tcp4 10.redacted:64846<->external.host:443,en0,Established,0,326,0,0,0,369.00 ms,131376,65535,BE,-,cubic,-,-,-,-,so,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+18:07:51.363012,curl.48731,,,56838,599,0,8544,0,,,,,,,,,,,,
+18:07:51.360612,tcp4 10.redacted:64846<->external.host:443,en0,Established,56838,599,0,8544,0,384.78 ms,165344,143872,BE,-,cubic,-,-,-,-,so,
+
+# 静态一层：cargo tree -p ice-vision -e normal（明确排除 dev 依赖，度量用的两个 crate 不在图里）
+# 命中 reqwest|hyper|rustls|native-tls|openssl|ureq 与六个未开的 objc2 可选 feature 的行数：0
+2:├── ice-core v0.1.0 (/Users/filthy-ice/Desktop/my-translator/Ice-translator/crates/ice-core)
+23:│   ├── thiserror v2.0.21
+24:│   │   └── thiserror-impl v2.0.21 (proc-macro)
+38:│   └── tracing v0.1.44
+40:│       ├── tracing-attributes v0.1.31 (proc-macro)
+47:│       └── tracing-core v0.1.36
+49:├── image v0.25.10
+73:├── objc2 v0.6.5
+74:│   └── objc2-encode v4.1.0
+75:├── objc2-core-foundation v0.3.2
+77:│   └── objc2 v0.6.5 (*)
+78:├── objc2-core-graphics v0.3.2
+80:│   ├── objc2 v0.6.5 (*)
+81:│   └── objc2-core-foundation v0.3.2 (*)
+82:├── objc2-foundation v0.3.2
+84:│   └── objc2 v0.6.5 (*)
+85:├── objc2-vision v0.3.2
+86:│   ├── objc2 v0.6.5 (*)
+87:│   ├── objc2-core-foundation v0.3.2 (*)
+88:│   ├── objc2-core-graphics v0.3.2 (*)

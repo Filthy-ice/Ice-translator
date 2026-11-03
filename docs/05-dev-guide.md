@@ -85,12 +85,20 @@ ice-app  ──►  ice-providers  ──►  ice-core
 
 ```bash
 cargo check --workspace                 # 快速全量类型检查
-cargo test  --workspace                 # 全部单元测试（2026-10-28 任务 #25 之后 440 项通过 + 5 项 ignore）
+cargo test  --workspace                 # 全部单元测试（2026-11-03 CHG-005 P6 之后 495 项通过 + 5 项 ignore）
 cargo test  -p ice-core                 # 只测领域层（58 项）
 cargo test  -p ice-providers            # 只测引擎层（62 项，HTTP 走本地假服务，不联网）
-cargo test  -p ice-app                  # 只测界面层（305 项，无头跑帧，不碰网络/剪贴板/钥匙串）
+cargo test  -p ice-app                  # 只测界面层（342 项，无头跑帧，不碰网络/剪贴板/钥匙串/原生面板）
+cargo test  -p ice-vision               # 只测视觉层（33 项：行合并五条判据、坐标翻转与夹取、准入判定、
+                                        # 以及那条跨平台门控静态核查——全都不需要真机，Vision 调用本身无头测不到）
 cargo run   -p ice-core --example detect_probe
                                         # 中英混排检测探针：14 条实例逐条判方向，判错即非零退出
+cargo run   -p ice-vision --example self_metric
+                                        # REQ-008 第一层：黑体自绘 5 类干净文字 × 24 轮 = 120 张，跑真实 Vision
+                                        # 出合并度量（零样图、零人工标注；它是下限测试，不是达标判据）
+cargo run   -p ice-vision --example samples_run -- assets/samples --csv /tmp/ocr-metrics.csv
+                                        # REQ-008 第二层入口：对真样图出每图一行的 CSV，
+                                        # 目录里没有图就打「样本不足」并以 0 退出——不报错，因为那不是缺陷
 cargo test  --workspace -- --ignored    # 跑需要真实网络/真机的集成测试
 cargo test  -p ice-providers --test live -- --ignored --nocapture machine
                                         # 只验机翻真实端点（MyMemory，无需 Key）
@@ -131,10 +139,14 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 
 1. **注释只写约束和原因**，不复述代码。引用需求用 `FR-x.y` / `NFR-x` 标记，便于追踪矩阵反查。
 2. **错误处理**：每个 crate 有自己的错误枚举（`CoreError`/`ProviderError`/`VisionError`），用 `thiserror`，向上传播；只有 `ice-app` 的边界处允许 `anyhow`。禁止 `unwrap()` 出现在生产路径——`Mutex` 中毒场景统一用 `unwrap_or_else(|e| e.into_inner())`。
-3. **异步边界**：网络用 tokio；OCR 与图像合成是阻塞调用，必须走 `tokio::task::spawn_blocking`，不得占用 UI 线程。
-4. **不在 UI 视图里写业务判断**：翻译调度、语种检测、术语注入在 core/providers，OCR 与合成在 vision；`views/*` 只做展示并把副作用排进 `Effects`。窗口几何这一类是例外，也是同一思路的延伸——**模式切换、吸附/停靠/唤出的几何计算必须是 `ice-app::mode` 里的纯函数**（输入矩形与阈值，输出目标矩形与停靠状态），不读全局、不碰窗口，这样单测不用真拖动窗口就能覆盖；`app.rs` 只负责把纯函数的结论下发成 viewport 命令。
-5. **公共 API 最小化**：能用 `pub(crate)` 的不用 `pub`。
-6. 数值上限集中定义（`HISTORY_CAPACITY`、`max_prompt_terms`、`ai_chunk_chars`），不散落魔法数字。
+3. **异步边界**：网络用 tokio；OCR 与图像合成是阻塞调用，必须走 `tokio::task::spawn_blocking`，不得占用 UI 线程。**P6 把这条钉成一条更硬的规则——`!Send` 那一类对象不许跨线程，所以整段待在同一条线程**：objc2 生成的框架类（`VNRecognizeTextRequest`、`CGImage`、那块 `NSOpenPanel`）全是 `!Send`，`Retained<T>` 因此也 `!Send`（objc2 靠类型系统挡住，不是靠约定）。推论有三条，每条都落在具体位置上：
+   - **`Retained` 出不了 `ice-vision::vision_sys`**。S1 在那儿把框架对象拆成 `RowObservation`（`String` + `f32` + 归一化矩形），S2/S3 之后的一切都在 Send 世界里跑；`ice-app` 从头到尾没见过一个 ObjC 类型。要把 `Retained` 交给另一条线程（比如从界面线程去调 `VNRequest::cancel()`）在**类型上就做不到**，这正是 Q-008 把"取消"改成"丢弃结果"的原因，不是偷懒。
+   - **一次识别的整段（读盘 → 解码 → 缩放 → Vision → 行合并）在同一个 `spawn_blocking` 闭包里完成**，中途不换手。`ImageInput` 与 `Admitted` 因此必须全 `Send`（`PathBuf` / `Vec<u8>` / `RgbaImage`，没有一个 `Rc`），这条由编译器担保：`jobs.rs` 那句 `runtime.spawn_blocking(move || ...)` 编得过就是证据，不需要另写一个 `assert_send` 装饰。
+   - **`NSOpenPanel` 的回调跑在 ObjC 的调用栈上**，那里 panic 会跨过 FFI 边界（不是"panic 被捕获"，是未定义行为）。所以 `system::panel` 的回调体只做两件事：`try_send` 一条 `Reply`、`ctx.request_repaint()`——**不索引、不解包、不读盘**；路径变成像素那三步发生在帧循环读回信之后、派发进工作线程之前。
+4. **主线程与 `unsafe`**：`MainThreadMarker::new()?` 是"我在主线程"的唯一凭证，它卡在**直接调类方法的那一处**——`system::window::ns_window`（从 eframe 句柄摸到 `NSWindow` 的唯一一条路）、`system::screen::probe`、`system::mouse::left_button_down`、`system::dblclick::sync`、`system::panel::request_open` 各拿一次；`alpha::set` 与 `titlebar::sync` 自己不拿，因为它们经 `window::ns_window` 那条共同入口，令牌已经在那儿拿过了。拿不到令牌一律返回 `None`/`false`，调用方按"不知道"降级（D-16 那条规则的同源写法），**不许重试、不许崩**。`unsafe` 只允许出现在这几处与 `ice-vision::vision_sys`，且每处都写清为什么 unsafe（`ns_view` 由 winit 从 `contentView` 取出、生命周期归窗口；`NSControl.target` 是 `unsafe_unretained`，所以那个 `Retained<ZoomTarget>` 必须自己存在线程局部里，否则 out 了就成野指针；`define_class!` 与 `msg_send!` 本身是 unsafe 桥）。
+5. **不在 UI 视图里写业务判断**：翻译调度、语种检测、术语注入在 core/providers，OCR 与合成在 vision；`views/*` 只做展示并把副作用排进 `Effects`。窗口几何这一类是例外，也是同一思路的延伸——**模式切换、吸附/停靠/唤出的几何计算必须是 `ice-app::mode` 里的纯函数**（输入矩形与阈值，输出目标矩形与停靠状态），不读全局、不碰窗口，这样单测不用真拖动窗口就能覆盖；`app.rs` 只负责把纯函数的结论下发成 viewport 命令。**P6 的同一思路落在识别上**：`AppState` 里那五颗编辑动作（改字/勾选/删/合/拆）与 `RecognitionStage` 的转换全是纯逻辑，一行 `ice-vision` 的代码都不调，所以整条编辑链在无头帧里可测。
+6. **公共 API 最小化**：能用 `pub(crate)` 的不用 `pub`。
+7. 数值上限集中定义（`HISTORY_CAPACITY`、`max_prompt_terms`、`ai_chunk_chars`、`MAX_EDGE_PX`、`LOW_CONFIDENCE_WARN`、`MergeParams::DEFAULT`），不散落魔法数字。
 
 ## 6. 测试规范
 
@@ -190,7 +202,9 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 | 主题 | macOS | Windows / Linux |
 |---|---|---|
 | 应用图标（Dock / 任务栏） | macOS **没有"窗口图标"**：winit 的 `set_window_icon` 是空实现（`platform_impl/macos/window_delegate.rs:1541`）。能改 Dock 磁贴的只有 `NSApplication.setApplicationIconImage`，而 eframe 0.37 已经帮你调了——前提是 `NativeOptions::viewport.icon` 有值；**不设就退回 eframe 自带的 egui logo**（`native/epi_integration.rs:506`），这就是"图标定稿了但 Dock 还是不对"的根因。见 `main::app_icon`：`include_bytes!` 编进二进制 + 启动时降采样到 256（Dock 磁贴最大约 128pt，视网膜 2x 到顶；不解这一下会在启动帧多占约 8MB RGBA）。**Dock 上那行名字改不了**（eframe 注释明确），要连名字、Finder 图标、`.icns` 一起解决就得做真正的 `.app` bundle。 | Windows 走同一项：eframe 用 `WM_SETICON` 设大小两枚 HICON；Linux 靠窗口图标 |
-| OCR | Vision 框架，本地零下载 | v1 不提供，界面明确提示 |
+| OCR | macOS Vision 框架（`objc2-vision`），本地零下载零外发。**两条编译面**：`vision_sys.rs` 整文件由 `lib.rs` 的 `#[cfg(target_os = "macos")]` 挂进来，`ocr::recognize_with_rows` 在非 mac 那一面是**同签名**返回 `UnsupportedPlatform`，所以调用方（`jobs.rs`）不用写 `cfg`。**这条门控有静态核查**：`ice-vision/src/lib.rs` 里那个测试扫遍本 crate 的 `.rs`，任何一处 `vision_sys` 引用落在 `#[cfg(target_os = "macos")]` 之外就红，`#[cfg(not(target_os = "macos"))]` 那种写反的也不算罩住——后果不是"跑得慢"，是那个平台根本编不过，而真机验证排在 P8。**框架调用本身整段待在同一条 `spawn_blocking`**（objc2 的类全 `!Send`，见 §5 第 3 条）。真机识别质量与耗时属走查 W-3.4 与 §5 第二层度量 | Linux 是 Wayland/X11 之争而不是"有没有 Vision"：v1 不提供，`native_ocr_supported()` 返回 `false`，图片页那四颗入口整排置灰 + 悬停给"当前平台没有本地文字识别；文本翻译不受影响"，**页签本身不禁用**（手输路径那一格与"这张图解不开"的提示都要有地方给）。Windows 同档 |
+| 原生文件面板 | 自接 `NSOpenPanel`（Q-002 裁定不引 `rfd`）：`beginWithCompletionHandler:` 异步回来，**不用 `runModal`**（它把线程关进 AppKit 的嵌套事件循环，帧循环在那期间一帧都不跑）。为此多开四个 app-kit feature（`NSOpenPanel`/`NSSavePanel`/`NSPanel`/`NSApplication`）加 `block2` 那条特性——`beginWithCompletionHandler:` 整个方法 `#[cfg(all(feature = "NSApplication", feature = "block2"))]`，不开就只剩同步版本 | `request_open` 在非 mac 编译面是同签名返回 `false` 的门控版本，界面据此提示"这台机器弹不出系统文件面板；请在图片页的「路径」那一格里手输"。**手输路径那一格因此在任何平台上都不是备胎**：它是第四条入口，也是这条能力缺失时唯一还能走通的路 |
+| 拖放图片进窗口 | eframe 每帧现填 `ctx.input(|i| i.raw.dropped_files)`，不跨帧残留，所以不需要去重记忆。只认第一个带路径的文件 | 从只给字节不给路径的应用拖过来（某些截图工具）在这一支落不了地；P8 复核时先确认 `path()` 是否为空，再决定要不要走 `bytes` 那条读法 |
 | 置顶窗口 | `NSWindow.setLevel` / egui `always_on_top` | **"各自 API，egui 已封装"这句在 2026-10-29 被查实只对了一半**：X11 有实现（winit 0.30.13 `platform_impl/linux/x11/window.rs:1079`，`_NET_WM_STATE_ABOVE`），Windows 走自己的 API，**Wayland 那一支是空函数**——`platform_impl/linux/wayland/window/mod.rs:430` 就是 `pub fn set_window_level(&self, _level: WindowLevel) {}`，xdg-shell 里没有"我要压在其他窗口之上"这个请求（要它得用 layer-shell，winit 不支持）。后果是**界面照常变、层级不变**：图钉点下去会实心会上色，窗口却仍会被别的窗口盖住，用户看到的就是"置顶没用"。这一档不是 bug，是协议边界，写在这里是为了下次别答成"封装好了" |
 | 窗口位置（停靠的落点） | 任意坐标，包括**屏外**——3px 热区那套全靠把窗口推到 `visibleFrame` 之外 | **X11 能设但 WM 未必听**（`x11/window.rs:1237` 有实现，Mutter/KWin 可以把越界坐标夹回工作区）；**Wayland 设不了**：`wayland/window/mod.rs:273` 的 `set_outer_position` 是空函数，注释原话 "Not possible on Wayland."，`Window::set_outer_position` 的公开文档也写着 "Android / Wayland: Unsupported"。凡是最后落到 `ViewportCommand::OuterPosition` 的功能在这一支上全部静默失效：边缘停靠藏出去、悬停唤出、离屏夹回（FR-3.6）、形态切换定位、双击铺满的位置那一半。两个容易误判的细节：`InnerSize`（尺寸）与 `drag_window`（Wayland 走 `xdg_toplevel._move`，`wayland/window/state.rs:446`）**仍然可用**，所以症状是"拖得动、推不走"而不是"整个窗口坏了"——报"贴边无法收起"时先问 `echo $XDG_SESSION_TYPE`，`wayland` 就是这一行，`x11` 才算我们的问题 |
 | 快捷键在界面里怎么标 | `Cmd+…` 与 ⌘ 就是它本身 | **功能不缺，标签会教错键**：egui 侧用的是 `Modifiers::COMMAND`，而 egui-winit 0.37 把它翻译成 `if is_mac { super_ } else { ctrl }`（`egui-winit-0.37.0/src/lib.rs:564`），所以 Linux/Windows 上按 `Ctrl+Shift+M/P/C` 确实命中。缺的是文案——`views`、`settings`、`compact`、`titlebar`、`state` 里共八处 `"Cmd+…"` 字面量在非 mac 平台上写着用户按不到的那个键。**属未决口径，不是已修**：要不要按平台出标签（一处常量 vs 八处各判一次）交回用户，且它动的是按钮/提示文案，会牵动 `05-dev-guide` §6 那条宽度度量断言 |
