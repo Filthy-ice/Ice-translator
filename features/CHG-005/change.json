@@ -3,7 +3,7 @@
   "id": "CHG-005",
   "title": "图片翻译 P6：macOS Vision 本地识别、行合并与可编辑识别结果",
   "version": "v0.1",
-  "status": "SPEC_REVIEW",
+  "status": "IMPLEMENTING",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -81,8 +81,56 @@
       "at": "2026-10-28T13:24:48+00:00",
       "action": "transition",
       "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-03T06:31:10+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97",
+        "version": "v0.1",
+        "by": "Filthy-ice",
+        "reference": "2026-11-02 Qoder Desktop 会话：用户回复'批准 CHG-005'",
+        "at": "2026-11-03T06:31:10+00:00",
+        "snapshot": "approvals/v0.1-79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97.md",
+        "scope": "local-delivery",
+        "context_hash": "17c0fb7330c20960137e4d400870c05ce3d4eabb975d7391d3c9a336e4dcec08",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-03T06:31:47+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      }
+    },
+    {
+      "at": "2026-11-03T06:31:53+00:00",
+      "action": "seal-plan",
+      "detail": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012"
+    },
+    {
+      "at": "2026-11-03T06:31:59+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
     }
   ],
-  "approval": null,
-  "plan_hash": null
+  "approval": {
+    "hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97",
+    "version": "v0.1",
+    "by": "Filthy-ice",
+    "reference": "2026-11-02 Qoder Desktop 会话：用户回复'批准 CHG-005'",
+    "at": "2026-11-03T06:31:10+00:00",
+    "snapshot": "approvals/v0.1-79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97.md",
+    "scope": "local-delivery",
+    "context_hash": "17c0fb7330c20960137e4d400870c05ce3d4eabb975d7391d3c9a336e4dcec08",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012"
 }
