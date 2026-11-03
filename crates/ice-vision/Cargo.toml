@@ -12,11 +12,62 @@ thiserror.workspace = true
 tracing.workspace = true
 image.workspace = true
 
-# P6 接入 macOS Vision 时再启用，届时按 crate 实际 feature 名补齐：
-#   objc2 = "0.6"
-#   objc2-foundation = { version = "0.3", features = ["NSString", "NSArray"] }
-#   objc2-vision = { version = "0.3", features = ["VNRecognizeTextRequest", "VNRequestHandler", "VNObservation", "VNRequest", "VNTypes"] }
-# [target.'cfg(target_os = "macos")'.dependencies]
+# P6（CHG-005 REQ-002）：识别只走 macOS Vision，零外发。
+#
+# `objc2-vision` 的 feature 不是一个类一个开关那么直白：`initWithCGImage_options` 整个方法
+# 挂在可选依赖 `objc2-core-graphics` 后面（VNRequestHandler.rs:148 → :161），而 `boundingBox()`
+# 的返回类型 `CGRect` 挂在 `objc2-core-foundation` 后面（VNObservation.rs:5-7、:150）——这两个
+# 开关必须点开，否则方法与类型都看不见。其余六个可选依赖（av-foundation/core-image/core-media/
+# core-ml/core-video/image-io）一个都不开：带 orientation 的那个 initWithCGImage 重载才要
+# image-io（:167 → :182），开了等于把 HEIC 解码器拖进依赖图。
+#
+# `CGDataProvider`/`CGColorSpace` 不在 objc2-vision 自己点开的 feature 里（它只开 CGImage 与
+# CGPath），而把 `RgbaImage` 变成 `CGImage` 要现场构造这两样，所以 core-graphics 得直接依赖。
+# 五个 crate 名里只有 objc2-vision 是净新增，其余都已在 Cargo.lock。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-vision = { version = "0.3.2", default-features = false, features = [
+    "VNError",
+    "VNDefines",
+    "VNTypes",
+    "VNRequest",
+    "VNObservation",
+    "VNRequestHandler",
+    "VNRecognizeTextRequest",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "CGImage",
+    "CGDataProvider",
+    "CGColorSpace",
+] }
+# `CGRect`（boundingBox 的返回类型）与 `CFData`（像素字节进 CGDataProvider）都得直接点名，
+# 光靠 objc2-vision 传递开启不够：Rust 只能 use 自己是依赖项的 crate。
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+    "CFCGTypes",
+    "CFData",
+] }
+# `NSString`/`NSArray` 之外还要三个：`NSDictionary` 是 `initWithCGImage_options` 那个
+# 非可选的 options 形参的类型（`objc2-foundation-0.3.2/src/lib.rs:141` 那行 cfg 把整个
+# `dictionary` 模块挂在它后面）、
+# `NSError` 是 `performRequests_error` 的错误形参、`NSEnumerator` 决定 `NSArray::iter()`
+# 存不存在（`array.rs:232` 那行 cfg）。后两个 `VNObservation`/`VNRequestHandler` 已经顺带
+# 打开，但那是别人 crate 的 feature 传导，本包要用就直接点名，不靠统一赋值碰运气。
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "NSString",
+    "NSArray",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSError",
+] }
 
 [dev-dependencies]
 tempfile = "3"
+# REQ-008 第一层的自动度量要"把已知文本画成图"，而 egui 的字形只在 GPU 管线里成形、拿不到位图。
+#
+# 这两个 crate 不是新增依赖名：它们早已在 `Cargo.lock` 里（Linux 那条 `sctk-adwaita` → `ab_glyph`
+# 路径带进来的），真实变化只有一件——第一次在 macOS 上被**编译**，而且只在 examples 面。
+# `cargo tree -p ice-vision -e normal` 那条零外发取证因此不受影响（它明确排除 dev 依赖）。
+ab_glyph_rasterizer = "0.1.10"
+owned_ttf_parser = "0.25.1"

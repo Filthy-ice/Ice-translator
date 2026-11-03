@@ -88,6 +88,12 @@ pub struct TextBlock {
     pub degraded: bool,
     /// 用户在识别结果列表里勾掉后为 false，不参与翻译与合成
     pub enabled: bool,
+    /// 该块由识别结果的第几行合并而来（FR-2.3 的"拆分回原行"靠它）。
+    /// 空表示来源行未知：手动合并、外部构造的块都可能是空。
+    ///
+    /// 运行态字段，不进配置 schema：`default` 让改动前序列化的数据仍可反序列化。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_rows: Vec<u32>,
 }
 
 impl TextBlock {
@@ -101,6 +107,21 @@ impl TextBlock {
             translation: None,
             degraded: false,
             enabled: true,
+            source_rows: Vec::new(),
+        }
+    }
+
+    /// 带来源行的构造器：视觉层合并出来的块走这条（FR-2.3 拆分回原行的信息入口）。
+    pub fn with_rows(
+        id: u32,
+        text: impl Into<String>,
+        bbox: PixelRect,
+        confidence: f32,
+        source_rows: Vec<u32>,
+    ) -> Self {
+        Self {
+            source_rows,
+            ..Self::new(id, text, bbox, confidence)
         }
     }
 

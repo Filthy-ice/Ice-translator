@@ -12,8 +12,12 @@
         "REQ-002"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-vision/Cargo.toml",
+        "crates/ice-vision/src/vision_sys.rs",
+        "crates/ice-vision/src/lib.rs"
+      ]
     },
     {
       "id": "T-002",
@@ -22,8 +26,11 @@
         "REQ-003"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-vision/src/layout.rs",
+        "crates/ice-core/src/document.rs"
+      ]
     },
     {
       "id": "T-003",
@@ -32,8 +39,11 @@
         "REQ-004"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-vision/src/layout.rs",
+        "crates/ice-vision/src/lib.rs"
+      ]
     },
     {
       "id": "T-004",
@@ -42,8 +52,11 @@
         "REQ-002"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-vision/src/vision_sys.rs",
+        "crates/ice-vision/src/ocr.rs"
+      ]
     },
     {
       "id": "T-005",
@@ -52,8 +65,12 @@
         "REQ-001"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-vision/src/import.rs",
+        "crates/ice-vision/src/lib.rs",
+        "crates/ice-vision/src/ocr.rs"
+      ]
     },
     {
       "id": "T-006",
@@ -62,8 +79,13 @@
         "REQ-005"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/views/image.rs",
+        "crates/ice-app/src/views/mod.rs",
+        "crates/ice-app/src/state.rs",
+        "crates/ice-core/src/document.rs"
+      ]
     },
     {
       "id": "T-007",
@@ -72,8 +94,15 @@
         "REQ-006"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/jobs.rs",
+        "crates/ice-app/src/state.rs",
+        "crates/ice-app/src/app.rs",
+        "crates/ice-vision/src/ocr.rs",
+        "crates/ice-app/src/system/panel.rs",
+        "crates/ice-app/src/system/clipboard.rs"
+      ]
     },
     {
       "id": "T-008",
@@ -82,8 +111,12 @@
         "REQ-007"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-vision/src/lib.rs",
+        "crates/ice-app/src/views/image.rs",
+        "crates/ice-app/src/state.rs"
+      ]
     },
     {
       "id": "T-009",
@@ -92,8 +125,12 @@
         "REQ-008"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-vision/examples/self_metric.rs",
+        "crates/ice-vision/examples/samples_run.rs",
+        "crates/ice-vision/Cargo.toml"
+      ]
     },
     {
       "id": "T-010",
@@ -109,8 +146,16 @@
         "REQ-008"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "docs/02-architecture.md",
+        "docs/03-ui-design.md",
+        "docs/04-image-pipeline.md",
+        "docs/05-dev-guide.md",
+        "docs/06-test-cases.md",
+        "docs/07-acceptance.md",
+        "docs/traceability.md"
+      ]
     }
   ]
 }

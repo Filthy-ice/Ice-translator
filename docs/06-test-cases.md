@@ -237,24 +237,37 @@ IMG-9/12 为**故意纳入**的失败样例：验收时它们不参与达标均�
 
 ### 用例
 
-| 编号 | 需求 | 步骤 | 预期 |
+| 编号 | 需求 | 步骤 | 预期 | 状态 |
+|---|---|---|---|---|
+| TC-2.1-a..d | FR-2.1 | 分别用拖拽、粘贴、文件选择器、路径导入 IMG-1 | 四种入口都进入识别流程，结果一致 | ✅ **无头那一半**：字节/RGBA/路径三条汇到同一个 `Admitted` 形状（`bytes_and_rgba_land_on_the_same_shape`）、三颗入场即识别的入口各给一条意图且互不越界（`each_entry_gives_its_own_intent_and_nothing_else`）、路径格派发 `Job::ImageOcr`（`the_path_entry_dispatches_an_image_job`）、面板协议五条（`ok_with_a_path_is_the_only_pick`、`cancel_and_abort_are_told_apart` 等）、剪贴板位图只在计数变化时接受（`clipboard_pixels_are_accepted_only_when_the_count_matches`）、超限缩放不静默（`an_oversize_image_is_scaled_and_the_reported_size_is_the_scaled_one`）。**四条入口"真的都进了同一张图"只有真机能定论**：走查 W-3.1（拖）/W-3.2（贴）/W-3.3（面板）+ W-3.4（路径），停止条件 5 落在面板那颗 |
+| TC-2.2-a | FR-2.2 | 对 IMG-1~IMG-12 跑 OCR，与人工标注比对 | 排除 IMG-9/12 后平均字符正确率 ≥ 0.92 | ⛔ **未闭环，不是通过**（2026-11-03）：`assets/samples/` 仍是空目录且无人工标注，原料缺（Q-003 + 停止条件 6）。工具就绪：`crates/ice-vision/examples/samples_run.rs` 逐张跑真图、CSV 只有 `filename,rows,blocks,elapsed_ms` 四列，目录为空时如实输出"样本不足"、不产出任何数字。**0.92 这个数一个字没动**，也没拿自绘度量冒充它。第一层（`examples/self_metric.rs`，程序自绘 + 真实 Vision）的观察值登记在 `04-image-pipeline.md` §2.1 与 `07-acceptance.md` P6 段：5 类 × 24 轮，平均 0.9287、最低 0.7059——**下限测试**，干净自绘文字是 Vision 最容易的一类 |
+| TC-2.2-b | FR-2.2 | 在跑 OCR 的同时用 `nettop -p <pid>` 观察网络连接 | 无任何出站长连接（隐私断言，NFR-3） | ✅ **两层取证**（2026-11-03）：① 静态 `cargo tree -p ice-vision -e normal`（明确排除 dev 依赖，度量那两个字形 crate 因此不在图里）对 reqwest/hyper/rustls/native-tls/openssl/ureq 与六个未开的 objc2 可选 feature **命中 0 行**；② 运行时 `nettop -p <pid> -L 6 -s 1` 对着跑了 120 次本地识别、窗口 >6s 的进程采六个采样窗，**零条连接行**，并配同命令的 curl 阳性对照（同一台机器上真出现 `Established` 那一行）证明采样器在工作。留档：`features/CHG-005/evidence/`（V-011 那条运行时取证件，与自绘度量、空样图目录同批），内网地址与远端主机名已脱敏 |
+| TC-2.2-c | FR-2.2 | 检查每个块 | 均有 bbox（在图内）、text 非空、confidence ∈ [0,1] | ✅ **结构与几何那半**：块框是成员行的 `union`，断言"真的包住每一行"（`the_block_box_covers_every_member_row`）；越界框向内夹住、零尺寸框不变负（`out_of_range_boxes_are_clipped_inward_instead_of_moved`、`zero_sized_boxes_stay_zero_and_never_negative`）；置信度按字符加权（`the_block_confidence_is_weighted_by_characters`）故必落在成员行的区间内；空文本块不进 `enabled_blocks`（`merged_text_skips_disabled_and_blank_blocks`）。**"每张真图的块都非空"属第二层**——图上有没有字由 W-3.4 与真样图跑批看 |
+| TC-2.2-d | FR-2.2 | 归一化坐标转换 | 单测：y=0 与 y=1 的翻转结果对应图像顶/底行 | ✅ `a_box_at_normalized_zero_lands_on_the_bottom_row`、`a_box_at_normalized_one_lands_on_the_top_row`，另加五条同族（翻转减的是框高不是只有原点、x/w 按宽独立缩放、像素尺寸跟随给的那张图、逐行翻转后顶边仍在底边之上） |
+| TC-2.3-a | FR-2.3 | 手改列表中一处错字再生成图片 | 生成图反映修改 | **判据拆两半**：前半句"改动确实进了交给 P7 的那份数据"✅（改字后 `merged_text()` 立刻反映：`every_edit_action_moves_the_document_that_p7_will_receive`；同族另有合并/拆分/删除/勾选五条 + 无头点击勾选框那条 `clicking_a_row_checkbox_routes_through_the_state_action`；界面层不直接写 `enabled`/`text` 字段，五个动作全走 `AppState`）。**后半句"生成图"⏸ 待 P7**（CHG-006 的回填链），本包没有那条链，这一格不许打勾 |
+| TC-2.3-b | FR-2.3 | 取消勾选某块 | 该块不翻译、不绘制，其余正常 | ✅ "不翻译"这一半就是"不进交给 P7 的那份文本"：`set_block_enabled(id,false)` 后 `merged_text()` 当场少一行、其余行序不变，重新勾选立刻回来且不丢数据（同上第一条 + `clicking_a_row_checkbox_routes_through_the_state_action`）。**"不绘制"⏸ 待 P7**。附带两条本包锁住的：勾选与删除是两件事（块还在列表里，`#` 号连续）、低置信行画 ⚠（`a_low_confidence_row_is_marked_and_a_high_one_is_not`，阈值常量 0.5 见 Q-006） |
+| TC-2.4-a | FR-2.4 | 对 IMG-1 生成结果 | 原图文件哈希不变；结果图中原文消失、中文出现在原区域 | 待 P7 |
+| TC-2.5-a | FR-2.5 | 对 IMG-7 生成 | 自动走覆盖层，文字可读，无擦除痕迹 | 待 P7 |
+| TC-2.5-b | FR-2.5 | 强制全局覆盖层模式处理 IMG-1 | 全部块用覆盖层绘制，不修改原图像素 | 待 P7 |
+| TC-2.6-a | FR-2.6 | 保存 PNG 与复制图片 | 文件可被预览打开；剪贴板粘贴到别处得到同图 | 待 P7 |
+| TC-2.7-a | FR-2.7 | 中→德长译文窄块（构造 IMG-13） | 先缩字号；到下限仍放不下则标 `degraded` 并走覆盖层，无文字丢失 | 待 P7 |
+| TC-2.8-a | FR-2.8 | IMG-6 深色截图 | 回填文字颜色与原前景色一致（允许 ±8 通道误差） | 待 P7 |
+| TC-2.9-a | FR-2.9 | 处理 IMG-5（多块） | 进度按三阶段推进且块数递增 | ⏸ **三阶段属 P7**；本包那一段（识别）✅：五态各有名字与文案（`the_status_line_names_all_five_stages_and_the_elapsed`）、块数与列表同源（列表一变状态行跟着变：`removing_a_block_updates_the_done_count_in_the_status_line`）、耗时来自实测 |
+| TC-2.9-b | FR-2.9 | 处理中点取消 | 及时停止、不生成结果文件、可立即重开 | **本包只做"忽略这一次"，且界面明说不谎报**：`VNRequest::cancel` 因 `!Send` 拿不到，那次调用照常跑完（REQ-006、Q-008）。✅ 无头锁：只有识别中那一态画得出那颗按钮（`only_a_recognition_in_flight_offers_the_ignore_button`）、点它只给一条意图、忽略后晚到的结果按序号丢弃且界面零变化（`a_stale_image_result_is_dropped_without_touching_the_visible_document`）、忽略不清已落的图与列表。**"及时停止"这一半在图片侧不存在**，界面上那句提示与 hover 文案都写明撤不回底层调用 |
+| TC-2.2-e | NFR-7 | 在非 macOS 构建运行 | 图片页显示"当前平台不支持"，文本功能正常 | ✅ **无头那一半**：入口在页面上还在原地但被禁用（`unsupported_platform_keeps_the_entries_but_stops_the_clicks`：记得到矩形、点下去一条意图都不给）、"缺少识别能力"的两条来路（没有框架 / 框架调用失败）汇成同一个界面态（`losing_ocr_lands_in_the_same_failure_shape_whatever_the_platform`），且不谎称取消了底层调用；`vision_sys` 的每一次引用都在 macOS 门后，门本身由源码扫描器锁（含"门写反"与四种绕过）。**真机在非 mac 上跑一遍**属 P8 的 TC-P-7 |
+
+### 走查（P6，W-3.1~W-3.6）
+
+停止条件 1/3/6/7 都落在这张表上：**只有用户能定论**。W-3.1~W-3.3 那三条是无头结构上碰不到的（要真的操作系统面板、真的剪贴板、真的拖放）。
+
+| 编号 | 检查项 | 方法 | 预期 |
 |---|---|---|---|
-| TC-2.1-a..d | FR-2.1 | 分别用拖拽、粘贴、文件选择器、路径导入 IMG-1 | 四种入口都进入识别流程，结果一致 |
-| TC-2.2-a | FR-2.2 | 对 IMG-1~IMG-12 跑 OCR，与人工标注比对 | 排除 IMG-9/12 后平均字符正确率 ≥ 0.92 |
-| TC-2.2-b | FR-2.2 | 在跑 OCR 的同时用 `nettop -p <pid>` 观察网络连接 | 无任何出站长连接（隐私断言，NFR-3） |
-| TC-2.2-c | FR-2.2 | 检查每个块 | 均有 bbox（在图内）、text 非空、confidence ∈ [0,1] |
-| TC-2.2-d | FR-2.2 | 归一化坐标转换 | 单测：y=0 与 y=1 的翻转结果对应图像顶/底行 |
-| TC-2.3-a | FR-2.3 | 手改列表中一处错字再生成图片 | 生成图反映修改 |
-| TC-2.3-b | FR-2.3 | 取消勾选某块 | 该块不翻译、不绘制，其余正常 |
-| TC-2.4-a | FR-2.4 | 对 IMG-1 生成结果 | 原图文件哈希不变；结果图中原文消失、中文出现在原区域 |
-| TC-2.5-a | FR-2.5 | 对 IMG-7 生成 | 自动走覆盖层，文字可读，无擦除痕迹 |
-| TC-2.5-b | FR-2.5 | 强制全局覆盖层模式处理 IMG-1 | 全部块用覆盖层绘制，不修改原图像素 |
-| TC-2.6-a | FR-2.6 | 保存 PNG 与复制图片 | 文件可被预览打开；剪贴板粘贴到别处得到同图 |
-| TC-2.7-a | FR-2.7 | 中→德长译文窄块（构造 IMG-13） | 先缩字号；到下限仍放不下则标 `degraded` 并走覆盖层，无文字丢失 |
-| TC-2.8-a | FR-2.8 | IMG-6 深色截图 | 回填文字颜色与原前景色一致（允许 ±8 通道误差） |
-| TC-2.9-a | FR-2.9 | 处理 IMG-5（多块） | 进度按三阶段推进且块数递增 |
-| TC-2.9-b | FR-2.9 | 处理中点取消 | 及时停止、不生成结果文件、可立即重开 |
-| TC-2.2-e | NFR-7 | 在非 macOS 构建运行 | 图片页显示"当前平台不支持"，文本功能正常 |
+| W-3.1 | 拖拽入口 | 从访达拖一张 PNG 进窗口（也试一次拖 JPEG、一次拖 HEIC） | 松手即入场并自动切到图片页开始识别；HEIC 那一侧应给"格式不支持或已损坏"那句明说的话（L-7），不是崩溃也不是静默 |
+| W-3.2 | 剪贴板入口 | 在别处截一张图（`Cmd+Shift+3` 之类），点「粘贴」 | 剪贴板里那张图直接进识别；没有图片时给一句可读提示，不弹空列表 |
+| W-3.3 | 文件选择器 | 点「打开图片」并**同时观察窗口** | 面板真的弹出来、**窗口不掉帧不冻住**（实现禁 `runModal`，走 `beginWithCompletionHandler:`）；取消 ≠ 失败（两条文案不同）；停止条件 5 就是这一条 |
+| W-3.4 | 识别质量与耗时 | 路径那一格给一张真截图（终端报错、PPT 页、两列表格各一张），看 H 区列表与 F 区预览 | 认得出来的字基本对得上、块边界看着合理（合并有没有把两列搅浑）、`I` 区那句耗时数字看着合理；低置信行有 ⚠；**这一条同时是 §2.1 那三条自绘观察的真机复核** |
+| W-3.5 | 界面不冻 + 忽略 | 识别一张大图（接近 8000px 那张），期间拖动窗口、切页签、点「忽略这次识别」 | 拖窗与切页签照常；忽略后界面立刻回空闲、晚到的结果什么都不改；**界面上不出现"已取消底层识别"这种说法** |
+| W-3.6 | 列表能用 + 换图作废 | 在 H 区改一处字、勾掉一块、合并两块、拆回、删一块；然后换一张图重识别 | 五种动作点下去都有反馈、拆不回时给一句话而不是静默产出空列表；换图之后**旧列表绝不能还在**（新图配旧结果是缺陷）；最小全量窗（640×420）下版式不塌 |
 
 ### 人工评分表（P7 用，每张图一行）
 

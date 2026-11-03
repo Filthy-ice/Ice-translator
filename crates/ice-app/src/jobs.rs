@@ -1,20 +1,29 @@
-//! 翻译任务的派发与回收（架构 §4 的并发模型：UI 线程绝不 `await`）。
+//! 翻译与识别任务的派发与回收（架构 §4 的并发模型：UI 线程绝不 `await`）。
 //!
 //! `Translator` 的缓存与术语表都在实例内部，`set_glossary` 又要 `&mut self`，
 //! 所以共享句柄是 `Arc<tokio::sync::Mutex<Translator>>`：任务在 `await` 期间持锁，
 //! 界面上的术语改动用 `try_lock` 立即生效，锁被占住时挂起、下一次派发前先补上。
+//!
+//! 图片识别走另一条线程池入口：`runtime.spawn_blocking`。整段（读盘解码 → 缩放 → Vision
+//! 调用 → 行合并）都待在同一条工作线程里，`Retained` 出不了 `ice-vision` 的 `vision_sys`
+//! （ADR-002 的硬边界，docs/05 那条"objc 类 `!Send` ⇒ 一次调用整段待在同一线程"）。
 
 use std::sync::Arc;
 
 use egui::Context;
 use ice_core::glossary::Glossary;
 use ice_core::history::HistoryStore;
+use ice_core::language::EngineKind;
 use ice_providers::dispatcher::Translator;
 use ice_providers::error::ProviderError;
+use ice_providers::request::TranslationRequest;
+use ice_vision::error::VisionError;
+use ice_vision::import::{Admitted, admit_path, admit_rgba};
+use image::RgbaImage;
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, mpsc};
 
-use crate::state::{AppState, Job, Outcome};
+use crate::state::{AppState, ImageInput, ImageRecognition, Job, Outcome, RequestId};
 
 /// 通道容量：界面上同一时刻只允许一个请求在飞，留一点余量给切换语言时的重译
 const CHANNEL_CAPACITY: usize = 8;
@@ -62,7 +71,29 @@ impl JobRunner {
     }
 
     /// 派发一个任务。`ctx` 只用来在结果到达时请求重绘。
+    ///
+    /// 两条分支用同一个 `tx`、同一个"结果到达就重绘一次"的收尾，但线程入口不同：
+    /// 翻译是 async（要 `await` 网络），识别是 blocking（整段占住一条工作线程，
+    /// 且objc对象一个都不许离开那段，ADR-002）。
     pub fn submit(&mut self, runtime: &Runtime, job: Job, ctx: &Context) {
+        match job {
+            Job::Translation {
+                id,
+                engine,
+                request,
+            } => self.submit_translation(runtime, id, engine, request, ctx),
+            Job::ImageOcr { id, input } => self.submit_image(runtime, id, input, ctx),
+        }
+    }
+
+    fn submit_translation(
+        &mut self,
+        runtime: &Runtime,
+        id: RequestId,
+        engine: EngineKind,
+        request: TranslationRequest,
+        ctx: &Context,
+    ) {
         let shared = Arc::clone(&self.shared);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
@@ -77,7 +108,7 @@ impl JobRunner {
             if let Some(glossary) = glossary {
                 guard.set_glossary(glossary);
             }
-            let result = guard.translate(job.engine, job.request.clone()).await;
+            let result = guard.translate(engine, request.clone()).await;
             // 先放锁再发送：界面收到结果后可能立刻改术语，不该被自己堵住
             drop(guard);
 
@@ -85,12 +116,33 @@ impl JobRunner {
             //（退出中），此时 await 会永远等不到重绘。界面上同一时刻只允许一个请求在飞，
             // 容量 8 在正常运行中不可能被填满。
             let sent = tx
-                .try_send(Outcome {
-                    id: job.id,
-                    engine: job.engine,
-                    result,
-                })
+                .try_send(Outcome::Translation { id, engine, result })
                 .is_ok();
+            if sent {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    /// 识别段：入场（读盘/解码/缩放）+ S1 Vision + S2/S3 行合并，整段一条 `spawn_blocking`。
+    ///
+    /// 输入为 `ImageInput::Clipboard` 时像素已由主线程的 arboard 取出，这里只做长度校验后
+    /// 拼成 `RgbaImage`；`Path` 则连读盘都在这条线程上（几百 MB 的截图也不能卡界面）。
+    fn submit_image(&mut self, runtime: &Runtime, id: RequestId, input: ImageInput, ctx: &Context) {
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+
+        runtime.spawn_blocking(move || {
+            let result = admit_input(input).and_then(|admitted| {
+                let (rows, document, progress) = ice_vision::recognize_with_rows(&admitted.image)?;
+                Ok(ImageRecognition {
+                    admitted,
+                    rows,
+                    document,
+                    elapsed_ms: progress.elapsed_ms,
+                })
+            });
+            let sent = tx.try_send(Outcome::Image { id, result }).is_ok();
             if sent {
                 ctx.request_repaint();
             }
@@ -98,33 +150,39 @@ impl JobRunner {
     }
 }
 
-/// 把一条结果落到界面上。返回 `false` 表示这是过期结果，已按 `request_id` 丢弃（REQ-002）。
-pub fn apply(state: &mut AppState, history: &HistoryStore, outcome: Outcome) -> bool {
-    let id = outcome.id;
-    // 日志只记变体名、状态码与长度：错误文本里可能带端点信息，源文与译文一律不进日志（NFR-3）
-    match &outcome.result {
-        Ok(result) => tracing::info!(
-            request_id = id,
-            engine = ?result.engine,
-            chars = result.text.chars().count(),
-            elapsed_ms = result.elapsed_ms,
-            cache_hit = result.cache_hit,
-            segments = result.segments,
-            "翻译完成"
-        ),
-        Err(err) => tracing::warn!(
-            request_id = id,
-            error = variant_name(err),
-            status = status_code(err).unwrap_or(0),
-            "翻译失败"
-        ),
+/// 把任务原料变成入场后的图。剪贴板那一支的字节长度已由 `system::clipboard::read_image` 校验，
+/// 这里再校验一次不是为了防主线程，而是 `RgbaImage::from_raw` 本身对长度不符就返回 `None`。
+fn admit_input(input: ImageInput) -> Result<Admitted, VisionError> {
+    match input {
+        ImageInput::Path(path) => admit_path(&path),
+        ImageInput::Clipboard {
+            bytes,
+            width,
+            height,
+        } => {
+            let image = RgbaImage::from_raw(width as u32, height as u32, bytes)
+                .ok_or_else(|| VisionError::Decode(CLIPBOARD_SIZE_TEXT.to_string()))?;
+            Ok(admit_rgba(image, CLIPBOARD_LABEL))
+        }
     }
+}
+
+/// 剪贴板来源在界面上的名字（`Admitted.label` 只给显示用，不进日志、不进历史）
+const CLIPBOARD_LABEL: &str = "剪贴板";
+
+/// 像素数与宽高对不上时给人的那句话——与文件解码失败分开写，否则用户会以为图坏了
+const CLIPBOARD_SIZE_TEXT: &str = "剪贴板里的图片尺寸与像素数不匹配，请重新复制";
+
+/// 把一条结果落到界面上。返回 `false` 表示这是过期结果，已按各自那一侧的序号丢弃（REQ-002、REQ-006）。
+pub fn apply(state: &mut AppState, history: &HistoryStore, outcome: Outcome) -> bool {
+    log_outcome(&outcome);
 
     let accepted = state.apply_outcome(outcome);
     if !accepted {
         return false;
     }
-    // 缓存命中不重复写历史：那条记录在第一次翻译时已经写过了
+    // 缓存命中不重复写历史：那条记录在第一次翻译时已经写过了。
+    // 图片识别不进历史（历史表那一行的语义是"源文 → 译文"，P6 只做识别，没有译文）。
     let fresh = state
         .translation
         .as_ref()
@@ -134,6 +192,62 @@ pub fn apply(state: &mut AppState, history: &HistoryStore, outcome: Outcome) -> 
         state.record_history(history, &result);
     }
     true
+}
+
+/// 日志只记变体名、状态码与长度：错误文本里可能带端点信息，源文、译文与识别出的文字一律不进日志（NFR-3）。
+fn log_outcome(outcome: &Outcome) {
+    match outcome {
+        Outcome::Translation { id, result, .. } => match result {
+            Ok(result) => tracing::info!(
+                request_id = id,
+                engine = ?result.engine,
+                chars = result.text.chars().count(),
+                elapsed_ms = result.elapsed_ms,
+                cache_hit = result.cache_hit,
+                segments = result.segments,
+                "翻译完成"
+            ),
+            Err(err) => tracing::warn!(
+                request_id = id,
+                error = variant_name(err),
+                status = status_code(err).unwrap_or(0),
+                "翻译失败"
+            ),
+        },
+        Outcome::Image { id, result } => match result {
+            // 图片侧的口径与 `ocr.rs` 那条 debug 一致：只有行数、块数、耗时和尺寸
+            Ok(recognition) => tracing::info!(
+                request_id = id,
+                rows = recognition.rows.len(),
+                blocks = recognition.document.blocks.len(),
+                elapsed_ms = recognition.elapsed_ms,
+                width = recognition.admitted.width,
+                height = recognition.admitted.height,
+                scaled = recognition.admitted.scaled,
+                "本地识别完成"
+            ),
+            Err(err) => tracing::warn!(
+                request_id = id,
+                error = vision_variant_name(err),
+                "本地识别失败"
+            ),
+        },
+    }
+}
+
+/// 图片侧的变体名：错误文本里带 `code=`/`desc_len=` 之类排障字段，那些留在 `ice-vision` 自己的日志里，
+/// 这一层只给一个能对齐 `VisionError` 定义的名字。
+fn vision_variant_name(err: &VisionError) -> &'static str {
+    match err {
+        VisionError::UnsupportedPlatform => "UnsupportedPlatform",
+        VisionError::Decode(_) => "Decode",
+        VisionError::TooLarge(..) => "TooLarge",
+        VisionError::Recognition(_) => "Recognition",
+        VisionError::NoTextFound => "NoTextFound",
+        VisionError::Composite(_) => "Composite",
+        VisionError::Font(_) => "Font",
+        VisionError::NotImplemented(_) => "NotImplemented",
+    }
 }
 
 /// 帧首回收所有已到达的结果，返回本次应用的条数。
@@ -258,7 +372,7 @@ mod tests {
         let stub = StubEngine::replying(EngineKind::Machine, "你好");
         let mut harness = Harness::new(vec![Arc::new(stub.clone())]);
 
-        let stale = Outcome {
+        let stale = Outcome::Translation {
             id: harness.state.request_id + 99,
             engine: EngineKind::Machine,
             result: Ok(ice_providers::request::TranslationResult::cached(

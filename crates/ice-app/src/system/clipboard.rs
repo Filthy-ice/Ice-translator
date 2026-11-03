@@ -58,6 +58,30 @@ pub fn read() -> Option<String> {
     clipboard.get_text().ok()
 }
 
+/// 剪贴板里的一张图（CHG-005 REQ-001 的「粘贴」入口）。返回 `(RGBA 字节, 宽, 高)`。
+///
+/// arboard 在 macOS 上已经把剪贴板里的 TIFF/PNG 解成 **RGBA8 裸像素**
+/// （`arboard-3.7.0/src/platform/osx.rs:224-247`，`bytes: rgba.into_raw()`），所以这里交出去的是
+/// 像素缓冲而不是编码字节：调用方走 `ice_vision::import::admit_rgba`，不该再喂 `admit` 去解码。
+///
+/// 读不到（没有剪贴板句柄、里面根本不是图片、或字节数对不上 `宽×高×4`）一律 `None`。
+/// 最后那条校验是boundary 检查：剪贴板是外部输入，字节与声称的尺寸不符时宁可当"没有图"，
+/// 也不让一段缺尾像素的缓冲被当成完整图片送去识别。
+pub fn read_image() -> Option<(Vec<u8>, usize, usize)> {
+    let mut clipboard = arboard::Clipboard::new().ok()?;
+    let image = clipboard.get_image().ok()?;
+    validate_rgba(image.bytes.into_owned(), image.width, image.height)
+}
+
+/// 尺寸与字节数对得上才放行；`None` 表示这对数值不构成一张合法的 RGBA 图。
+fn validate_rgba(bytes: Vec<u8>, width: usize, height: usize) -> Option<(Vec<u8>, usize, usize)> {
+    let expected = width.checked_mul(height)?.checked_mul(4)?;
+    if bytes.len() != expected {
+        return None;
+    }
+    Some((bytes, width, height))
+}
+
 /// "剪贴板即翻"的判定器（FR-3.8）。
 ///
 /// 只有状态和判据是纯的：`observe` 收"这次读到了什么"和"输入行有没有焦点"，返回该不该填。
@@ -203,5 +227,23 @@ mod tests {
             None,
             "仍是自己写的那一段"
         );
+    }
+
+    /// 一张合法的 RGBA 缓冲：字节数必须正好是 宽×高×4，多了少了都不放行
+    #[test]
+    fn clipboard_pixels_are_accepted_only_when_the_count_matches() {
+        let ok = validate_rgba(vec![0u8; 4 * 3 * 2], 3, 2).expect("3x2 RGBA = 24 字节");
+        assert_eq!((ok.1, ok.2), (3, 2));
+        assert_eq!(ok.0.len(), 24);
+        assert!(
+            validate_rgba(vec![0u8; 23], 3, 2).is_none(),
+            "少一个字节就是坏数据"
+        );
+        assert!(
+            validate_rgba(vec![0u8; 25], 3, 2).is_none(),
+            "多出来的字节没有归属"
+        );
+        // 0 宽高是合法的空图，不是崩溃；0×0×4 = 0 字节
+        assert!(validate_rgba(Vec::new(), 0, 0).is_some());
     }
 }

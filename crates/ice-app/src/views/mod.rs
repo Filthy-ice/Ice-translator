@@ -70,6 +70,16 @@ pub struct Effects {
     pub quit: bool,
     /// 把两个尺寸槽恢复成默认值（REQ-011 落点②：尺寸被历史版本写坏了，程序不自动改，用户显式恢复）
     pub reset_geometry: bool,
+    /// 「打开图片」：交出原生面板（CHG-005 REQ-001）。
+    /// 记的是**意图**而不是路径——面板还没回来，帧末只负责把面板叫出来，
+    /// 选中的路径由 `app.rs` 在后续帧里从回信通道读，视图永远碰不到 AppKit。
+    pub open_panel: bool,
+    /// 「粘贴」：帧末去剪贴板取一次图（CHG-005 REQ-001 第四条入口）。
+    /// 与 `copy` 不同向：那条是写剪贴板，这条是读，而且只在用户按这颗钮时读一次，
+    /// 不参与 `clipboard_watch` 的轮询（那是文本即翻，读到图片只会白读）。
+    pub paste_image: bool,
+    /// 「忽略这次识别」：只把在飞的那一次标记为过期，不撤回底层调用（Q-008）
+    pub ignore_image: bool,
 }
 
 impl Effects {
@@ -97,10 +107,15 @@ pub fn show(
     if state.tab == Tab::Text {
         full::bottom_bar(ui, state, effects);
     }
+    // 图片页的 I 区状态条同理：本页正文是一节铺满剩余高度的 `ScrollArea`，状态条画在它
+    // 下面会被挤成 0px（那颗「忽略这次识别」就点不到）。它也是一条窗口层的底栏。
+    if state.tab == Tab::Image {
+        image::status_bar(ui, state, effects);
+    }
 
     egui::CentralPanel::default().show(ui, |ui| match state.tab {
         Tab::Text => full::show(ui, state),
-        Tab::Image => image::show(ui, state),
+        Tab::Image => image::show(ui, state, effects, ice_vision::native_ocr_supported()),
         Tab::History => history::show(ui, state, history),
         Tab::Settings => settings::show(ui, state, effects, ai_available),
     });

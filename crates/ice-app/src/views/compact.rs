@@ -417,7 +417,7 @@ fn body(ui: &mut egui::Ui, state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Failure, KeyState};
+    use crate::state::{Failure, Job, KeyState};
     use crate::views::Effects;
     use crate::views::{KNOB_RADIUS, PIN_TOGGLE_W, theme_at, theme_slot};
     use ice_core::config::{Config, MIN_COMPACT_H, MIN_COMPACT_W, Theme};
@@ -1066,7 +1066,10 @@ mod tests {
 
         assert_eq!(state.engine, EngineKind::Ai);
         let job = effects.job.expect("切到 AI 应当立刻用新引擎重译");
-        assert_eq!(job.engine, EngineKind::Ai);
+        let Job::Translation { engine, .. } = &job else {
+            panic!("切引擎只派发文本任务");
+        };
+        assert_eq!(*engine, EngineKind::Ai);
     }
 
     #[test]
