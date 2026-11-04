@@ -13,7 +13,7 @@ use ice_core::config::{
     DockEdge, MIN_COMPACT_H, MIN_COMPACT_W, MIN_FULL_H, MIN_FULL_W, UiConfig, UiMode, WindowRect,
 };
 
-use crate::state::AppState;
+use crate::state::{AppState, TrayState};
 
 /// 全量模式的最小内尺寸（`03-ui-design.md` §1）。数值出处是 `ice-core::config`，
 /// 与 `Config::sanitized` 共用同一份定义，两边不会各写各的字面量。
@@ -740,17 +740,33 @@ fn capture_rect(inner: Option<Rect>, outer: Option<Rect>) -> Option<WindowRect> 
     })
 }
 
-/// 关窗常驻（FR-5.2）：不退出进程，只把窗口收起来。
+/// 关窗常驻（FR-5.2 + CHG-008 的 FR-5.4）：不退出进程，只把窗口收起来。
 ///
-/// 用最小化而不是 `Visible(false)`：eframe 0.37 从不把 macOS 的 `Reopen` 事件传上来，
-/// 真隐藏之后点 Dock 图标无法恢复，而单实例锁又会让"重开一个"直接退出。
-/// 最小化态由 AppKit 自己在 Dock 里留缩略图，点一下就回来，不需要应用侧代码。
-pub fn hide(ctx: &egui::Context, state: &mut AppState) {
+/// 两条去处只在 `TrayState` 上分叉，而且**必须整套一致**（REQ-006 的否定式判据）：
+///
+/// - `Available`：`Visible(false)`，激活策略同时切到 `.accessory`（Dock 磁贴一起消失，
+///   用户 2026-11-03 选的中间那一档）。唤醒入口是菜单栏那枚图标——它之所以算"入口"，
+///   是因为 `sync()` 每帧核对过那枚按钮的 target/action 确实归我们。策略那一发**失败也照样
+///   隐**：磁贴留在 Dock 只是不好看，窗口收起来而唤不回来才是要命，而后者由图标兜住。
+/// - `Unavailable`：保持本包之前唯一验证过的语义——`Minimized(true)`。磁贴留在 Dock，
+///   点缩略图回来，唤回判定靠 [`RevealGuard`] 猜"回来了没有"。
+///
+/// 两支命令队列不许混：`Available` 那一支 SHALL NOT 出现 `Minimized(true)`，
+/// 这是 TC-5.4-c 的否定式断言。
+pub fn hide(ctx: &egui::Context, state: &mut AppState, tray: TrayState) {
     // 由窗口关闭按钮触发时，必须在同一帧里撤销关闭，否则 eframe 会直接结束 run loop
     ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-    ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+    let into_tray = tray == TrayState::Available;
+    if into_tray {
+        if !crate::system::tray::set_policy(false) {
+            tracing::warn!("激活策略没能切到 accessory，Dock 磁贴这次不会消失");
+        }
+        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+    } else {
+        ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+    }
     state.hidden = true;
-    tracing::debug!("收进后台（最小化，进程不退出）");
+    tracing::debug!(into_tray, "关窗：收起来，进程不退出");
     ctx.request_repaint();
 }
 
@@ -826,16 +842,32 @@ impl RevealGuard {
 /// 重发几何不是为了改窗口，是为了逼 winit 再走一次 surface 尺寸同步：最小化期间
 /// `inner_rect` 是 `None`，恢复时若那次 `Resized` 没被处理，GL surface 会停在旧尺寸上，
 /// 画面就成了一张被非等比拉伸的旧图——文字变窄变扁、鼠标放上去也没有任何反馈。
-pub fn reveal(ctx: &egui::Context, state: &mut AppState, pending: &mut PendingGeometry) {
+///
+/// 收回走哪条路，唤回就得原样走回来（与 [`hide`] 同一分叉，`TrayState` 是唯一分叉点）：
+/// 托盘那支要先 `.regular` 再 `Visible(true)`——winit 的 `set_visible(true)` 走
+/// `makeKeyAndOrderFront`，而 `.accessory` 态的窗口能不能成为 key window 由策略决定，
+/// 顺序反了就叫不回焦点。
+pub fn reveal(
+    ctx: &egui::Context,
+    state: &mut AppState,
+    pending: &mut PendingGeometry,
+    tray: TrayState,
+) {
     state.hidden = false;
     // 收起前若是铺满的（任务 #25），这一次重发本身就把它还原了：`commands_for_mode` 用的
     // 是槽里记着的几何，而铺满期间那个槽没被写过。标记跟着清，否则下一次双击会走"还原"
     // 那一支，窗口原地不动。
     state.filled = false;
-    tracing::debug!(mode = ?state.config.ui.mode, "窗口恢复可见，重发几何");
-    // 与 hide 的 `Minimized(true)` 对上：AppKit 那边若还认为自己是最小化的，
-    // 这一步才真的把它叫回来；已经可见时是空操作。
-    ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+    tracing::debug!(mode = ?state.config.ui.mode, ?tray, "窗口恢复可见，重发几何");
+    if tray == TrayState::Available {
+        // 磁贴回来，并把应用叫到用户面前（spec Q-004）
+        crate::system::tray::set_policy(true);
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+    } else {
+        // 与 hide 的 `Minimized(true)` 对上：AppKit 那边若还认为自己是最小化的，
+        // 这一步才真的把它叫回来；已经可见时是空操作。
+        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+    }
     let mode = state.config.ui.mode;
     let target = target_size(&state.config.ui, mode);
     for command in commands_for_mode(&state.config.ui, mode) {
@@ -1276,20 +1308,70 @@ mod tests {
         assert_eq!((rect.w, rect.h), (800.0, 600.0));
     }
 
+    /// TC-5.4-c 的 `Available` 支：收进菜单栏 = `CancelClose` + `Visible(false)`，
+    /// 而且 SHALL NOT 出现 `Minimized(true)`——两支命令队列混在一起，唤回就走错门。
     #[test]
-    fn hide_cancels_close_and_minimizes() {
+    fn hide_with_a_tray_tucks_the_window_into_the_menu_bar() {
         let ctx = egui::Context::default();
         let mut state = state();
-        hide(&ctx, &mut state);
+        hide(&ctx, &mut state, TrayState::Available);
         let commands = queued(&ctx);
         assert!(commands.contains(&ViewportCommand::CancelClose));
-        assert!(commands.contains(&ViewportCommand::Minimized(true)));
+        assert!(commands.contains(&ViewportCommand::Visible(false)));
+        assert!(
+            !commands.contains(&ViewportCommand::Minimized(true)),
+            "托盘这一档不许再去最小化：那样唤回时要发 `Minimized(false)`，而窗口根本不是最小化的"
+        );
         assert!(!commands.contains(&ViewportCommand::Close));
         assert!(state.hidden);
         // 常驻期间内容原样
         assert_eq!(state.source, "hello");
-        reveal(&ctx, &mut state, &mut PendingGeometry::default());
-        assert!(!state.hidden);
+    }
+
+    /// TC-5.4-c 的 `Unavailable` 支：整档退回本包之前唯一验证过的语义
+    #[test]
+    fn hide_without_a_tray_minimizes_as_before() {
+        let ctx = egui::Context::default();
+        let mut state = state();
+        for tray in [TrayState::Unavailable, TrayState::Unknown] {
+            hide(&ctx, &mut state, tray);
+            let commands = queued(&ctx);
+            assert!(commands.contains(&ViewportCommand::CancelClose));
+            assert!(commands.contains(&ViewportCommand::Minimized(true)));
+            assert!(
+                !commands.contains(&ViewportCommand::Visible(false)),
+                "{tray:?} 这一档不许隐窗口：磁贴被关掉而唤回入口没装上，用户就只剩杀掉进程一条路"
+            );
+            assert!(state.hidden);
+            assert_eq!(state.source, "hello");
+        }
+    }
+
+    /// 唤回原样走回收回去那扇门，两支各发各的那一条；连着唤两次队列不变（幂等），
+    /// 因为托盘左键可能点在一只已经可见的窗口上
+    #[test]
+    fn reveal_undoes_whichever_way_the_window_went() {
+        for (tray, expected) in [
+            (TrayState::Available, ViewportCommand::Visible(true)),
+            (TrayState::Unavailable, ViewportCommand::Minimized(false)),
+        ] {
+            let ctx = egui::Context::default();
+            let mut state = state();
+            state.hidden = true;
+            reveal(&ctx, &mut state, &mut PendingGeometry::default(), tray);
+            assert!(!state.hidden);
+            let once = queued(&ctx);
+            assert!(once.contains(&expected), "{tray:?} 少发了 {expected:?}");
+
+            let mut again = PendingGeometry::default();
+            reveal(&ctx, &mut state, &mut again, tray);
+            assert_eq!(
+                queued(&ctx).len(),
+                once.len() * 2,
+                "两次唤回的队列应当完全相同"
+            );
+            assert!(!state.hidden, "唤回不许把标记又立回去");
+        }
     }
 
     /// macOS 上 `viewport().minimized` 运行时永不刷新，恢复判定必须看几何。
@@ -1358,7 +1440,12 @@ mod tests {
         state.hidden = true;
         state.filled = true;
 
-        reveal(&ctx, &mut state, &mut PendingGeometry::default());
+        reveal(
+            &ctx,
+            &mut state,
+            &mut PendingGeometry::default(),
+            TrayState::Unavailable,
+        );
 
         assert!(
             !state.filled,

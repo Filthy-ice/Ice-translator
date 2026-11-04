@@ -70,6 +70,29 @@ block2 = "0.6"
 #   feature = "block2"))]`（`NSSavePanel.rs:421`），回调参数 `NSModalResponse` 那几个常量也
 #   锁在它里面（`NSWindow.rs:69`）。不开就没有异步入口，只剩被禁的 `runModal`。
 # 它只多打开 objc2-foundation 已有 crate 的模块（NSArray/NSData/NSDate/…），不新增 crate 名。
+#
+# CHG-008 的菜单栏托盘（FR-5.4）再加八个模块 + 一个 foundation 模块，同样逐个给编译面证据：
+# - `NSStatusBar`：`systemStatusBar()` 与 `statusItemWithLength:` 的家（`NSStatusBar.rs:32-39`）；
+# - `NSStatusItem`：状态项本体，`statusItemWithLength:` 的返回类型、`setMenu:`、`button()` 都在里面
+#   （`NSStatusItem.rs:36-86`）；
+# - `NSStatusBarButton` + `NSResponder`：`button()` 那条 cfg 明列这两个（`NSStatusItem.rs:76-86`），
+#   后者是 `NSStatusBarButton : NSButton : NSControl : NSView : NSResponder` 父类链的最后一环，
+#   缺它生成的 `Deref` 指向不存在的类型——左/右键接线要拿到那枚按钮，就绕不开这一对；
+# - `NSMenu` + `NSMenuItem`：`setMenu:`/`menu()` 的门，加上 `NSMenu::new(mtm)`/`addItem:` 与
+#   `NSMenuItem::initWithTitle_action_keyEquivalent:`（`NSMenu.rs:204-466`、`NSMenuItem.rs:84-94`）；
+# - `NSImage`：`NSButton::setImage:` 整个方法 `#[cfg(feature = "NSImage")]`（`NSButton.rs:446-450`），
+#   `initWithData:` 与 `setTemplate:` 也住在它里面（`NSImage.rs:192/442`）；
+# - `NSRunningApplication`：**最容易漏的一个**。"关窗后 Dock 磁贴消失"这件事的方法
+#   `setActivationPolicy:` 整体 `#[cfg(feature = "NSRunningApplication")]`（`NSApplication.rs:746-755`），
+#   三个策略常量（Regular/Accessory/Prohibited）也定义在 `NSRunningApplication.rs:47-56` 里。
+#   不开它，代码不是"设置没生效"，是**方法根本看不见**；
+# - foundation 侧的 `NSData`：`NSImage::initWithData:` 的参数类型。
+# 这九个开关一个 crate 名都不新增。判据看 `cargo tree -p ice-app -e normal` 里
+# **objc2-app-kit 自己那一节**（2026-11-04 实测，20 个 feature 全开后只剩五个子依赖：
+# bitflags / block2 / objc2 / objc2-core-foundation / objc2-core-graphics / objc2-foundation）：
+# 它下面 SHALL NOT 出现 objc2-cloud-kit / core-video / core-media / image-io —— 开了 default
+# 才会多出这六个 rlib。（`core-text` 与 `objc2-metal` 整棵树里各有一处，来源是 eframe 自己的
+# 字体提供器与渲染后端，与本 crate 的 feature 无关，所以不能拿它们当判据。）
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSScreen",
     "NSView",
@@ -81,6 +104,14 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSSavePanel",
     "NSPanel",
     "NSApplication",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSStatusBarButton",
+    "NSResponder",
+    "NSMenu",
+    "NSMenuItem",
+    "NSImage",
+    "NSRunningApplication",
     "block2",
     "objc2-core-foundation",
 ] }
@@ -88,12 +119,14 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 # （`NSSavePanel::URL() -> Option<Retained<NSURL>>`、`NSOpenPanel::URLs()` 的返回类型住在它们里面）。
 # `NSObject` 是标题栏绿键那颗改道 target 的父类（`system::titlebar` 的 `define_class!`）。
 # `NSGeometry` 是 `NSRect/NSPoint/NSSize` 这组别名。
+# `NSData` 是托盘那张位图交给 `NSImage::initWithData:` 的那一步（`system::tray`）。
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSGeometry",
     "NSObject",
     "NSString",
     "NSURL",
     "NSArray",
+    "NSData",
 ] }
 # 从 eframe 拿到原生窗口句柄：`AppKitWindowHandle.ns_view` 指的是 NSView（不是窗口），
 # 再问它要 `window`。只取句柄，不引 winit 本身。

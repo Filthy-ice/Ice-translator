@@ -1,3 +1,299 @@
 {
-  "events": []
+  "events": [
+    {
+      "at": "2026-11-04T09:48:28+00:00",
+      "verification": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "ad06295879f48afe500fe3193762b6e6d6ffb906",
+        "tree_hash": "7d4583567ae008e0e6e30c9d0e2637ca7e48cdc12df343c47baa7249ba03e5b8",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      },
+      "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"--workspace\"] exit=0",
+      "artifact": "evidence/0001-V-001.txt",
+      "artifact_hash": "6218e7d0e23a575d2e767511eb2e18fa5a5810e917be34a0085c3f10d622a8ac"
+    },
+    {
+      "at": "2026-11-04T09:48:39+00:00",
+      "verification": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "ad06295879f48afe500fe3193762b6e6d6ffb906",
+        "tree_hash": "7d4583567ae008e0e6e30c9d0e2637ca7e48cdc12df343c47baa7249ba03e5b8",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      },
+      "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-app\"] exit=0",
+      "artifact": "evidence/0002-V-002.txt",
+      "artifact_hash": "ece8ed6c2b46ba1165665c2512fa46158120e7b9cec9d137f970d9323b676dfc"
+    },
+    {
+      "at": "2026-11-04T09:48:39+00:00",
+      "verification": "V-003",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "ad06295879f48afe500fe3193762b6e6d6ffb906",
+        "tree_hash": "7d4583567ae008e0e6e30c9d0e2637ca7e48cdc12df343c47baa7249ba03e5b8",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      },
+      "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"clippy\", \"--workspace\", \"--all-targets\", \"--\", \"-D\", \"warnings\"] exit=0",
+      "artifact": "evidence/0003-V-003.txt",
+      "artifact_hash": "5f2a1dd47210e51023bb84b421e28efbf4b2a7f06fca94331913f115326ba42b"
+    },
+    {
+      "at": "2026-11-04T09:48:46+00:00",
+      "verification": "V-004",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "ad06295879f48afe500fe3193762b6e6d6ffb906",
+        "tree_hash": "7d4583567ae008e0e6e30c9d0e2637ca7e48cdc12df343c47baa7249ba03e5b8",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      },
+      "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"fmt\", \"--all\", \"--\", \"--check\"] exit=0",
+      "artifact": "evidence/0004-V-004.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-04T09:48:46+00:00",
+      "verification": "V-005",
+      "requirements": [
+        "REQ-001",
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "ad06295879f48afe500fe3193762b6e6d6ffb906",
+        "tree_hash": "7d4583567ae008e0e6e30c9d0e2637ca7e48cdc12df343c47baa7249ba03e5b8",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      },
+      "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"tree\", \"-p\", \"ice-app\", \"-e\", \"normal\"] exit=0",
+      "artifact": "evidence/0005-V-005.txt",
+      "artifact_hash": "0fdeb9c25eaf6c85043eef02230a63ea314fb49c22f53647d8413c0f079e1855"
+    },
+    {
+      "at": "2026-11-04T09:48:46+00:00",
+      "verification": "V-006",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "ad06295879f48afe500fe3193762b6e6d6ffb906",
+        "tree_hash": "7d4583567ae008e0e6e30c9d0e2637ca7e48cdc12df343c47baa7249ba03e5b8",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      },
+      "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f",
+      "result": "passed",
+      "summary": "argv=[\"python3\", \"-B\", \"tools/check_traceability.py\"] exit=0",
+      "artifact": "evidence/0006-V-006.txt",
+      "artifact_hash": "3d579ecd8f59517661c0ed84d2fa33bcfeb1d5895c545551995c7166e9182d45"
+    },
+    {
+      "at": "2026-11-04T09:48:47+00:00",
+      "verification": "V-007",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "ad06295879f48afe500fe3193762b6e6d6ffb906",
+        "tree_hash": "7d4583567ae008e0e6e30c9d0e2637ca7e48cdc12df343c47baa7249ba03e5b8",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      },
+      "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f",
+      "result": "passed",
+      "summary": "argv=[\"./sdd\", \"scan\"] exit=0",
+      "artifact": "evidence/0007-V-007.txt",
+      "artifact_hash": "0aeba1998fea21b35462abc8486766f93bf061a7339e02280daffb374af459de"
+    },
+    {
+      "at": "2026-11-04T09:48:47+00:00",
+      "verification": "V-008",
+      "requirements": [
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "ad06295879f48afe500fe3193762b6e6d6ffb906",
+        "tree_hash": "7d4583567ae008e0e6e30c9d0e2637ca7e48cdc12df343c47baa7249ba03e5b8",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      },
+      "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f",
+      "result": "passed",
+      "summary": "argv=[\"bash\", \"-c\", \"! grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates\"] exit=0",
+      "artifact": "evidence/0008-V-008.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-04T09:49:00+00:00",
+      "verification": "V-009",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "ad06295879f48afe500fe3193762b6e6d6ffb906",
+        "tree_hash": "7d4583567ae008e0e6e30c9d0e2637ca7e48cdc12df343c47baa7249ba03e5b8",
+        "dirty": true
+      },
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "baseline": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      },
+      "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f",
+      "result": "observed",
+      "summary": "真机运行（本机 macOS 26.6.2，release 构建）拿到的一半：① 托盘在第一帧真的装出来了——日志行『托盘这一档定下来了 next=Available』（ 里 Unknown→install() 的定档日志），同一次启动只有这一行，进程唯一（pid 65572，单实例锁先于托盘）；② 日志全文只有锁路径与这一行档位，无窗口内容、无输入文本、无 Key，符合 NFR-3。尚未定论的七件里只有『装出来了』这一件有当刻证据：**唯一一枚不重复、深浅色菜单栏都看得见、左键真的唤回、右键三项各点一次、关窗后 Dock 磁贴真的消失且唤回后回来、唤回后内容与尺寸原样**——这六件都要真人看，未由代理判定；**隐藏静置十分钟的 CPU < 1% 未采到**（先前那次   PID TTY           TIME CMD 采样时窗口从未关过，属可见空闲样本，不能顶这一格）。进程仍在运行等用户按 docs/06 W-2.40 走查",
+      "artifact": "evidence/0009-V-009.txt",
+      "artifact_hash": "3bcbb9a0ba2546eb5567b0d840cb2f0cdd67158f24ba1785c622be3f4d9a144e"
+    },
+    {
+      "at": "2026-11-04T09:49:22+00:00",
+      "verification": "V-009",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "ad06295879f48afe500fe3193762b6e6d6ffb906",
+        "tree_hash": "7d4583567ae008e0e6e30c9d0e2637ca7e48cdc12df343c47baa7249ba03e5b8",
+        "dirty": true
+      },
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "baseline": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      },
+      "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f",
+      "result": "observed",
+      "summary": "真机运行（本机 macOS 26.6.2，release 构建）拿到的一半；覆盖上一条 V-009（那条把两处反引号当成命令替换，app::poll_tray 与 ps 的字样被 shell 输出顶掉了，事实内容与本条一致）。① 托盘在第一帧真的装出来了——日志行『托盘这一档定下来了 next=Available』，即 app::poll_tray 里 Unknown → tray::install() 的定档日志；同一次启动只有这一行，进程唯一（pid 65572，单实例锁先于托盘）。② 日志全文只有锁路径与这一行档位，无窗口内容、无输入文本、无 Key（NFR-3）。③ 真机七件里只有『装出来了』这一件有当刻证据：唯一一枚不重复、深浅色菜单栏都看得见、左键真的唤回、右键三项各点一次、关窗后 Dock 磁贴真的消失且唤回后回来、唤回后内容与尺寸原样——这六件都要真人看，不由代理判定。④ 隐藏静置十分钟的 CPU 未采到：先前那次采样时窗口从未关过，属可见空闲样本，不能顶这一格。进程仍在运行，等用户按 docs/06 的 W-2.40 走查",
+      "artifact": "evidence/0010-V-009.txt",
+      "artifact_hash": "3bcbb9a0ba2546eb5567b0d840cb2f0cdd67158f24ba1785c622be3f4d9a144e"
+    }
+  ]
 }
