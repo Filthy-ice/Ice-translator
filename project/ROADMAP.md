@@ -15,6 +15,9 @@
 | P6 | macOS Vision OCR 与行块合并 | 未开始 | `CHG-005` |
 | P7 | 擦除与译文回填、覆盖层降级、样图集评分 | 未开始 | `CHG-006` |
 | P8 | 追踪矩阵收口、性能与隐私实测、打包发布 | 未开始 | `CHG-007` |
+| 插入 | 菜单栏托盘 + 关窗收进托盘（FR-5.4 新增、FR-5.2 前半句由用户改判，2026-11-04） | 规格待批准 | `CHG-008` |
+
+`CHG-006` / `CHG-007` 是 P7 / P8 的预留号，插入包按 CHG-001 spec 那条"以新建 ID 为准并回写本表"往后编，不占用预留号。
 
 ## 待决事项
 
@@ -22,3 +25,4 @@
 - 打包发布时 `features/`、`quick/`、`incidents/`、`project/`、`codebase/`、`skills/`、`tools/`、`tests/`、`sdd`
   属于开发工作区，不进入 .app 产物（P8 的打包脚本按此排除）。
 - 非 macOS 平台的 OCR 降级路径（NFR-7）留到 v1.x，不在本轮。
+- Windows / Linux 的托盘（`Shell_NotifyIcon`、`StatusNotifierItem`）不在 CHG-008 本轮，按 NFR-7 另立待办；Wayland 无标准托盘。

@@ -140,7 +140,19 @@ const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/icon/icon-1024.png")
 /// 交给 Dock 的边长。Dock 磁贴最大约 128pt，视网膜下 256px 就到顶，再大只是白占内存。
 const APP_ICON_PX: u32 = 256;
 
-/// 把图标解成 eframe 要的 RGBA，并降采样到 [`APP_ICON_PX`]。
+/// 苹果 macOS 图标网格：图案**本体**占磁贴边长的 0.836，四周那圈透明留白是网格要求的，
+/// 不是画师的个人风格。这个数不是抄文档来的——本机四枚系统 App（Calculator / Notes /
+/// Music / Terminal）的 `.icns` 在 512 上逐像素量到实体包围盒 428×428，428/512 = 0.8359，
+/// 四枚完全一致。
+const DOCK_ARTWORK_GRID: f32 = 0.836;
+
+/// 定稿那张 `icon-1024.png` 是**满幅**画的：实体（alpha>128）包围盒 879×954，长边占到
+/// 画布自身的 0.932。按磁贴边长原样缩放交出去，我们的磁贴就比左右邻居大一圈
+/// （用户 2026-11-04："这一排图标，我们的图标明显大一圈"）。留白因此补在交接这一步，
+/// 不动那张已定稿的图源。
+const MASTER_ARTWORK_FILL: f32 = 0.932;
+
+/// 把图标解成 eframe 要的 RGBA：缩到 [`APP_ICON_PX`] 见方、按 [`DOCK_ARTWORK_GRID`] 留白、居中。
 ///
 /// 为什么非要这一项：**不设的话 eframe 退回它自己 `data/icon.png`——那张黑底白 `e`
 /// 是 egui 的 logo**（`native/epi_integration.rs:506`），这就是"图标定下了但 Dock 还是不对"
@@ -152,13 +164,23 @@ const APP_ICON_PX: u32 = 256;
 /// `IconDataExt::to_image` 又 clone 一份，启动那一帧白占约 8MB。降采样后是 256KB。
 fn app_icon() -> Option<egui::IconData> {
     let image = image::load_from_memory(APP_ICON_PNG).ok()?.into_rgba8();
-    let size = APP_ICON_PX.min(image.width().min(image.height()));
-    let resized =
-        image::imageops::resize(&image, size, size, image::imageops::FilterType::Lanczos3);
+    let tile = APP_ICON_PX.min(image.width().min(image.height()));
+    // 图源是方的，所以"整张缩多少"和"本体落在网格上"是同一个比例的两端：
+    // 本体要占磁贴的 0.836，而它占源图的 0.932，故源图占磁贴 0.836 / 0.932。
+    let artwork = (tile as f32 * DOCK_ARTWORK_GRID / MASTER_ARTWORK_FILL).round() as u32;
+    let scaled = image::imageops::resize(
+        &image,
+        artwork,
+        artwork,
+        image::imageops::FilterType::Lanczos3,
+    );
+    let mut canvas = image::RgbaImage::from_pixel(tile, tile, image::Rgba([0, 0, 0, 0]));
+    let offset = ((tile - artwork) / 2) as i64;
+    image::imageops::overlay(&mut canvas, &scaled, offset, offset);
     Some(egui::IconData {
-        width: resized.width(),
-        height: resized.height(),
-        rgba: resized.into_raw(),
+        width: canvas.width(),
+        height: canvas.height(),
+        rgba: canvas.into_raw(),
     })
 }
 
@@ -283,6 +305,56 @@ mod tests {
         assert!(
             icon.rgba.iter().step_by(4).skip(200).any(|&a| a == 0),
             "图标四角本该是透明的；整张不透明说明源图被换成了带底色的方图"
+        );
+    }
+
+    /// 量 RGBA 里实体（alpha>128）的包围盒，返回 `(x0, x1, y0, y1)`；闭区间，按像素序号算。
+    fn solid_bbox(rgba: &[u8], size: u32) -> (u32, u32, u32, u32) {
+        let (mut x0, mut y0) = (size, size);
+        let (mut x1, mut y1) = (0u32, 0u32);
+        for y in 0..size {
+            for x in 0..size {
+                if rgba[((y * size + x) * 4 + 3) as usize] > 128 {
+                    x0 = x0.min(x);
+                    y0 = y0.min(y);
+                    x1 = x1.max(x);
+                    y1 = y1.max(y);
+                }
+            }
+        }
+        (x0, x1, y0, y1)
+    }
+
+    #[test]
+    fn the_dock_icon_lands_on_the_apple_grid_instead_of_the_whole_tile() {
+        let icon = app_icon().expect("assets/icon/icon-1024.png 解不出来");
+        let size = icon.width;
+        let (x0, x1, y0, y1) = solid_bbox(&icon.rgba, size);
+        let long = (x1 - x0 + 1).max(y1 - y0 + 1) as f32 / size as f32;
+        assert!(
+            (long - DOCK_ARTWORK_GRID).abs() < 0.02,
+            "实体长边占磁贴 {long:.3}，网格要求 {DOCK_ARTWORK_GRID}——\
+             超出就是 Dock 上又比邻居大一圈（实测源图为 0.932）"
+        );
+
+        // 留白必须真存在且四周都有：只查一条轴的话，"整体偏一边"会伪装成"上下留了白"
+        let min_margin = (size as f32 * 0.06) as u32;
+        assert!(
+            x0 >= min_margin
+                && y0 >= min_margin
+                && x1 < size - min_margin
+                && y1 < size - min_margin,
+            "四周留白不足：x[{x0}..{x1}] y[{y0}..{y1}]，边长 {size}"
+        );
+
+        // 本体居中：包围盒中心离画布中心不超过 4px（图源自己的实体中心偏了约 13px，
+        // 缩到磁贴尺度后是 3px，再大的偏移说明贴放那一步算错了）
+        let center = size as f32 / 2.0;
+        let dx = ((x0 + x1) as f32 / 2.0 - center).abs();
+        let dy = ((y0 + y1) as f32 / 2.0 - center).abs();
+        assert!(
+            dx <= 4.0 && dy <= 4.0,
+            "本体没居中：偏移 ({dx:.1}, {dy:.1})"
         );
     }
 
