@@ -3,7 +3,7 @@
   "id": "CHG-008",
   "title": "菜单栏托盘与关窗收进托盘：FR-5.4 新增、FR-5.2 前半句按用户改判",
   "version": "v0.1",
-  "status": "SPEC_REVIEW",
+  "status": "IMPLEMENTING",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -67,8 +67,56 @@
       "at": "2026-11-04T07:41:05+00:00",
       "action": "transition",
       "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-04T08:03:56+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354",
+        "version": "v0.1",
+        "by": "Filthy-ice",
+        "reference": "2026-11-04 Qoder Desktop 会话：批准 CHG-008",
+        "at": "2026-11-04T08:03:56+00:00",
+        "snapshot": "approvals/v0.1-bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354.md",
+        "scope": "local-delivery",
+        "context_hash": "0de6f94dc52a18aa46f1013f7c2f2266a92e251548bab60087d0cc756dccd169",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-04T08:04:49+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-008",
+        "version": "v0.1",
+        "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+      }
+    },
+    {
+      "at": "2026-11-04T08:05:23+00:00",
+      "action": "seal-plan",
+      "detail": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f"
+    },
+    {
+      "at": "2026-11-04T08:05:23+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
     }
   ],
-  "approval": null,
-  "plan_hash": null
+  "approval": {
+    "hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354",
+    "version": "v0.1",
+    "by": "Filthy-ice",
+    "reference": "2026-11-04 Qoder Desktop 会话：批准 CHG-008",
+    "at": "2026-11-04T08:03:56+00:00",
+    "snapshot": "approvals/v0.1-bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354.md",
+    "scope": "local-delivery",
+    "context_hash": "0de6f94dc52a18aa46f1013f7c2f2266a92e251548bab60087d0cc756dccd169",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f"
 }

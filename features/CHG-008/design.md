@@ -1,10 +1,10 @@
 Change: CHG-008
 Version: v0.1
-Spec-Hash: UNAPPROVED
+Spec-Hash: bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354
 
 # CHG-008 · Design
 
-- Change: CHG-008 · v0.1 · 待用户批准（`./sdd approve CHG-008` 由用户本人跑；批准前本包只动规格与设计，不动 `mode::hide`/`reveal` 与任何原生代码）
+- Change: CHG-008 · v0.1 · 已批准（2026-11-04 会话，`./sdd approve CHG-008` 由用户本人跑；批准范围=本设计七条 REQ，实现只动 `ice-app`）
 - Repo: `ice-translator`（分支 `main`）
 - 前置：CHG-004（P5）与 CHG-005（P6）都在 IMPLEMENTING，本包只改"关窗的去向 + 唤回的入口 + 托盘本身"，不带 OCR、回填、形态、吸附内容。代码态（2026-11-04）：**502 passed / 0 failed / 5 ignored**（ice-app 349 · ice-core 58 · ice-providers 62 · ice-vision 33）
 - 需求侧本轮已先行改判并登记（CHG-001 REQ-004 的口径）：`docs/01-requirements.md` 的 FR-5.2 前半句与新增 FR-5.4、`docs/traceability.md` 两行、`docs/06` 的 TC-5.4-a/b/c 与 W-2.40/W-2.12、`docs/07` 变更登记与 §5 偏差关闭、`docs/02` 的 `system::tray` 行、`docs/03` §4、`docs/05` §8、`project/ROADMAP.md` 插入行
@@ -25,7 +25,7 @@ Spec-Hash: UNAPPROVED
 
 `system::tray` 与 `system::titlebar`、`system::dblclick` 是同一个形状的第三个实例：**AppKit 回调只记意图，帧循环负责兑现**。这个形状不是为了整齐，是因为 `define_class!` 出来的方法体里既拿不到 `AppState` 也不该拿——拿不到的东西就不许假装能拿。
 
-### 依赖增量（批准前要先看清这一段）
+### 依赖增量（八个 app-kit 开关 + 一个 foundation 开关）
 
 `crates/ice-app/Cargo.toml` 现在这串 feature 是变更 K 之后回到最小集合的结果（注释里写明了为什么不开 default：default 会打开约 283 个模块，连带把 `objc2-cloud-kit`/`core-video`/`core-text`/`metal` 等六个 Apple 绑定 crate 拖进编译图）。本包要加**九个开关**，每一个都有编译面证据，逐个写进那段注释：
 
