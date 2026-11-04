@@ -38,17 +38,15 @@ pub fn left_button_down() -> Option<bool> {
 
 /// 光标此刻在屏幕上的位置（egui 坐标系，与 `viewport().outer_rect` 同一原点）。
 ///
-/// D-16 那条纪律的第二处应用：`ctx.input(...).pointer.hover_pos()` 量的是"事件投递给我们了
-/// 没有"，不是"鼠标在哪"。应用不在前台时那一路投递会停，指针就凭空消失了——停靠的收回计时
-/// 挂在它身上，出的就是用户 2026-11-04 那句"我鼠标还没有移到最左边/最右边的时候他又缩进去了"。
-/// `+mouseLocation` 读的是窗口服务器里的当前光标，与投递无关，也不需要任何权限。
+/// D-16 那条纪律的第二处应用：位置那一路投递一停，`hover_pos()` 就说指针消失了，而鼠标还压
+/// 在窗口上——停靠的收回计时挂在它身上，出的就是用户 2026-11-04 那句"我鼠标还没有移到最左边/
+/// 最右边的时候他又缩进去了"。`+mouseLocation` 读的是窗口服务器里的当前光标，与投递无关，
+/// 也不需要任何权限。
 ///
 /// 返回 `None` 表示问不出来：非 macOS、不在主线程（无头的帧测试正是这种）、或拿不到主屏高度。
 /// 调用方必须把它当"不知道"，退回 `hover_pos`——**不许因为问不到就永远不收**。
 #[cfg(target_os = "macos")]
 pub fn cursor() -> Option<egui::Pos2> {
-    // 与 `system::window` 同一条规矩：只在主线程上碰 AppKit。拿不到 marker 说明调用点错了
-    // （无头的帧测试跑在工作线程上），这里自然 `None`，停靠判定退回事件代理量。
     MainThreadMarker::new()?;
     // 主屏高度是翻转的基准，与光标落在哪块屏无关（同 `screen::flip` 的取法）
     let main_height = crate::system::screen::probe()?.first()?.frame.h;
@@ -66,8 +64,6 @@ pub const fn cursor() -> Option<egui::Pos2> {
     None
 }
 
-use eframe::egui;
-#[cfg(not(target_os = "macos"))]
 use eframe::egui;
 #[cfg(target_os = "macos")]
 use objc2::MainThreadMarker;

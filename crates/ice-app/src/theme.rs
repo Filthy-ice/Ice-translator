@@ -201,54 +201,40 @@ pub const fn edge_color(dark: bool) -> Color32 {
 /// 悬停才浮现一条 gray(105)。这里把三态各配一条实线，并把悬停/按下做成"内缩 + 变深"：
 /// `expansion` 取负是**纯绘制层**的内缩，不参与布局，看起来就是按下去了一点。
 ///
-/// 基准一律取 egui 自带的那套 `Widgets::{light,dark}()`，不是当前样式里的值——`apply`
-/// 每帧都跑，在现有颜色上乘就等于每帧加深一次（跟上面字号缩放同一个坑）。
-///
-/// 浅色那一支不走基准了，直接取 [`COOL_HOVER`]/[`COOL_PRESSED`]：既然基底已经改成冷灰白，
-/// 悬停/按下就得在同一色系里往深走，`scale_rgb` 乘出来的还是纯灰，一冷一灰两档并排更难看。
+/// 基准一律取 egui 自带的那套 `Widgets::dark()`，不是当前样式里的值——`apply` 每帧都跑，
+/// 在现有颜色上乘就等于每帧加深一次（跟上面字号缩放同一个坑）。浅色那一支不乘基准：
+/// 基底已经是冷灰白，悬停/按下就得在同一色系里往深走，[`COOL_HOVER`] 与 [`COOL_PRESSED`]
+/// 是从 [`COOL_RAISED`] 往下两档；乘出来的纯灰放冷色旁边更难看。
 pub fn apply_widget_contrast(style: &mut egui::Style) {
     let dark = style.visuals.dark_mode;
-    let base = if dark {
-        egui::style::Widgets::dark()
+    let (hover_fill, pressed_fill) = if dark {
+        let base = egui::style::Widgets::dark().inactive.weak_bg_fill;
+        (scale_rgb(base, 1.55), scale_rgb(base, 1.9))
     } else {
-        egui::style::Widgets::light()
+        (COOL_HOVER, COOL_PRESSED)
     };
     let edge = edge_color(dark);
-    let hover_fill = if dark {
-        scale_rgb(base.inactive.weak_bg_fill, 1.55)
-    } else {
-        COOL_HOVER
-    };
-    let pressed_fill = if dark {
-        scale_rgb(base.inactive.weak_bg_fill, 1.9)
-    } else {
-        COOL_PRESSED
-    };
     let widgets = &mut style.visuals.widgets;
     widgets.inactive.bg_stroke = Stroke::new(1.0, edge);
-    widgets.hovered.bg_stroke = Stroke::new(
-        1.0,
-        if dark {
-            Color32::from_gray(190)
-        } else {
-            Color32::BLACK
-        },
-    );
+    widgets.hovered.bg_stroke = Stroke::new(1.0, press_edge(dark, 190));
     widgets.hovered.weak_bg_fill = hover_fill;
     widgets.hovered.bg_fill = hover_fill;
     widgets.hovered.expansion = -1.0;
-    widgets.active.bg_stroke = Stroke::new(
-        1.0,
-        if dark {
-            Color32::from_gray(220)
-        } else {
-            Color32::BLACK
-        },
-    );
+    widgets.active.bg_stroke = Stroke::new(1.0, press_edge(dark, 220));
     widgets.active.weak_bg_fill = pressed_fill;
     widgets.active.bg_fill = pressed_fill;
     widgets.active.expansion = -2.0;
     widgets.open.bg_stroke = Stroke::new(1.0, edge);
+}
+
+/// 悬停与按下那两条描边：深色往上提亮一档（190 → 220 就是"越按越亮"那两个字的方向），
+/// 浅色一律压黑——冷灰白底上只有黑线才读得出"这里有个框"。
+const fn press_edge(dark: bool, lightened: u8) -> Color32 {
+    if dark {
+        Color32::from_gray(lightened)
+    } else {
+        Color32::BLACK
+    }
 }
 
 /// 冷灰白基底：把浅色那一套的**底与线**换成 [`COOL_*`] 那几档。
