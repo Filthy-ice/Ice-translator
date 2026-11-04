@@ -1,0 +1,239 @@
+{
+  "baseline": null,
+  "design": [
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    },
+    {
+      "requirement": "REQ-007",
+      "section": "## REQ-007 实现与验证"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "note": "全量单测：既有 502 项不回退（形态切换、停靠、置顶、主题三态、失焦半透明、双击铺满、单实例锁、Cmd+Q 落盘顺序、提示条淡出、D-6/D-10 的三段护栏），加本包新增的位图四条、菜单文案与映射、意图取走即清零、TrayState 两支命令序列、隐藏期不续期"
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
+      "note": "本包全部无头判据住在这里：TC-5.4-a（glyph_bytes 的边长/纯黑 RGB/四角透明/包围盒居中）、TC-5.4-b（menu_titles 两态 + 三意图槽取走即清零 + 意图→Action 映射表含『Quit 必须是既有 Action::Quit』）、TC-5.4-c（Available 有 Visible(false) 无 Minimized(true)、Unavailable 反之、reveal 幂等、hidden 复位、设置句文案两支不同且不含『最小化』、隐藏帧的 repaint 计数）；重写的 hide_cancels_close_and_minimizes 与 hide_window_keeps_the_process_and_the_content 两支、改挂 Unavailable 的四条 RevealGuard 测试"
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "note": "含本包新增的 unsafe（setTarget: 的 weak 赋值、sendActionOn:、initWithTitle:action:keyEquivalent:、initWithData:、setActivationPolicy:）：clippy 零警告，unsafe 块的 SAFETY 注释逐条在位"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "note": "格式门禁"
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-001",
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "tree",
+        "-p",
+        "ice-app",
+        "-e",
+        "normal"
+      ],
+      "note": "依赖面取证：九个 feature 开关之后，传递依赖里 SHALL NOT 出现 objc2-cloud-kit/objc2-core-video/objc2-core-text/objc2-metal/objc2-core-media/objc2-image-io（default 才拖进来的那批），SHALL NOT 出现任何新增 crate 名（不引 tray-icon）。NSRunningApplication 那条的必要性由『不开就看不见 setActivationPolicy:』的编译结果本身佐证"
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "python3",
+        "-B",
+        "tools/check_traceability.py"
+      ],
+      "note": "需求↔用例双向闭合：FR-5.2（改判后的前半句）与 FR-5.4 四句在 docs/traceability.md 和 docs/06 两侧都对得上 TC-5.4-a/b/c 与 W-2.40/W-2.12/W-2.26，总数维持 45 ↔ 45"
+    },
+    {
+      "id": "V-007",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "scan"
+      ],
+      "note": "敏感信息基线扫描（含本包规格/设计/任务件与 CPU 采样留档）"
+    },
+    {
+      "id": "V-008",
+      "requirements": [
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "bash",
+        "-c",
+        "! grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates"
+      ],
+      "note": "Key 形态字符串零命中（NFR-3、ADR-005）；本包的日志与证据同样只允许 outcome/policy/hidden/错误码/耗时一类计数，不含窗口内容、输入文本或识别文本"
+    },
+    {
+      "id": "V-009",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真机运行（本机 macOS 26.6.2）：菜单栏真的装出唯一一枚图标（重复启动与反复关窗不出现第二枚）、深色与浅色菜单栏下都看得见（模板色自动翻深浅）、左键唤回与右键菜单在真机上分得开（含 Ctrl+点击）、关窗后 Dock 磁贴真的消失且唤回后回来、唤回后内容与尺寸原样、隐藏静置十分钟的 ps/CPU 采样数字（<1% 的实测值，采不到就登记『未采到』）；脱敏输出由 ./sdd record 导入。停止条件 1/2/3/4/6 都在这一条定论"
+    },
+    {
+      "id": "V-010",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "用户按 docs/06 的 W-2.40 真人走查（并复核 W-2.26 的退出入口、W-1.25 的 Dock 磁贴对照）：这枚图认不认得出是本应用、菜单三项的 wording 顺不顺、『关窗收进托盘 + 左键唤回 + 磁贴消失』是不是你要的语义、设置页那句说明与真实去向一致；逐行结论写进 docs/07-acceptance.md 的变更登记与 P5/P6 段"
+    }
+  ]
+}
