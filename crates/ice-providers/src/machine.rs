@@ -111,21 +111,40 @@ impl MachineTranslateEngine {
     }
 }
 
-/// `responseStatus` 实测既可能是数字 `200` 也可能是字符串 `"403"`
+/// `responseStatus` 实测既可能是数字 `200` 也可能是字符串 `"403"`。
+///
+/// 三个字段端点都会给 `null`（实测：无内容的语言对给 `"responseData":{"translatedText":null}`，
+/// 配额用尽给 `"responseData":null`），而 `#[serde(default)]` 只兜**键缺失**、不兜 `null`——
+/// 类型写成 `String` 时整份响应会判成"不是预期 JSON"，用户看到的是一句 serde 报错，
+/// 而真正的原因（今天免费额度用完了）就在同一份响应的 `responseDetails` 里。
 #[derive(Debug, Deserialize)]
 struct MyMemoryResponse {
     #[serde(rename = "responseData")]
-    data: ResponseData,
+    data: Option<ResponseData>,
     #[serde(rename = "responseStatus", default)]
     status: serde_json::Value,
-    #[serde(rename = "responseDetails", default)]
-    details: String,
+    #[serde(rename = "responseDetails")]
+    details: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ResponseData {
-    #[serde(rename = "translatedText", default)]
-    translated: String,
+    #[serde(rename = "translatedText")]
+    translated: Option<String>,
+}
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|text| !text.trim().is_empty())
+}
+
+/// 端点把原因写在两处：正常在 `responseDetails`，个别错误只写进 `translatedText`
+/// （实测无效源语言那一条就是）。两处都没有——包括写成 `null` 的——只能说"服务未说明原因"，不许编一个。
+fn reason(details: Option<String>, translated: Option<String>) -> String {
+    [details, translated]
+        .into_iter()
+        .flatten()
+        .find(|text| !text.trim().is_empty())
+        .unwrap_or_else(|| "服务未说明原因".to_string())
 }
 
 fn status_code(value: &serde_json::Value) -> Option<u16> {
@@ -138,28 +157,19 @@ fn status_code(value: &serde_json::Value) -> Option<u16> {
 
 impl MyMemoryResponse {
     fn into_translation(self) -> ProviderResult<String> {
+        let translated = non_empty(self.data.and_then(|data| data.translated));
         match status_code(&self.status) {
-            Some(200) => {}
-            Some(other) => {
-                let reason = if self.details.trim().is_empty() {
-                    self.data.translated
-                } else {
-                    self.details
-                };
-                return Err(ProviderError::Status(other, reason));
-            }
+            Some(200) => translated.ok_or(ProviderError::Empty),
+            Some(other) => Err(ProviderError::Status(
+                other,
+                reason(self.details, translated),
+            )),
             // 状态字段缺失或形态不认识：按解析失败处理，不猜成功
-            None => {
-                return Err(ProviderError::Decode(format!(
-                    "机翻响应缺少可识别的 responseStatus：{:#?}",
-                    self.status
-                )));
-            }
+            None => Err(ProviderError::Decode(format!(
+                "机翻响应缺少可识别的 responseStatus：{:#?}",
+                self.status
+            ))),
         }
-        if self.data.translated.trim().is_empty() {
-            return Err(ProviderError::Empty);
-        }
-        Ok(self.data.translated)
     }
 }
 
@@ -388,6 +398,54 @@ mod tests {
             matches!(&err, ProviderError::Status(403, reason) if reason.contains("QUERY LENGTH")),
             "{err:?}"
         );
+    }
+
+    /// 一次请求、一份固定响应，把结果原样交出来。下面三条只差在响应体的形状上。
+    async fn outcome(body: &str) -> ProviderResult<TranslationResult> {
+        let fake = serve(vec![body.to_string()]);
+        engine(&fake.url)
+            .translate(&TranslationRequest::new(
+                "hello",
+                LangPair::explicit(Language::En, Language::ZhHans),
+            ))
+            .await
+    }
+
+    /// 实测：这一对语言没有内容时端点给 `"responseData":{"translatedText":null}`，
+    /// 免费额度用完给 `"responseData":null`。`serde(default)` 只兜"键不存在"、不兜 `null`，
+    /// 所以这几处类型必须是 `Option`——否则用户看到的是一句 serde 报错，
+    /// 而服务真正说的话（额度、无效语言）就丢在同一份响应里了。
+    #[tokio::test]
+    async fn a_null_translation_is_empty_not_unparseable() {
+        let err = outcome(
+            r#"{"responseData":{"translatedText":null},"responseStatus":200,"responseDetails":""}"#,
+        )
+        .await
+        .expect_err("200 但没内容，不能当成翻好了");
+        assert!(matches!(err, ProviderError::Empty), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_null_response_data_still_says_why() {
+        let err = outcome(
+            r#"{"responseData":null,"responseStatus":403,"responseDetails":"MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS FOR TODAY"}"#,
+        )
+        .await
+        .expect_err("额度用尽必须报失败");
+        assert!(
+            matches!(&err, ProviderError::Status(403, reason) if reason.contains("FREE TRANSLATIONS")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_null_details_does_not_break_a_good_translation() {
+        let result = outcome(
+            r#"{"responseData":{"translatedText":"你好"},"responseStatus":200,"responseDetails":null}"#,
+        )
+        .await
+        .expect("译文在，详情是不是 null 不该影响成功");
+        assert_eq!(result.text, "你好");
     }
 
     #[tokio::test]
