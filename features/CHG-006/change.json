@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "id": "CHG-006",
+  "title": "图片翻译 P7：原文擦除与译文回填、覆盖层降级、导出与三阶段进度",
+  "version": "v0.1",
+  "status": "SPEC_REVIEW",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-001",
+      "blocking": false,
+      "question": "`CompositeOutput` 现在是个**二选一**的 enum（`Replaced{image, replaced_blocks}` \\",
+      "resolution": "默认改形状（全仓零引用已证，改它不牵动调用点）：成品只有一份图 + 逐块画法记录（块 id → InPlace/Overlay/Skip）+ 两个计数，`mode_label()` 改成如实表达『含 N 块覆盖层』；不许为迁就二选一 enum 而把整图强行判成一种模式。备选（保留原形状 → Complex 块跳过不画）已在 spec 写出，你选它我就改 REQ-003/006 并重算哈希。",
+      "source": "`crates/ice-vision/src/composite.rs:30-60`（enum 两变体 + mode_label）、2026-11-04 全仓 grep 实测 `CompositeOutput`/`Renderer`/`mode_label` 除自身与 `lib.rs:13` re-export 外零命中；`docs/04-image-pipeline.md` §3/§6、`docs/01` FR-2.7 原文。"
+    },
+    {
+      "id": "Q-002",
+      "blocking": false,
+      "question": "逐块翻译**串行还是并行**？`docs/03` I-04 定了\"行间不并发（避免限流）\"，而文本页长文提速那条已经证明并行能快 4 倍（`MAX_IN_FLIGHT=4`）",
+      "resolution": "已决默认：串行（遵 P2 的 I-04『行间不并发（避免限流）』，机翻免费额度按请求数算）。代价写清：20 块 × 一次往返可能等十几秒，靠 REQ-009 的『翻译 N/M 块』显示承担。你要并行就一句改口，改一处限流写法，不动需求。",
+      "source": "`docs/03-ui-design.md:148`（I-04 原文『逐块走 Translator，行间不并发（避免限流）』）、`crates/ice-providers/src/parallel.rs:24`（MAX_IN_FLIGHT=4）与 request.rs:7（单字符串）。2026-11-04 会话：Agent 依源码与已定 UI 口径作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-003",
+      "blocking": false,
+      "question": "回填要的字体路径与 face 号，仓里已经有两处字面量（`ice-app/src/fonts.rs:35-36` 给 egui、`self_metric.rs` 给光栅化）",
+      "resolution": "已决默认：字体路径与 face 号收一处（进 ice-core），`ice-app::fonts`、本包绘制侧、`examples/self_metric.rs` 都引用它；代价是动到 P5 已验收那条的一个常量（不是行为改变）。你选『两处各留』我在 docs/05 §6 登记例外。",
+      "source": "`crates/ice-app/src/fonts.rs:35-36`、`crates/ice-vision/examples/self_metric.rs` 头部常量、`crates/ice-vision/Cargo.toml:66-75`；用户 2026-10-19 之后反复强调的『代码不能一直堆叠，提取公共和可复用的』。"
+    },
+    {
+      "id": "Q-004",
+      "blocking": false,
+      "question": "「复制图片」会抹掉剪贴板里的文本（`arboard` 的 macOS 实现 `osx.rs:343` 先 `clipboard.clear()` 再 `writeObjects`，源码实测）",
+      "resolution": "已决默认：接受这条 macOS 共性行为 + 在 hover 与提示条里明说『复制图片会覆盖剪贴板里的文本』；不擅自备份还原剪贴板。备选『复制成文件（writeURLs）』能保住文本但引入临时文件，需你批准才做。",
+      "source": "`~/.cargo/registry/src/…/arboard-3.7.0/src/platform/osx.rs:343`（先 `clipboard.clear()` 再 `writeObjects`）、`lib.rs:146`（set_image 存在）、`common.rs:127`（ImageData 形状）；2026-11-04 源码核对。"
+    },
+    {
+      "id": "Q-005",
+      "blocking": false,
+      "question": "FR-2.6 说\"保存 PNG/JPEG\"——**格式怎么选**？两个按钮、一个面板里选类型、还是按扩展名推断？",
+      "resolution": "已决默认：一颗『保存』，面板允许 png/jpg/jpeg，按扩展名选编码器、无扩展名补 .png；带 alpha 的源图选 JPEG 时提示『JPEG 会丢 alpha』。备选两颗按钮（保存 PNG / 保存 JPEG）。",
+      "source": "`Cargo.toml:27`（image features=[png,jpeg] ⇒ 两个编码器已在）、`crates/ice-app/src/system/panel.rs:51`（ALLOWED_TYPES 的既有口径）；docs/01 FR-2.6 原文『保存 PNG/JPEG 到用户选择路径』。"
+    },
+    {
+      "id": "Q-006",
+      "blocking": false,
+      "question": "三阶段的\"可取消\"里，**翻译段停下来后已经翻好的译文留不留**？FR-2.9 只说\"不残留半成品\"，没说译文算不算半成品",
+      "resolution": "已决默认：翻译段停下来后已翻好的译文留在块里（不销毁用户没要求销毁的东西），界面明说『这一次没有成品图』，满足 TC-2.9-b 的三条判据。你选『全部丢弃』我把 REQ-009 那句反过来写。",
+      "source": "`docs/01-requirements.md:54` FR-2.9 原文、`docs/06-test-cases.md` TC-2.9-b 的三条判据、`features/CHG-005/spec.md` Q-008（识别段撤不回那条）；2026-11-04 会话：Agent 作出的实现裁定，批准即按此默认生效。"
+    },
+    {
+      "id": "Q-007",
+      "blocking": false,
+      "question": "倾斜与竖排块（docs/04 §4 第 7 条：有 `polygon` 且主轴角 >5° 时逆仿射拉正 → 画 → 正仿射贴回）本包**做不做**？",
+      "resolution": "已决默认：本包不做倾斜/竖排的逆仿射，统一走覆盖层，把 docs/04 §6 的 L-5 更新为『P7 落地形态 = 覆盖层』。理由：polygon 至今是 Option 且 CHG-005 允许只填 bbox，拿不到可信倾斜角；做则 REQ-003/004/005 各要一套旋转坐标系判定，工时 +4h 起。",
+      "source": "`docs/04-image-pipeline.md` §4 第 7 条（自己写了『P7 若来不及，明确记录为已知限制并统一走覆盖层』）与 §6 L-5、`features/CHG-005/spec.md` REQ-003 边界（polygon 允许留 None）。"
+    },
+    {
+      "id": "Q-008",
+      "blocking": false,
+      "question": "真实样图与四项人工评分的原料**仍然缺**（`assets/samples/` 自 2026-10-28 起为空，CHG-005 的 Q-003 未解）。TC-2.7-a 要的 IMG-13（窄块 + 德语长译文）本来就没有，也没人标注",
+      "resolution": "待你决定（Agent 不替你定达标依据），三条与 P6 的 Q-003 同构：(a) 你给 3~10 张真实截图进 assets/samples/（含渐变按钮/照片背景那类），我出逐张跑完整链的工具（CSV 只有文件名/块数/计数/耗时），打分人工做；(b) 只出自绘两层指标，四项人工评分记未闭环推到 P8；(c) 我自造 IMG-13（构造样图）+ 你随手给 1~2 张真图跑观察值。默认 (c) 起步并邀请 (a)；无论哪条，4.0/3.5/3.0/0.9 与 0.92 五个数一个字不动。",
+      "source": "2026-10-28 与 2026-11-03 两次实测 `assets/samples/` 为空目录（CHG-005 事实表与 TC-2.2-a 留档）、`docs/06-test-cases.md` TC-2.7-a 要的 IMG-13 不存在、`docs/04` §5 四项人工指标与 §5 末段『不合格样例转入已知限制清单』。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-04T12:52:45+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-11-04T12:57:12+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-11-04T12:57:16+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    }
+  ],
+  "approval": null,
+  "plan_hash": null
+}
