@@ -26,16 +26,16 @@
     {
       "id": "Q-003",
       "blocking": false,
-      "question": "回填要的字体路径与 face 号，仓里已经有两处字面量（`ice-app/src/fonts.rs:35-36` 给 egui、`self_metric.rs` 给光栅化）",
+      "question": "回填要的字体路径与 face 号，仓里已经有两处字面量（`ice-app/src/fonts.rs:35,37` 给 egui、`self_metric.rs` 给光栅化）",
       "resolution": "已决默认：字体路径与 face 号收一处（进 ice-core），`ice-app::fonts`、本包绘制侧、`examples/self_metric.rs` 都引用它；代价是动到 P5 已验收那条的一个常量（不是行为改变）。你选『两处各留』我在 docs/05 §6 登记例外。",
-      "source": "`crates/ice-app/src/fonts.rs:35-36`、`crates/ice-vision/examples/self_metric.rs` 头部常量、`crates/ice-vision/Cargo.toml:66-75`；用户 2026-10-19 之后反复强调的『代码不能一直堆叠，提取公共和可复用的』。"
+      "source": "`crates/ice-app/src/fonts.rs:35,37`、`crates/ice-vision/examples/self_metric.rs` 头部常量、`crates/ice-vision/Cargo.toml:65-73`；用户 2026-10-19 之后反复强调的『代码不能一直堆叠，提取公共和可复用的』。"
     },
     {
       "id": "Q-004",
       "blocking": false,
-      "question": "「复制图片」会抹掉剪贴板里的文本（`arboard` 的 macOS 实现 `osx.rs:343` 先 `clipboard.clear()` 再 `writeObjects`，源码实测）",
+      "question": "「复制图片」会抹掉剪贴板里的文本（`arboard` 的 macOS 实现 `osx.rs:347` 先 `clipboard.clear()` 再 `writeObjects`，源码实测）",
       "resolution": "已决默认：接受这条 macOS 共性行为 + 在 hover 与提示条里明说『复制图片会覆盖剪贴板里的文本』；不擅自备份还原剪贴板。备选『复制成文件（writeURLs）』能保住文本但引入临时文件，需你批准才做。",
-      "source": "`~/.cargo/registry/src/…/arboard-3.7.0/src/platform/osx.rs:343`（先 `clipboard.clear()` 再 `writeObjects`）、`lib.rs:146`（set_image 存在）、`common.rs:127`（ImageData 形状）；2026-11-04 源码核对。"
+      "source": "`~/.cargo/registry/src/…/arboard-3.7.0/src/platform/osx.rs:347`（先 `clipboard.clear()` 再 `writeObjects`）、`lib.rs:146`（set_image 存在）、`common.rs:127`（ImageData 形状）；2026-11-04 源码核对。"
     },
     {
       "id": "Q-005",

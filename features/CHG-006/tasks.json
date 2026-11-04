@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": "T-001",
-      "title": "先把绘制译文那两块地基打平再动业务代码：① `crates/ice-vision/Cargo.toml` 把 `ab_glyph_rasterizer 0.1.10` + `owned_ttf_parser 0.25.1` 从 `[dev-dependencies]` 移到 `[dependencies]`（两个都已在 `Cargo.lock`，不新增 crate 名、不需要联网；`image` 的 feature 一个都不加，PNG/JPEG 编码本来就在收窄集合里）——移动后 SHALL 重跑一次 `cargo tree -p ice-vision -e normal` 的零网络取证，`-e normal` 排除 dev 依赖，提升前那张输出不能再交差；② 新建 `crates/ice-core/src/font.rs` 作为字体路径与 face 号的唯一出处（`HEITI_PATH` + `HEITI_SC_FACE = 1` + 后备 `GOTHIC_PATH`，Q-003），`ice-app::fonts`、`ice-vision::paint`、`examples/self_metric.rs` 三处改引用它，全仓 SHALL NOT 再出现第二份 `/System/Library/Fonts/...` 字面量",
+      "title": "先把绘制译文那两块地基打平再动业务代码：① `crates/ice-vision/Cargo.toml` 把 `ab_glyph_rasterizer 0.1.10` + `owned_ttf_parser 0.25.1` 从 `[dev-dependencies]` 移到 `[dependencies]`（两个都已在 `Cargo.lock`，不新增 crate 名、不需要联网；`image` 的 feature 一个都不加，PNG/JPEG 编码本来就在收窄集合里）——移动后 SHALL 重跑一次 `cargo tree -p ice-vision -e normal` 的零网络取证，`-e normal` 排除 dev 依赖，提升前那张输出不能再交差；② 新建 `crates/ice-core/src/font.rs` 作为字体路径与 face 号的唯一出处（`HEITI_PATH` + `HEITI_SC_FACE_INDEX = 1` + 后备 `GOTHIC_PATH`，Q-003），`ice-app::fonts`、`ice-vision::paint`、`examples/self_metric.rs` 三处改引用它，全仓 SHALL NOT 再出现第二份 `/System/Library/Fonts/...` 字面量",
       "requirements": [
         "REQ-004",
         "REQ-005"
