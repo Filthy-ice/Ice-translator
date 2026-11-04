@@ -224,7 +224,7 @@ alpha：全图 alpha 加权统计，`export` 的 PNG 保留 alpha、JPEG 丢 alp
 
 **第一层（可自动算的下限）= `examples/compose_metric.rs`**：五类自绘样图（纯色浅底深字、纯色深底浅字、水平渐变、棋盘格噪声、窄框 + 德语长译文即 IMG-13），每类的已知文本、已知背景色、已知前景色都是我造图时定下来的，所以有真值可比。译文用**内置对照表**（不经网络）⇒ 同一命令两次运行逐字节相同。报的四个数：三档判定对不对（`kind` vs 造图时的真档）、擦除后与真背景的色差（`Uniform`/`Gradient` 档，按通道 max 距离）、回填越框面积（`InPlace` 块的行盒并集与框的差集）、`degraded` 出现率与漏标数。**它是下限测试不是达标证据**：干净自绘图是这一类算法最容易的情形，与 P6 那条同一口径。`--save-dir` 只另存**自绘的输入图**，默认不落盘，SHALL NOT 存成品（成品含译文内容）。
 
-**第二层（只有真人能定）= `examples/samples_compose.rs` + 评分表**：逐张跑 `assets/samples/` 的真图走完整链，CSV 列只有 `filename,blocks,replaced,overlaid,degraded,elapsed_ms`（**没有文本、没有译文、没有图片字节**）；`docs/evidence/p7-scoring.md`（docs/04 §5 点名的留档处）里那四项指标（可读性 ≥4.0、位置准确 ≥3.5、观感自然 ≥3.0、覆盖层可用率 ≥0.9）由用户打分。目录为空时它如实输出"样本不足，FR-2.4~2.8 的人工评分记为未闭环"，**不产出任何数字**（与 `samples_run.rs` 同一条处理）。
+**第二层（只有真人能定）= `examples/samples_compose.rs` + 评分表**：逐张跑 `assets/samples/` 的真图走完整链，CSV 列只有 `filename,blocks,replaced,overlaid,degraded,elapsed_ms`（**没有文本、没有译文、没有图片字节**）；打分记录进 `docs/evidence/p7-scoring.md`（`docs/04:110` 点名的留档处，那张表与它上面的指标表都在 docs/04 §5）里的四项由用户给：回填可读性 ≥4.0、回填位置准确性 ≥3.5、观感自然度 ≥3.0 三格走 `docs/06:293` 那张 1~5 分表，覆盖层可用率 ≥0.9 是**比例**、那张表还没有它的列，本包收口时补一格或由用户直接给数。目录为空时它如实输出"样本不足，FR-2.4~2.8 的人工评分记为未闭环"，**不产出任何数字**（与 `samples_run.rs` 同一条处理）。
 
 四个数与 0.92 一个字都不动；拿自绘指标当达标证据是这条 REQ 存在的唯一理由（P6 已经防过一次，本包继续防）。
 
