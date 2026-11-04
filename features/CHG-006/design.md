@@ -15,7 +15,7 @@ Spec-Hash: UNAPPROVED
 
 | 文件 | 动作 | 内容 |
 |---|---|---|
-| `crates/ice-vision/Cargo.toml` | 改 | 把 `ab_glyph_rasterizer 0.1.10` + `owned_ttf_parser 0.25.1` 从 `[dev-dependencies]` 移到 `[dependencies]`（纯 Rust、无 feature 门、不在任何网络路径上；两 crate 均已在 `Cargo.lock` ⇒ **不新增 crate 名、不需要联网**）。`image` 的 feature 一个都不加（PNG/JPEG 编码本来就在那个收窄集合里）。**移动后必须重跑一次 `cargo tree -p ice-vision -e normal` 的零网络取证**——`-e normal` 排除 dev 依赖，提升前那张输出不能再交差 |
+| `crates/ice-vision/Cargo.toml` | 改 | 把 `ab_glyph_rasterizer 0.1.10` + `owned_ttf_parser 0.25.1` 从 `[dev-dependencies]` 移到 `[dependencies]`（纯 Rust、无 feature 门、不在任何网络路径上；两 crate 均已在 `Cargo.lock` ⇒ **lockfile 不变、不需要联网**，但 `-e normal` 那张正常依赖树会**多出三个名字**——`ab_glyph_rasterizer`（依赖表为空）+ `owned_ttf_parser` + 它的传递依赖 `ttf-parser 0.25.1`（依赖表也为空），实测今天的正常树里这两个关键字零命中）。`image` 的 feature 一个都不加（PNG/JPEG 编码本来就在那个收窄集合里）。**移动后必须重跑一次 `cargo tree -p ice-vision -e normal` 的零网络取证**——`-e normal` 排除 dev 依赖，提升前那张输出不能再交差 |
 | `crates/ice-vision/src/bg.rs` | **新** | S5 全部纯函数：`estimate(&RgbaImage, &PixelRect, &CompositeOptions) -> BackgroundEstimate{ bg, fg, variance, kind, corners }`、`BackgroundKind{Uniform,Gradient,Complex}`、采样带构造（贴边收缩）、4bit/通道量化直方图、alpha 加权、WCAG 相对亮度与对比度。零 IO、零 `unsafe`、平台无关（NFR-6：`ice-vision` 不依赖任何 UI crate） |
 | `crates/ice-vision/src/typeset.rs` | **新** | S6 全部纯函数：`plan(&TextBlock, &BackgroundEstimate, &Metrics, &CompositeOptions, mode) -> BlockPlan{ kind: InPlace\|Overlay\|Skip, font_size, lines, align, degraded }`、断行（CJK 按字符 / 拉丁按词 / 标点禁则）、0.95 步进缩字号、对齐推断、覆盖层底色（对比度 ≥ 4.5:1 的那个循环）。**测量与栅格化交给注入进来的 `Metrics` trait**，于是本文件的每条判据都能在无头里测（用假度量），不必等字体加载成功 |
 | `crates/ice-vision/src/paint.rs` | **新** | 唯一碰系统字体文件与逐像素写的地方：`FileMetrics`（实现 `typeset::Metrics`，走 `owned_ttf_parser` 的 `glyph_metrics`/`outline_glyph`）、`draw_text(...)`（`ab_glyph_rasterizer` 的 coverage 做 src-over 混合）、`erase(...)`（三档）、`overlay_plate(...)`、`count_missing(...)`。字体字节进 `OnceLock<Vec<u8>>` 一次读盘；**缓存 `Vec<u8>` 而不是缓存 `Face`**（`Face` 的 `Sync` 是上游实现细节而非承诺） |
@@ -35,9 +35,9 @@ Spec-Hash: UNAPPROVED
 
 | 增量 | 位置 | 理由 | 是否影响产物 |
 |---|---|---|---|
-| `ab_glyph_rasterizer` + `owned_ttf_parser` 从 dev 提为正常依赖 | `crates/ice-vision/Cargo.toml` | FR-2.4 的"绘制译文"需要一条能把字符串变成位图的路，而 egui 的字形只在 GPU 管线里成形、拿不到位图（这条理由 P6 已经写在 `Cargo.toml:67-71` 的注释里）。**不新增 crate 名**：两个都在 `Cargo.lock`（Linux 的 `sctk-adwaita` → `ab_glyph` 路径带进来的），源码已在 `~/.cargo/registry/src` 解包，API 已由 `examples/self_metric.rs` 在真机跑通过一整轮（画得出、`glyph_index` 判缺字形得出 0） | 是（第一次进 macOS 产品编译面；两者都不带网络、都不依赖 UI crate，NFR-3/NFR-6 不受影响） |
+| `ab_glyph_rasterizer` + `owned_ttf_parser` 从 dev 提为正常依赖 | `crates/ice-vision/Cargo.toml` | FR-2.4 的"绘制译文"需要一条能把字符串变成位图的路，而 egui 的字形只在 GPU 管线里成形、拿不到位图（这条理由 P6 已经写在 `Cargo.toml:67-71` 的注释里）。**不新增 lockfile 条目**：两个都在 `Cargo.lock`（Linux 的 `sctk-adwaita` → `ab_glyph` 路径带进来的），提升只是把它们从 dev 面搬到正常面，另带一个传递依赖 `ttf-parser`（依赖表为空）。所以 V-007 那条取证的判据是"正常树里新增的就是这三行、且仍无一个带网络能力的 crate"，不是"树完全没变"，源码已在 `~/.cargo/registry/src` 解包，API 已由 `examples/self_metric.rs` 在真机跑通过一整轮（画得出、`glyph_index` 判缺字形得出 0） | 是（第一次进 macOS 产品编译面；两者都不带网络、都不依赖 UI crate，NFR-3/NFR-6 不受影响） |
 | `NSSavePanel` feature | **零增量** | `crates/ice-app/Cargo.toml:108` 在 P6 就点开了，注释里写明它买到的符号，至今生产代码零引用。本包只是第一次用它 | 否 |
-| PNG/JPEG 编码器 | **零增量** | workspace 那份 `image`（`Cargo.toml:27`）的 `features = ["png","jpeg"]` 同时覆盖解码与编码；全仓 `src/` 生产代码目前没有一处 `save`/`write_to`，本包是第一次 | 否 |
+| PNG/JPEG 编码器 | **零增量** | workspace 那份 `image`（`Cargo.toml:27`）的 `features = ["png","jpeg"]` 同时覆盖解码与编码；全仓 `src/` 生产代码目前没有一处 `image` 编码调用（`.save(`/`.write_to(` 零命中；同名不同事的 `write_to_config` 是术语表写配置），本包是第一次 | 否 |
 | `arboard::set_image` | **零增量** | `image-data` 在 arboard 的 `default` 里（P6 事实表已核），`Cargo.toml` 一行不改 | 否 |
 | 明确**不**引入 | — | `rfd`（面板自接，Q-002 于 P6 已决）、`ab_glyph`（那是 `owned_ttf_parser` + `ab_glyph_rasterizer` 之上的一层，本包已有更底层那两块）、`resvg`/`raqm`/harfbuzz 绑定（复杂文本排版不需要：断行自己做，字距用 advance width）、任何学习式修补或图像模型（ADR-003）、任何带网络的 crate | — |
 
