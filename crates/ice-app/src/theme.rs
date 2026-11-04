@@ -53,6 +53,21 @@ pub const COOL_PRESSED: Color32 = Color32::from_rgb(203, 212, 224);
 /// 分隔线与控件描边（原 gray(190)）
 pub const COOL_EDGE: Color32 = Color32::from_rgb(197, 205, 214);
 
+/// **整窗**的基底色：原生标题栏那条带子与 egui 的内容区共用这一个出处。
+///
+/// 分层只有两级（规矩与病因见 `system::background`）：基底铺满整窗，输入框与译文框用同色系
+/// 浅一档的 `extreme_bg_color`。深色那一档不再造一个新数，直接读 egui 自己 `Visuals::dark()`
+/// 的 `window_fill`——内容区画什么，标题栏就得是什么；两处各自持色就是"半改完"的来源。
+///
+/// 将来五套预设色（任务 #28）只喂这一个字段给那两处，别在 view 里另配底色。
+pub fn window_base(dark: bool) -> Color32 {
+    if dark {
+        egui::Visuals::dark().window_fill
+    } else {
+        COOL_BASE
+    }
+}
+
 /// 滑块那颗圆疙瘩的三层色：接触投影、背光本体、受光面。
 ///
 /// 用户 2026-11-04："开关那个圆疙瘩能做立体感更好了。" egui 0.37 没有渐变图元（`Shape`
@@ -242,8 +257,9 @@ const fn press_edge(dark: bool, lightened: u8) -> Color32 {
 /// 深色一套原样不动（`dark_mode` 一判就退出）。每一处都是**赋值**，不是 in-place 调亮调暗——
 /// `apply` 每帧都跑，任何"在当前值上再动一下"都会逐帧漂移（字号、行距、控件色三个坑同一个）。
 ///
-/// 标题栏那一格不用单独改：`views::window_bar` 用的就是 `visuals.panel_fill`，
-/// 这一处定了它跟着冷（用户那句"包括标题栏底色"是同一个要求，不是第二处改动）。
+/// 这一处只管得到 **egui 画的那部分**（内容区与自绘的工具条 `views::window_bar`）。窗口顶上那
+/// 32pt 标题栏归 AppKit 的 `NSThemeFrame` 画，改 `Visuals` 碰不到它——2026-11-04 那句"标题栏的
+/// 颜色和界面不统一，有色差"就差在这里。整窗那一级由 [`window_base`] + `system::background` 补齐。
 pub fn apply_cool_light(style: &mut egui::Style) {
     if style.visuals.dark_mode {
         return;
@@ -634,7 +650,7 @@ mod tests {
         assert_eq!(light.window_fill, COOL_BASE);
         assert_eq!(
             light.panel_fill, COOL_BASE,
-            "标题栏那一格吃的就是 `panel_fill`，用户那句'包括标题栏底色'靠这一处"
+            "自绘工具条与内容区必须同一个底，否则界面自己先分成两块"
         );
         assert_eq!(light.extreme_bg_color, COOL_SURFACE);
         assert_eq!(light.widgets.inactive.bg_fill, COOL_RAISED);
@@ -668,6 +684,46 @@ mod tests {
         // 深色那一支的悬停/按下仍走 2026-10-28 那条"变浅一档"的乘算，不许被冷灰白那两档顶掉
         assert_ne!(dark.widgets.hovered.weak_bg_fill, COOL_HOVER);
         assert_ne!(dark.widgets.active.weak_bg_fill, COOL_PRESSED);
+    }
+
+    /// 用户 2026-11-04 定的分层规矩：**基底一个色铺满整窗，正文框才是第二级**。
+    /// 这条锁的是"两处各自持色"——上一轮只把冷色写进 egui，顶上那 32pt 归 AppKit 画，
+    /// 于是同一个主题长出两块底色（"标题栏的颜色和界面不统一，有色差"）。
+    ///
+    /// 三个判据：① `window_base` 与当帧样式里的 `window_fill`/`panel_fill` 逐字相等（深浅两套
+    /// 各判一次，原生那一侧取的就是这个数）；② 正文框色与基底**不相等**（两级要看得出分别是两级）；
+    /// ③ 基底与正文面各只有一个出处，不是随手两个数。
+    #[test]
+    fn the_whole_window_has_one_base_color() {
+        for dark in [false, true] {
+            let ctx = egui::Context::default();
+            let ui = UiConfig {
+                theme: if dark { Theme::Dark } else { Theme::Light },
+                ..Default::default()
+            };
+            apply(&ctx, &ui);
+            let visuals = ctx
+                .style_of(if dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                })
+                .visuals
+                .clone();
+            let base = window_base(dark);
+            assert_eq!(
+                visuals.window_fill, base,
+                "{dark}：内容区的底不是整窗那个底"
+            );
+            assert_eq!(
+                visuals.panel_fill, base,
+                "{dark}：面板带的底自己另取了一个色"
+            );
+            assert_ne!(
+                visuals.extreme_bg_color, base,
+                "{dark}：输入框/译文框和整窗同色，两级就塌成一级"
+            );
+        }
     }
 
     /// 用户 2026-11-04："淡淡的阴影就行。" 这条锁四个方向：有模糊（不是硬边）、只往下沉、
