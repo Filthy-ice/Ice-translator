@@ -23,6 +23,7 @@ use crate::jobs::{self, JobRunner, OutcomeReceiver};
 use crate::mode;
 use crate::state::{self, AppState, ImageInput, KeyState, Tab, Tone, TrayState};
 use crate::system::alpha;
+use crate::system::background;
 use crate::system::clipboard::{self, CopyKind};
 use crate::system::dblclick;
 use crate::system::hotkeys::{self, Action};
@@ -126,6 +127,9 @@ pub struct IceApp {
     /// 上一帧下到原生层的整窗不透明度（FR-3.7，见 `apply_native_alpha`）。
     /// `None` = 还没下过或上一次没走通。
     native_alpha: Option<f32>,
+    /// 上一帧下到原生层的整窗底色（含标题栏那条带子，见 `apply_native_background`）；
+    /// `None` 的语义同 `native_alpha`。
+    native_background: Option<egui::Color32>,
     /// 上一帧标题栏绿键的改道结果（见 `apply_zoom_hook`）。`None` = 还没下过。
     zoom_outcome: Option<titlebar::Outcome>,
     /// 上一帧标题栏双击监视器的装载结果（见 `apply_dblclick_hook`）。`None` = 还没下过。
@@ -182,6 +186,7 @@ impl IceApp {
             geometry_rescued: false,
             geometry_seen: None,
             native_alpha: None,
+            native_background: None,
             zoom_outcome: None,
             dblclick_outcome: None,
         }
@@ -624,13 +629,13 @@ impl IceApp {
     /// 返回 false 时缓存写成 `None`，下一帧重试：第一帧可能还拿不到窗口句柄
     /// （eframe 建窗与首个 pass 的先后不由我们决定），一次失败不能永久退回。
     fn apply_native_alpha(&mut self, frame: &eframe::Frame, want: f32) -> bool {
-        if !needs_alpha_update(self.native_alpha, want) {
+        if !needs_native_update(self.native_alpha, want) {
             return true;
         }
         let applied = alpha::set(frame, want);
         self.native_alpha = applied.then_some(want);
         // 值真的变了才记：这条是"标题栏到底有没有跟着淡"的唯一现场证据——无头测试拿不到
-        // 窗口句柄，走没走到原生层只能在这里看。失败侧只警告一次（`needs_alpha_update`
+        // 窗口句柄，走没走到原生层只能在这里看。失败侧只警告一次（`needs_native_update`
         // 对失败不缓存，每帧都会重试，逐次打日志会刷屏，与 `system::screen` 同一手法）。
         if applied {
             tracing::debug!(alpha = want, native = true, "整窗不透明度下发");
@@ -638,6 +643,27 @@ impl IceApp {
             tracing::warn!("原生整窗不透明度下不发，失焦只淡窗内底色（标题栏不会跟着淡）");
         }
         applied
+    }
+
+    /// 把整窗底色下到位——**包括 AppKit 画的那条 32pt 标题栏**（用户 2026-11-04："标题栏的颜色
+    /// 和界面不统一，有色差"）。色差就是这么进来的：上一轮只把冷灰白写进 egui 的
+    /// `window_fill`/`panel_fill`，而窗体顶上那一条压根不在 egui 的绘制清单里。
+    ///
+    /// 色值只有一个出处：`theme::window_base`。原生这一句与内容区必须拿到同一个数，
+    /// 两级分层（整窗基底 / 正文框浅一档）的全部细节在 `system::background`。
+    ///
+    /// 缓存与重试沿用 `apply_native_alpha` 那一套；差别是这条没有回退路径——下不去就是
+    /// 标题栏跟着系统底色，界面里没有第二处可改口，所以也不发警告。
+    fn apply_native_background(&mut self, frame: &eframe::Frame, dark: bool) {
+        let want = theme::window_base(dark);
+        if !needs_native_update(self.native_background, want) {
+            return;
+        }
+        let applied = background::set(frame, want);
+        self.native_background = applied.then_some(want);
+        if applied {
+            tracing::debug!(?want, native = true, "整窗底色下发");
+        }
     }
 
     /// 帧首取走标题栏绿键的点击（用户 2026-10-28："悬浮窗更换全量的按钮可以不要，
@@ -1341,7 +1367,7 @@ fn reason_text(state: &KeyState) -> String {
     }
 }
 
-/// 原生整窗 alpha 走不通的警告只发一次（回退本身每帧都要重试，见 `needs_alpha_update`）。
+/// 原生整窗 alpha 走不通的警告只发一次（回退本身每帧都要重试，见 `needs_native_update`）。
 static ALPHA_FALLBACK_WARNED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
@@ -1364,12 +1390,13 @@ fn fill_is_no_op(filled: bool, target: egui::Vec2, cfg: &UiConfig) -> bool {
     filled && target == mode::target_size(cfg, UiMode::Full)
 }
 
-/// 这一档不透明度要不要真的下发给窗口服务器（`apply_native_alpha` 的判定核心，抽出来才能无头断言）。
+/// 这一档**整窗属性**要不要真的下发给窗口服务器（`apply_native_alpha` 与
+/// `apply_native_background` 共用的判定核心，抽出来才能无头断言）。
 ///
 /// `applied` 是上一帧**成功**下到的值，`None` 表示还没下过或上次没走通。相同就跳过：
-/// `setAlphaValue:` 一旦每帧都发，AppKit 每帧都会把整个窗口标脏重合成一遍，
-/// 空闲 CPU 直接顶穿 NFR-2 的 1% 上限——悬浮窗停在桌面上不动时也应该几乎不耗电。
-fn needs_alpha_update(applied: Option<f32>, want: f32) -> bool {
+/// `setAlphaValue:` / `setBackgroundColor:` 一旦每帧都发，AppKit 每帧都会把整个窗口标脏
+/// 重合成一遍，空闲 CPU 直接顶穿 NFR-2 的 1% 上限——悬浮窗停在桌面上不动时也应该几乎不耗电。
+fn needs_native_update<T: PartialEq>(applied: Option<T>, want: T) -> bool {
     applied != Some(want)
 }
 
@@ -1407,6 +1434,9 @@ impl eframe::App for IceApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         theme::apply(&ctx, &self.state.config.ui);
+        // 整窗底色（含原生标题栏那条带子）跟着**这一帧生效的那套主题**走：`ui.visuals()` 就是
+        // egui 解析完 `theme_preference` 之后真正在用的那套，与内容区同一个出处、同一个时刻
+        self.apply_native_background(frame, ui.visuals().dark_mode);
 
         jobs::drain(&mut self.outcomes, &mut self.state, &self.history);
         if let Ok(probe) = self.key_probe.try_recv() {
@@ -2623,26 +2653,41 @@ mod tests {
         );
     }
 
-    /// NFR-2 的护栏：整窗 alpha 每帧都发一次系统调用，AppKit 就每帧重合成整个窗口。
+    /// NFR-2 的护栏：整窗 alpha 与整窗底色每帧都发一次系统调用，AppKit 就每帧重合成整个窗口。
     /// 悬浮窗绝大多数时间是"停在桌面上没人碰"，那一档不能变，所以同值必须跳过。
     /// 上次没走通（`None`）要重试——第一帧拿不到窗口句柄是正常时序，不是失败终局。
     #[test]
-    fn an_unchanged_window_alpha_is_not_resent() {
+    fn an_unchanged_window_property_is_not_resent() {
         assert!(
-            !needs_alpha_update(Some(0.85), 0.85),
+            !needs_native_update(Some(0.85), 0.85),
             "同一档重复下发，空闲帧全在付重合成的钱"
         );
         assert!(
-            !needs_alpha_update(Some(1.0), 1.0),
+            !needs_native_update(Some(1.0), 1.0),
             "全量窗整场都是 100%，一次都不该发"
         );
         assert!(
-            needs_alpha_update(Some(0.85), 1.0),
+            needs_native_update(Some(0.85), 1.0),
             "焦点回来了必须写回 100%，不然窗体永远停在半透明"
         );
         assert!(
-            needs_alpha_update(None, 0.85),
+            needs_native_update(None, 0.85),
             "从没成功下过（含首帧拿不到句柄）要重试，不能永久退回"
+        );
+        // 底色走的是同一条判定：深浅切换要重写一次，同档反复核对一个字都不发
+        assert!(
+            needs_native_update(
+                Some(crate::theme::window_base(false)),
+                crate::theme::window_base(true)
+            ),
+            "主题翻了标题栏还是旧底色，色差就又回来了"
+        );
+        assert!(
+            !needs_native_update(
+                Some(crate::theme::window_base(false)),
+                crate::theme::window_base(false)
+            ),
+            "同一套主题每帧重发底色，等于每帧把整窗标脏"
         );
     }
 

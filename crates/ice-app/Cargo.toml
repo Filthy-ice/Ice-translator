@@ -87,8 +87,12 @@ block2 = "0.6"
 #   三个策略常量（Regular/Accessory/Prohibited）也定义在 `NSRunningApplication.rs:47-56` 里。
 #   不开它，代码不是"设置没生效"，是**方法根本看不见**；
 # - foundation 侧的 `NSData`：`NSImage::initWithData:` 的参数类型。
-# 这九个开关一个 crate 名都不新增。判据看 `cargo tree -p ice-app -e normal` 里
-# **objc2-app-kit 自己那一节**（2026-11-04 实测，20 个 feature 全开后只剩五个子依赖：
+# 2026-11-04 走查再开一个 `NSColor`：整窗底色（含原生标题栏那条带子，见 `system::background`）
+# 要 `NSColor::colorWithSRGBRed:green:blue:alpha:`（`NSColor.rs:142`）造色，而 `NSWindow`
+# 的 `setBackgroundColor:`（`NSWindow.rs:1024`）收的就是它。它只往 objc2-foundation 里多开
+# NSCoder/NSDictionary/NSBundle/NSNotification 四个模块，一个 crate 名都不新增。
+# 这些开关一个 crate 名都不新增。判据看 `cargo tree -p ice-app -e normal` 里
+# **objc2-app-kit 自己那一节**（2026-11-04 实测，全开 feature 后它下面只剩六个子依赖：
 # bitflags / block2 / objc2 / objc2-core-foundation / objc2-core-graphics / objc2-foundation）：
 # 它下面 SHALL NOT 出现 objc2-cloud-kit / core-video / core-media / image-io —— 开了 default
 # 才会多出这六个 rlib。（`core-text` 与 `objc2-metal` 整棵树里各有一处，来源是 eframe 自己的
@@ -112,6 +116,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSMenuItem",
     "NSImage",
     "NSRunningApplication",
+    "NSColor",
     "block2",
     "objc2-core-foundation",
 ] }
