@@ -2,8 +2,8 @@
   "schema_version": 1,
   "id": "CHG-008",
   "title": "菜单栏托盘与关窗收进托盘：FR-5.4 新增、FR-5.2 前半句按用户改判",
-  "version": "v0.1",
-  "status": "IMPLEMENTING",
+  "version": "v0.2",
+  "status": "SPEC_REVIEW",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -218,20 +218,13 @@
         "verification": "V-009",
         "result": "observed"
       }
+    },
+    {
+      "at": "2026-11-04T11:38:17+00:00",
+      "action": "revise",
+      "detail": "真机走查失败 + 用户点名改判（2026-11-04）：① 缺陷 D-21——v0.1 把托盘的泵挂在 App::ui，而 eframe 在窗口 orderOut 之后只调 App::logic，收起期交来的意图永远没人取，表现为用户报的『关闭后，点击托盘还是没反应。右键也没反应』；② 用户同句改判『右键起码的显示页面要有吧？打开设置要有吧？』，REQ-003 从三项菜单改成四项（新增「设置」，复用既有 open_settings），弹出方式改成在 ObjC 回调里同步 popUpStatusItemMenu:（隐藏期可能没有下一帧）；③ 用户对图标的改判『起码是我们原来图标的简笔画啊』，glyph 重画成应用图标那两只气泡的线稿；④ REQ-004 补一条 Focus 必须排在可见性命令之后的次序判据"
     }
   ],
-  "approval": {
-    "hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354",
-    "version": "v0.1",
-    "by": "Filthy-ice",
-    "reference": "2026-11-04 Qoder Desktop 会话：批准 CHG-008",
-    "at": "2026-11-04T08:03:56+00:00",
-    "snapshot": "approvals/v0.1-bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354.md",
-    "scope": "local-delivery",
-    "context_hash": "0de6f94dc52a18aa46f1013f7c2f2266a92e251548bab60087d0cc756dccd169",
-    "branches": {
-      "ice-translator": "main"
-    }
-  },
-  "plan_hash": "17b34525929c525f97f738dbcce5491fcb86191338c83394213b793aa39a9d2f"
+  "approval": null,
+  "plan_hash": null
 }

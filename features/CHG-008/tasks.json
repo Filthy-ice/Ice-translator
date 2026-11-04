@@ -20,7 +20,7 @@
     },
     {
       "id": "T-002",
-      "title": "写 system::tray 的 glyph() 与 glyph_bytes(tier) 两个纯函数（完全不碰 AppKit，非 mac 也编译可测）：按档位开一张 RgbaImage（@1x 高 22px、@2x 44px），所有像素 RGB 写纯黑、alpha 由一组线段（窗口轮廓 + 往里收的折角，读作『窗口收进这里』）按点到线段距离算覆盖，编码成 PNG 字节交给 mac 侧的 NSData → NSImage::initWithData → setTemplate(true) → button.setImage，并把 NSImage 的 size 设成点尺寸让视网膜下用 44px 那张。TC-5.4-a 四条无头判据逐条落测试：① 边长等于档位高度；② 每个 alpha>0 的像素 RGB 是 (0,0,0)（出现彩色就是错的，模板图靠 alpha）；③ 四角 alpha = 0；④ 非透明包围盒水平居中（左右留白差 ≤1px）且上下各留 ≥1px。形状只动线段表，四条判据不跟着改；SHALL NOT 复用彩色 Dock 方砖缩小版，SHALL NOT 用文本字符当图标（缺陷 D-5 的豆腐块教训）",
+      "title": "写 system::tray 的 glyph() 与 glyph_bytes(tier) 两个纯函数（完全不碰 AppKit，非 mac 也编译可测）：按档位开一张 RgbaImage（@1x 高 22px、@2x 44px），所有像素 RGB 写纯黑、alpha 由一组线段按点到线段距离算覆盖。线段表 v0.2 定论为应用图标那两只气泡：FRONT（左上、带『文』那只）整只画，BACK（右下、带『A』那只）只画落在 inflated(FRONT, 0.8) 之外的轮廓——两只画满就成一个『8』字、前后关系读不出来，再加 tails() 那四条朝外的尖；v0.1 默认的『窗口轮廓 + 往里收的折角』被用户走查否掉（『起码是我们原来图标的简笔画啊』），编码成 PNG 字节交给 mac 侧的 NSData → NSImage::initWithData → setTemplate(true) → button.setImage，并把 NSImage 的 size 设成点尺寸让视网膜下用 44px 那张。TC-5.4-a 四条无头判据逐条落测试：① 边长等于档位高度；② 每个 alpha>0 的像素 RGB 是 (0,0,0)（出现彩色就是错的，模板图靠 alpha）；③ 四角 alpha = 0；④ 非透明包围盒水平居中（左右留白差 ≤1px）且上下各留 ≥1px。形状只动线段表，四条判据不跟着改；SHALL NOT 复用彩色 Dock 方砖缩小版，SHALL NOT 用文本字符当图标（缺陷 D-5 的豆腐块教训）",
       "requirements": [
         "REQ-002"
       ],
@@ -32,7 +32,7 @@
     },
     {
       "id": "T-003",
-      "title": "写 system/tray.rs 的 mac 侧：install() 幂等装出 NSStatusItem（先查模块内那枚 Retained<NSStatusItem>，装过就什么都不做；每帧被调，失败可重试），sync(frame) 每帧从按钮本身核对 target/action 是不是我们那对（沿用 titlebar『问了比记着可靠』的纪律，AppKit 会在别的路径上重新接线），take_outcome() 取走一个 Outcome::{Reveal,ToggleMode,Quit}（单个 AtomicU8 槽，取走即清零，连点只兑现一次）。define_class! 注册 IceTranslatorTrayTarget，方法体只做三件事：读 NSApplication::sharedApplication(mtm).currentEvent().type() 分叉、写意图槽、request_repaint()；SHALL NOT 在回调里发 viewport 命令或读 AppState。接线用 button.setTarget/setAction + sendActionOn(LeftMouseUp|RightMouseUp)，菜单三项（显示窗口 / menu_titles(mode) 给的另一侧形态名 / 退出程序）只在右键成立时临时挂出、出完立刻 setMenu(None)（菜单常驻挂着左键就不走 action），target 的强引用存在 thread_local! 活到进程结束（NSControl.target 与 NSMenuItem.target 都是 weak，一放手就是野指针）；sync 顺带核对第二项的 title 跟着当前形态改口（SHALL NOT 写『悬浮窗』）。menu_titles() 与意图→Action 的映射表是无头断言（TC-5.4-b）；#[cfg(not(target_os = \"macos\"))] 那一支只导出同名函数恒返回 Unavailable，SHALL NOT 引用任何 objc 类型",
+      "title": "写 system/tray.rs 的 mac 侧：install(mode, ctx, scale) 幂等装出 NSStatusItem（先查模块内那枚 Retained<NSStatusItem>，装过就什么都不做；每帧被调，失败可重试），sync(mode) 每帧从按钮本身核对 target/action 是不是我们那对（沿用 titlebar『问了比记着可靠』的纪律，AppKit 会在别的路径上重新接线），take_outcome() 取走一个 Outcome::{Reveal,ToggleMode,Settings,Quit}（单个 AtomicU8 槽，取走即清零，连点只兑现一次），mark(outcome) 是回调与无头测试共用的唯一入口（写槽 + request_repaint）。define_class! 注册 IceTranslatorTrayTarget，按钮那一个方法读 NSApplication::sharedApplication(mtm).currentEvent().r#type() 分叉：左键 mark(Reveal)，右键直接 pop_menu() 就地弹（v0.2：绝不记旗子等下一帧——隐藏期没人读，那正是 D-21 的右键那一半）；菜单四项各 mark(自己的意图)。SHALL NOT 在回调里发 viewport 命令或读 AppState。接线用 button.setTarget/setAction + sendActionOn(LeftMouseUp|RightMouseUp)，菜单四项（显示窗口 / menu_titles(mode) 给的另一侧形态名 / 设置 / 退出程序）从不常驻挂：popUpStatusItemMenu: 就地弹一次，追踪循环返回后立刻 setMenu(None) 并用 is_ours 核对按钮接线（菜单常驻挂着左键就不走 action，Q-001；那条非 deprecated 的替代正好踩同一个坑，故 #[allow(deprecated)] 局部放行）。弹之前先把 item/menu/button/target 四个 Retained 从 thread_local 克隆出来、释放 RefCell 借用——追踪循环是阻塞的，重进同一个 with(..) 就是双重借用 panic，target 的强引用存在 thread_local! 活到进程结束（NSControl.target 与 NSMenuItem.target 都是 weak，一放手就是野指针）；sync 顺带核对第二项的 title 跟着当前形态改口（SHALL NOT 写『悬浮窗』）。menu_titles() 与意图→Action 的映射表是无头断言（TC-5.4-b）；#[cfg(not(target_os = \"macos\"))] 那一支只导出同名函数恒返回 Unavailable，SHALL NOT 引用任何 objc 类型",
       "requirements": [
         "REQ-001",
         "REQ-002",
@@ -48,7 +48,7 @@
     },
     {
       "id": "T-004",
-      "title": "改道关窗与唤回：state.rs 加运行态 TrayState::{Unknown,Available,Unavailable}（不进 config、不落盘）；mode::hide 按它二选一——Available 发 CancelClose + Visible(false) 并把策略切成 .accessory（SHALL NOT 再发 Minimized(true)），Unavailable 一字不改地保留今天的 CancelClose + Minimized(true)；mode::reveal 先 .regular 再 Visible(true)（winit 里就是 makeKeyAndOrderFront），随后沿用今天那段整套重发 commands_for_mode + target_size、pending.set(...) 上护栏、apply_topmost、state.hidden=false、state.filled=false。策略切换的原生调用点在 system::tray（set_policy(available)），mode.rs 只决定何时调，SHALL NOT 让 objc 类型出现在 mode.rs。Action 加一条 RevealWindow 并接进 app.rs:197-215 的既有分派，帧首做一次 tray::install() + tray::sync 并把 take_outcome() 映射成 Action::{RevealWindow,ToggleMode,Quit}（三条都是既有通道，不新增第二条退出实现）。RevealGuard 只在 Unavailable 支继续生效，Available 支退役，SHALL NOT 留两条并行的唤醒路径。TC-5.4-c 的无头那半：命令队列断言两种 TrayState 各一组（含两条否定式）、reveal 两次与一次的队列相同；hide_cancels_close_and_minimizes 与 hide_window_keeps_the_process_and_the_content 按新语义各写两支且『进程不退、内容原样』两条断言原样搬过去，那四条 RevealGuard 测试改挂在 Unavailable 支上不删",
+      "title": "改道关窗与唤回：state.rs 加运行态 TrayState::{Unknown,Available,Unavailable}（不进 config、不落盘）；mode::hide 按它二选一——Available 发 CancelClose + Visible(false) 并把策略切成 .accessory（SHALL NOT 再发 Minimized(true)），Unavailable 一字不改地保留今天的 CancelClose + Minimized(true)；mode::reveal 先 .regular 再 Visible(true)（winit 里就是 makeKeyAndOrderFront），两支随后各补一发 ViewportCommand::Focus 且必须排在 Visible/Minimized 之后（egui 明写窗口不可见或最小化时 Focus 无效），再沿用今天那段整套重发 commands_for_mode + target_size、pending.set(...) 上护栏、apply_topmost、state.hidden=false、state.filled=false。策略切换的原生调用点在 system::tray（set_policy(available)），mode.rs 只决定何时调，SHALL NOT 让 objc 类型出现在 mode.rs。Action 加一条 RevealWindow 并接进 app.rs:197-215 的既有分派，托盘泵挂在 App::logic 而不是 App::ui（v0.2 的更正，缺陷 D-21）：logic(ctx, frame) 每帧调 pump_tray(scale, tray::take_outcome(), ctx, effects)，scale 从 frame.winit_window() 读；install/sync 与意图→Action 的映射都在这一条钩子里，可见与隐藏两态都跑、一帧一次。映射到 Action::{RevealWindow,ToggleMode,OpenSettings,Quit}（四条全部转接既有实现：reveal / Cmd+Shift+M 那条 / open_settings / quit，托盘不许是第二条退出或第二条开设置的路）。RevealGuard 只在 Unavailable 支继续生效，Available 支退役，SHALL NOT 留两条并行的唤醒路径。TC-5.4-c 的无头那半：命令队列断言两种 TrayState 各一组（含两条否定式）、reveal 两次与一次的队列相同；hide_cancels_close_and_minimizes 与 hide_window_keeps_the_process_and_the_content 按新语义各写两支且『进程不退、内容原样』两条断言原样搬过去，那四条 RevealGuard 测试改挂在 Unavailable 支上不删",
       "requirements": [
         "REQ-003",
         "REQ-004",
@@ -95,7 +95,7 @@
     },
     {
       "id": "T-007",
-      "title": "文档回写与变更登记：docs/traceability.md 的 FR-5.2 行从『待实现』改成本包实际状态、FR-5.4 行从『⏳ 待用户批准 CHG-008』改成落地位置与验证方式，并确认 docs/07 §5 那条『Visible(false) 叫不回来』的老偏差按 FR-5.4 关闭；docs/06 的 TC-5.4-a/b/c 逐条补验证方式与结论列、W-2.40 写清走查七件（菜单栏有没有图标、深浅色各看一次、左键唤回、右键菜单三项各点一次、关窗看 Dock 磁贴、唤回看内容与尺寸、静置十分钟的 CPU）、W-2.12 的判据由『点 Dock 图标恢复』改口成走 W-2.40；docs/02 的 system::tray 行按最终签名核对（install/sync/take_outcome/glyph_bytes/menu_titles/hint_text）、docs/03 §4 流程图与设置页说明句、docs/05 §8 菜单栏托盘那行与九个 feature 的口径；docs/07-acceptance.md 加本包变更登记行与真机/走查段落（只有用户能定论的那部分留空待走查）。需求基线 docs/01 本轮已写完，实现时按既有口径核对不改文字；check_traceability.py 继续 45 ↔ 45 闭合",
+      "title": "文档回写与变更登记：docs/traceability.md 的 FR-5.2 行从『待实现』改成本包实际状态、FR-5.4 行从『⏳ 待用户批准 CHG-008』改成落地位置与验证方式，并确认 docs/07 §5 那条『Visible(false) 叫不回来』的老偏差按 FR-5.4 关闭；docs/06 的 TC-5.4-a/b/c 逐条补验证方式与结论列、W-2.40 写清走查七件（菜单栏有没有图标、深浅色各看一次、左键唤回、右键菜单四项各点一次、关窗看 Dock 磁贴、唤回看内容与尺寸、静置十分钟的 CPU）、W-2.12 的判据由『点 Dock 图标恢复』改口成走 W-2.40；docs/02 的 system::tray 行按最终签名核对（install/sync/take_outcome/glyph_bytes/menu_titles/hint_text）、docs/03 §4 流程图与设置页说明句、docs/05 §8 菜单栏托盘那行与九个 feature 的口径；docs/07-acceptance.md 加本包变更登记行与真机/走查段落（只有用户能定论的那部分留空待走查）。需求基线 docs/01 的 FR-5.2/FR-5.4 在 v0.1 已写完，v0.2 只改 FR-5.4 ② 那半句（菜单三项→四项）并同步 docs/03 §4 与 docs/06 的 TC-5.4-b，其余文字按既有口径核对不改；check_traceability.py 继续 45 ↔ 45 闭合",
       "requirements": [
         "REQ-001",
         "REQ-002",
@@ -115,6 +115,23 @@
         "docs/06-test-cases.md",
         "docs/07-acceptance.md",
         "project/ROADMAP.md"
+      ]
+    },
+    {
+      "id": "T-008",
+      "title": "v0.2 改判与实现更正落地（2026-11-04 走查轮）：① 托盘泵从 App::ui 搬到 App::logic——窗口 orderOut 之后 eframe 走 !show_ui 那一支、ui() 一次都不被调（glow_integration.rs:692-720、epi_integration.rs:395），挂在 ui() 等于『只在窗口已经看得见的时候才监听唤醒入口』，收起之后左键唤不回、菜单点了也不动（缺陷 D-21，用户原话『关闭后，点击托盘还是没反应』）；install 需要的后备比例因子从 logic 拿得到的那个 Frame 上读。② 右键菜单改为在回调里同步 popUpStatusItemMenu:，删掉 WANT_MENU 那套旗子。③ 菜单加第四项『设置』：Outcome::Settings → Action::OpenSettings（hotkeys.rs 新增一条枚举，无键盘入口），app::run 里先 reveal 再 effects.open_settings，兑现复用 app::open_settings。④ 图标形状改为应用图标那两只气泡（FRONT/BACK/OVERLAP_GAP/tails()），TC-5.4-a 四条判据一字未动。⑤ 唤回两支各补一发 Focus，set_policy(true) 里用 activateIgnoringOtherApps(true)（Q-004 改口，理由与『没被证明也没被证伪』那条都写在 spec）。新增回归锁：an_intent_handed_over_while_hidden_still_opens_the_window（收起期交来的意图必须把窗口叫回来并开设置页）、the_tray_branch_leaves_no_second_wakeup_path 继续锁『托盘档无心跳』",
+      "requirements": [
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/app.rs",
+        "crates/ice-app/src/system/tray.rs",
+        "crates/ice-app/src/system/hotkeys.rs"
       ]
     }
   ]

@@ -101,6 +101,23 @@ pub fn clamp_compact_rect(rect: WindowRect) -> WindowRect {
 /// 消失。500ms 比一次自然的移动停留长，又短到不会被当成"忘了收"。
 pub const DOCK_AUTO_HIDE: Duration = Duration::from_millis(500);
 
+/// 收回计时什么时候**开始走**：指针得先走出窗口外扩这一圈（D-22）。
+///
+/// 原来只问"指针还在不在窗口矩形里"，正好压在边线上、或者窗口刚跳到唤出位而指针还在路上，
+/// 都算"已经离开"，于是 500ms 后条在用户手底下缩回去——用户 2026-11-04 那句
+/// "我鼠标还没有移到最左边/最右边的时候他又缩进去了"。24pt 比一次鼠标抖宽，
+/// 又远小于"移开去点别处"的距离，收与不收的分界因此仍然清楚。
+pub const DOCK_HOVER_PAD: f32 = 24.0;
+
+/// 唤出态下"用户走开了没有"（D-22）：走出窗口外扩 [`DOCK_HOVER_PAD`] 那一圈才算。
+///
+/// 判据抽成纯函数是为了问得出边界：正好压在边线上、刚跳出 3px 热区那几帧、鼠标还在去边上的
+/// 路上——这三种都不该开始收回计时，而"问不出指针在哪"必须算走开（否则问不到就永远不收，
+/// 条会一直挂在屏幕上）。
+pub fn walked_away(window: Rect, cursor: Option<Pos2>) -> bool {
+    cursor.is_none_or(|at| !window.expand(DOCK_HOVER_PAD).contains(at))
+}
+
 /// 左右吸附（FR-3.5、REQ-003 v0.5）：松手后窗口离**左或右**哪条边近就贴哪条，两条都够远则自由浮动。
 ///
 /// 判定是纯函数：输入窗口外框、可用区、阈值与热区宽度，输出新矩形与停靠边。
@@ -766,7 +783,7 @@ pub fn hide(ctx: &egui::Context, state: &mut AppState, tray: TrayState) {
         ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
     }
     state.hidden = true;
-    tracing::debug!(into_tray, "关窗：收起来，进程不退出");
+    tracing::info!(into_tray, "关窗：收起来，进程不退出");
     ctx.request_repaint();
 }
 
@@ -858,15 +875,21 @@ pub fn reveal(
     // 是槽里记着的几何，而铺满期间那个槽没被写过。标记跟着清，否则下一次双击会走"还原"
     // 那一支，窗口原地不动。
     state.filled = false;
-    tracing::debug!(mode = ?state.config.ui.mode, ?tray, "窗口恢复可见，重发几何");
+    tracing::info!(mode = ?state.config.ui.mode, ?tray, "窗口恢复可见，重发几何");
     if tray == TrayState::Available {
         // 磁贴回来，并把应用叫到用户面前（spec Q-004）
         crate::system::tray::set_policy(true);
         ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        // 再补一发 Focus。`Visible(true)` 只到 `orderFront` 那一层，而 D-21 真机上看到的
+        // 是"图标亮了一下、窗口没到眼前"——那一层没叫来焦点，就得让视口命令自己再要一次。
+        // 顺序不能反：`ViewportCommand::Focus` 的文档写明"窗口不可见或最小化时没有效果"，
+        // 所以必须排在 `Visible(true)` 之后、同一批命令里。
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
     } else {
         // 与 hide 的 `Minimized(true)` 对上：AppKit 那边若还认为自己是最小化的，
         // 这一步才真的把它叫回来；已经可见时是空操作。
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
     }
     let mode = state.config.ui.mode;
     let target = target_size(&state.config.ui, mode);
@@ -1363,6 +1386,14 @@ mod tests {
             let once = queued(&ctx);
             assert!(once.contains(&expected), "{tray:?} 少发了 {expected:?}");
 
+            // 顺序也是判据（REQ-004）：`Focus` 排在 `Visible(true)`/`Minimized(false)` 之前
+            // 等于空放一枪——eframe 那侧写明窗口不可见或最小化时 Focus 没有效果。
+            let opener = once.iter().position(|c| *c == expected).unwrap();
+            let focus = once
+                .iter()
+                .position(|c| matches!(c, ViewportCommand::Focus))
+                .unwrap_or_else(|| panic!("{tray:?} 唤回没补 Focus"));
+            assert!(focus > opener, "Focus 排在了 {expected:?} 前面");
             let mut again = PendingGeometry::default();
             reveal(&ctx, &mut state, &mut again, tray);
             assert_eq!(
@@ -1749,6 +1780,27 @@ mod tests {
             Pos2::ZERO,
             SLIVER
         ));
+    }
+
+    /// D-22：收回计时不许在鼠标还在路上时就跑起来
+    #[test]
+    fn the_retract_timer_waits_for_the_pointer_to_leave_the_halo() {
+        let window = at(100.0, 100.0); // 右缘在 x = 560，圈外沿在 560 + 24
+        for (x, away) in [
+            (148.0, false),
+            (560.0, false),
+            (583.0, false),
+            (585.0, true),
+        ] {
+            assert_eq!(
+                walked_away(window, Some(Pos2::new(x, 148.0))),
+                away,
+                "指针在 x = {x} 该{}算走开",
+                if away { "" } else { "不" }
+            );
+        }
+        // 问不出指针在哪算走开：不许因为问不到就永远不收，条一直挂在屏幕上
+        assert!(walked_away(window, None));
     }
 
     /// TC-3.5-h：停靠态只在简洁形态成立，且不论 `always_on_top` 一律置顶（Q-012）

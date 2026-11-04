@@ -53,6 +53,14 @@ pub fn flip(rect: RawRect, main_height: f32) -> Rect {
     )
 }
 
+/// AppKit 坐标系里的一个**点** → egui/winit 坐标系。
+///
+/// 与 [`flip`] 同一个原点、同一个基准高度，但矩形那条要减去自身高度、点这条不要：
+/// `y_topleft = 主屏高度 - y_cocoa`。光标位置用的是这一条。
+pub const fn flip_point(cocoa: (f32, f32), main_height: f32) -> Pos2 {
+    Pos2::new(cocoa.0, main_height - cocoa.1)
+}
+
 /// 选出窗口所在屏幕的可用区，返回值已换算到 egui 坐标系。
 ///
 /// 判据是**窗口中心**落在哪块屏的 `frame` 里；一块都不含（窗口被拖到屏幕外，或外接屏
@@ -281,6 +289,15 @@ mod tests {
     fn an_empty_screen_list_selects_nothing() {
         let window = Rect::from_min_size(Pos2::ZERO, Vec2::new(460.0, 96.0));
         assert_eq!(select(&[], window), None);
+    }
+
+    /// 光标是一个**点**，翻转不减高度：主屏左下角 (0,0) 在 egui 里是 (0, 主屏高)，
+    /// 左上角 (0,900) 是 (0,0)。停靠的"指针在不在窗口里"就靠这一条搬到同一套坐标。
+    #[test]
+    fn a_point_flips_without_subtracting_its_own_height() {
+        assert_eq!(flip_point((0.0, 0.0), 900.0), Pos2::new(0.0, 900.0));
+        assert_eq!(flip_point((0.0, 900.0), 900.0), Pos2::new(0.0, 0.0));
+        assert_eq!(flip_point((700.0, 300.0), 900.0), Pos2::new(700.0, 600.0));
     }
 
     #[test]
