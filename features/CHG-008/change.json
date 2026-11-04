@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "id": "CHG-008",
+  "title": "菜单栏托盘与关窗收进托盘：FR-5.4 新增、FR-5.2 前半句按用户改判",
+  "version": "v0.1",
+  "status": "SPEC_REVIEW",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-001",
+      "blocking": false,
+      "question": "左键与右键怎么在同一个 NSStatusItem 上分开？setMenu: 一挂上去左右键都会出菜单，左键就不再走 action。",
+      "resolution": "已决（实现选择）：不常驻挂菜单，用 button.setTarget/setAction + sendActionOn(LeftMouseUp|RightMouseUp)，回调里读 NSApplication.currentEvent().type() 分叉——右键临时弹菜单，左键只立唤回意图。",
+      "source": "objc2-app-kit 0.3.2 绑定实测：NSControl.rs:270-273（sendActionOn，门 NSEvent）、NSEvent.rs:202-207（两个掩码位）与 :27-28（NSEventType::RightMouseUp）、NSApplication.rs:900-903（currentEvent）；NSStatusItem.rs:66-86（menu 与 button 的 cfg 门）；2026-11-04 核对。2026-11-04 会话：Agent 依绑定源码与本仓既有形状作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-002",
+      "blocking": false,
+      "question": "托盘图长什么样？'一眼认得出'这件事只有用户看得到。",
+      "resolution": "默认已定并写进 REQ-002：窗口轮廓 + 往里收的一条折角（读作'窗口收进这里'）。备选：复用 views::pin_toggle 那枚图钉（但它已表示置顶）、复刻 Dock 彩标的单色剪影、把手形。改形状只动 glyph() 的线段表，TC-5.4-a 四条判据不跟着改；待你走查时定夺。",
+      "source": "docs/01-requirements.md:88 FR-5.4 第③句（现画单色线稿 + setTemplate、不用彩砖不用字符）与缺陷 D-5 的既有纪律；views/pin_toggle.rs、views/theme_switch.rs 是现画线稿的先例；2026-11-04。2026-11-04 会话：Agent 依绑定源码与本仓既有形状作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-003",
+      "blocking": false,
+      "question": "菜单第二项写'精简'还是'切换到精简'？",
+      "resolution": "已决：只写形态名（当前全量→'精简'，当前简洁→'全量'），与全量窗那颗模式按钮同一套字；界面里已无'悬浮窗'三个字（变更 N）。",
+      "source": "docs/traceability.md:40 变更 N 段（label、hover、提示条、fonts.rs 四条线一起改的口径）；crates/ice-app/src/views 的 the_mode_button_is_labeled_with_the_new_name_only；2026-11-04。2026-11-04 会话：Agent 依绑定源码与本仓既有形状作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-004",
+      "blocking": false,
+      "question": "唤回时要不要额外调 NSApp.activate()？makeKeyAndOrderFront 够不够只由真机定。",
+      "resolution": "默认加一次 activate()（非 deprecated 的那条），不用 activateIgnoringOtherApps:；真机若出现抢焦点的观感问题就去掉这一句。两种结果都可接受，属观感不是结构，不设停止条件。",
+      "source": "objc2-app-kit NSApplication.rs:569-571（activate）、:552-555（activateIgnoringOtherApps 已标 deprecated）；winit window_delegate.rs:904-909（set_visible(true) → makeKeyAndOrderFront）；2026-11-04 核对。2026-11-04 会话：Agent 依绑定源码与本仓既有形状作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-005",
+      "blocking": false,
+      "question": ".accessory 期间应用主菜单那排会消失，Cmd+Q 还有效吗？",
+      "resolution": "已核实不冲突：本应用的快捷键不走 App 主菜单，Cmd+Q/Cmd+W 由 system::hotkeys 在 egui 输入里分类。隐藏态窗口收不到键，此时退出入口正是托盘菜单那颗。真机行为与推断不符则按停止条件 4。",
+      "source": "crates/ice-app/src/system/hotkeys.rs:41-42 与 app.rs:197-215 的分派（快捷键从未依赖 NSMenu）；docs/03 §4 快捷键表；2026-11-04 核对。2026-11-04 会话：Agent 依绑定源码与本仓既有形状作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    },
+    {
+      "id": "Q-006",
+      "blocking": false,
+      "question": "打包后的 .app（P8）Info.plist 要不要写 LSUIElement？",
+      "resolution": "本包不碰：运行中切策略已满足'关窗后磁贴消失'。LSUIElement 会让应用永远不进 Dock，与用户选的中间档（唤回时磁贴回来）不符。登记到 docs/05 §8 与 ROADMAP 待办，属 P8。",
+      "source": "2026-11-04 用户三档裁定为'关窗后磁贴也消失'（不是'全程只做菜单栏应用'）；winit app_state.rs:119/:131 只在未打包且未显式给策略时设 .regular；docs/traceability.md:66 FR-5.4 行。2026-11-04 会话：Agent 依绑定源码与本仓既有形状作出的实现裁定，批准即按此默认生效；评审时改口只需说一句，我改本行与 spec.md 后重算哈希。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-04T07:35:16+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-11-04T07:41:05+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-11-04T07:41:05+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    }
+  ],
+  "approval": null,
+  "plan_hash": null
+}
