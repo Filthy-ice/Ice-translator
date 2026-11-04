@@ -199,7 +199,7 @@
         "-e",
         "normal"
       ],
-      "note": "依赖图取证（`ab_glyph_rasterizer`/`owned_ttf_parser` 从 dev 提为正常依赖**之后**重跑，提升前那张输出不能交差）：ice-vision 的传递依赖里 SHALL NOT 出现 reqwest/hyper/rustls 等任何带网络能力的 crate，也 SHALL NOT 出现 egui/eframe 等 UI 依赖（NFR-6）"
+      "note": "依赖图取证（`ab_glyph_rasterizer`/`owned_ttf_parser` 从 dev 提为正常依赖**之后**重跑，提升前那张输出不能交差）：ice-vision 的传递依赖里 SHALL NOT 出现 reqwest/hyper/rustls 等任何带网络能力的 crate，也 SHALL NOT 出现 egui/eframe 等 UI 依赖（NFR-6）；实测今天的正常树里 `ttf-parser`/`ab_glyph` 两个关键字零命中，提升后新增的应当**只有** `ab_glyph_rasterizer`、`owned_ttf_parser`、`ttf-parser` 这三行，多出一行别的就要停下来查是谁带进来的"
     },
     {
       "id": "V-008",
