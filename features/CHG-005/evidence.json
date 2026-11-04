@@ -920,6 +920,313 @@
       "summary": "运行时 sandbox 那一半，2026-11-04 重取并在文档回写后按同一份原始采集复录入（变更 M 打开 setAutomaticallyDetectsLanguage 之后）：① 自绘度量扩到 7 类 × 24 轮 = 168 张，平均 0.9140、最低 0.6835，白名单外语种 ko_plain rows=3/blocks=1/1.0000、ru_plain rows=8/blocks=8/0.6835 两条都非零——用户报的'韩文截图未识别到文字'那类在本地度量里不再返回空；② samples_run 对着仍为空的 assets/samples 如实报'样本不足'并以 0 退出，CSV 只有 filename,rows,blocks,elapsed_ms 四列，识别文本一个字不落；③ 零外发：nettop -p <识别进程> -L 6 -s 1 六个采样窗全是表头、零条连接行，同一命令换 curl 的 pid 采到真实流量行（bytes_in=260821；本机 nettop 这版 state 列为空，阳性判据是那一行本身而不是某个状态字）；④ cargo tree -p ice-vision -e normal 对 reqwest/hyper/rustls/native-tls/openssl/ureq 命中 0 行。仍未闭环：真界面上'已缩放'与'已忽略这次识别'的呈现、识别中能否拖窗切页签、HYPOTHESIS 单张 1080p<1s（168 张都是小图，不构成延迟达标）；FR-2.2 的 ≥0.92 继续记'未闭环'，没拿自绘度量冒充它",
       "artifact": "evidence/0033-V-011.txt",
       "artifact_hash": "352bc41079aeb92b6d14512cf6aaf99297e4d1341b7e5b34802bd32877e8557c"
+    },
+    {
+      "at": "2026-11-04T07:42:23+00:00",
+      "verification": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"--workspace\"] exit=0",
+      "artifact": "evidence/0034-V-001.txt",
+      "artifact_hash": "5f75dae9282681ecfdbb3ad72c43f84ce08cf86c152aced351c246712b2ecffe"
+    },
+    {
+      "at": "2026-11-04T07:42:24+00:00",
+      "verification": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-vision\"] exit=0",
+      "artifact": "evidence/0035-V-002.txt",
+      "artifact_hash": "66285c05f6733f927667f27ca43551374120f861055546a4582d58c98865af9d"
+    },
+    {
+      "at": "2026-11-04T07:42:24+00:00",
+      "verification": "V-003",
+      "requirements": [
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-core\"] exit=0",
+      "artifact": "evidence/0036-V-003.txt",
+      "artifact_hash": "42e4a4f793d59057533cb621611b3bbf546cd5bb49475cf2ea00c56a2a31c740"
+    },
+    {
+      "at": "2026-11-04T07:42:25+00:00",
+      "verification": "V-004",
+      "requirements": [
+        "REQ-001",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-app\"] exit=0",
+      "artifact": "evidence/0037-V-004.txt",
+      "artifact_hash": "62a9e9ba011223526b59fa6f9721b134d8af11f75d3d0b76eaa23813ee5ff4ab"
+    },
+    {
+      "at": "2026-11-04T07:42:38+00:00",
+      "verification": "V-005",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"clippy\", \"--workspace\", \"--all-targets\", \"--\", \"-D\", \"warnings\"] exit=0",
+      "artifact": "evidence/0038-V-005.txt",
+      "artifact_hash": "6cd9d42fd9f2b231932864cee41e8a7f8e04583c71fbecae216e3085cc8974bd"
+    },
+    {
+      "at": "2026-11-04T07:42:39+00:00",
+      "verification": "V-006",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"fmt\", \"--all\", \"--\", \"--check\"] exit=0",
+      "artifact": "evidence/0039-V-006.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-04T07:42:39+00:00",
+      "verification": "V-007",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"tree\", \"-p\", \"ice-vision\", \"-e\", \"normal\"] exit=0",
+      "artifact": "evidence/0040-V-007.txt",
+      "artifact_hash": "68bcb2a77973073d4a3707a4a55b4197c5023d762312796d8d59236e340895ea"
+    },
+    {
+      "at": "2026-11-04T07:42:39+00:00",
+      "verification": "V-008",
+      "requirements": [
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "passed",
+      "summary": "argv=[\"python3\", \"-B\", \"tools/check_traceability.py\"] exit=0",
+      "artifact": "evidence/0041-V-008.txt",
+      "artifact_hash": "3d579ecd8f59517661c0ed84d2fa33bcfeb1d5895c545551995c7166e9182d45"
+    },
+    {
+      "at": "2026-11-04T07:42:39+00:00",
+      "verification": "V-009",
+      "requirements": [
+        "REQ-002",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "passed",
+      "summary": "argv=[\"./sdd\", \"scan\"] exit=0",
+      "artifact": "evidence/0042-V-009.txt",
+      "artifact_hash": "0aeba1998fea21b35462abc8486766f93bf061a7339e02280daffb374af459de"
+    },
+    {
+      "at": "2026-11-04T07:42:40+00:00",
+      "verification": "V-010",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "passed",
+      "summary": "argv=[\"bash\", \"-c\", \"! grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates\"] exit=0",
+      "artifact": "evidence/0043-V-010.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-04T07:43:49+00:00",
+      "verification": "V-011",
+      "requirements": [
+        "REQ-002",
+        "REQ-006",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "7c21d96dbc13153efda0df2a60c24b32b394c4ac",
+        "tree_hash": "697df95d142f2b43243cc66436dc3be96c1ef453c92d311f25905eef6798a010",
+        "dirty": true
+      },
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "baseline": {
+        "change": "CHG-005",
+        "version": "v0.1",
+        "spec_hash": "79354e07780e66f9bda80b5f5fe69aef4fc63cf767c95fe2cd71e502d0254d97"
+      },
+      "plan_hash": "27aff6d9338879d7a08cd128e58ea2514089d38f7ba19fbc7e7e2c1d4006e012",
+      "result": "observed",
+      "summary": "树指纹因本轮两处改动过期（crates/ice-app/src/main.rs 的 Dock 图标 0.836 网格留白 + docs/ 里 FR-5.4 立档），运行时那一半按 2026-11-04 同一份原始采集复录（附件即 0033 那份），没有新增也没有撤回任何运行时事实：① 自绘度量 7 类 × 24 轮 = 168 张，平均字符正确率 0.9140、最低 0.6835，ko_plain rows=3/blocks=1/1.0000、ru_plain rows=8/blocks=8/0.6835 均非零；② samples_run 对仍为空的 assets/samples 如实报『样本不足』并以 0 退出，CSV 只有 filename,rows,blocks,elapsed_ms 四列，识别文本一个字不落；③ 零外发：nettop -p 识别进程 -L 6 -s 1 六个采样窗全是表头、零条连接行，同一命令换 curl 的 pid 采到真实流量行（bytes_in=260821；本机 nettop 这版 state 列为空，阳性判据是那一行本身）；④ cargo tree -p ice-vision 对 reqwest/hyper/rustls/native-tls/openssl/ureq 命中 0 行。未闭环口径不变：真界面『已缩放』『已忽略这次识别』的呈现、识别中拖窗与切页签、单张 1080p<1s、W-3.1~W-3.6 走查、真实样图的 ≥0.92 —— FR-2.2 继续记未闭环，没拿自绘度量冒充它。本轮另两处（app_icon 网格、CHG-008 托盘规格包）属缺陷 D-19 与新立需求，证据在 V-001/V-004 与走查 W-1.25/W-2.40，不在本条判据范围。",
+      "artifact": "evidence/0044-V-011.txt",
+      "artifact_hash": "352bc41079aeb92b6d14512cf6aaf99297e4d1341b7e5b34802bd32877e8557c"
     }
   ]
 }
