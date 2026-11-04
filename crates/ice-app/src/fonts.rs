@@ -41,7 +41,7 @@ pub const HEITI_FAMILY: &str = "heiti-sc";
 /// 装字体要用的那批汉字：界面与正文里真会出现的字
 #[cfg(test)]
 pub const HEITI_CHECK_SAMPLE: &str =
-    "中文翻译简体字数检测耗时缓存分段设置窗口悬浮全量退出置顶复制自动浅色深色";
+    "中文翻译简体字数检测耗时缓存分段设置窗口精简全量退出置顶复制自动浅色深色";
 
 /// 按 macOS 默认字体清单 + 黑体首选，拼出要交给 egui 的那份 `FontDefinitions`。
 ///

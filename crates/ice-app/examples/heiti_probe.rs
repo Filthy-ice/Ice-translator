@@ -6,7 +6,7 @@ use egui::{FontData, FontDefinitions, FontFamily, FontId};
 
 /// 界面与正文里真会出现的字，含常见标点与拉丁（拉丁也换成黑体是用户要的"全部"）
 const SAMPLE: &str =
-    "中文翻译简体字数检测耗时缓存分段设置窗口悬浮窗全量退出置顶复制自动浅色深色，。：（）、AaBb019";
+    "中文翻译简体字数检测耗时缓存分段设置窗口精简全量退出置顶复制自动浅色深色，。：（）、AaBb019";
 
 fn probe(path: &str, idx: u32) {
     let Ok(bytes) = std::fs::read(path) else {

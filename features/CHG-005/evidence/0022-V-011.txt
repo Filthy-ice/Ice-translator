@@ -1,0 +1,39 @@
+# V-011 运行时取证（2026-11-04 本机 arm64 macOS 26.6.2，变更 M 之后的第二次）
+
+## 1. 自绘度量 7 类 × 24 轮 = 168 张（cargo run -q -p ice-vision --example self_metric -- --repeat 24）
+en_plain (纯英文行): rows=3 blocks=1 accuracy=1.0000 elapsed_ms=70
+zh_plain (纯中文行): rows=3 blocks=1 accuracy=1.0000 elapsed_ms=37
+mixed (中英混排): rows=4 blocks=3 accuracy=0.9792 elapsed_ms=43
+paragraph (多行同段落，考 REQ-004 的合并): rows=4 blocks=1 accuracy=1.0000 elapsed_ms=61
+table (两列表格，考表格防护（同行不同列不许并成一块）): rows=8 blocks=7 accuracy=0.7353 elapsed_ms=34
+ko_plain (纯韩文行（语言候选白名单外）): rows=3 blocks=1 accuracy=1.0000 elapsed_ms=81
+ru_plain (纯俄文行（语言候选白名单外）): rows=8 blocks=8 accuracy=0.6835 elapsed_ms=72
+
+用例 7 类 × 24 轮，共 168 张自绘图
+字符正确率：平均 0.9140，最低 0.6835
+这条自动度量是**下限测试**：程序自绘的干净文字是 Vision 最容易的一类。
+它不替代 docs/06 的 IMG-1~IMG-12 与 ≥0.92 判据（那一层要真实截图 + 人工标注，见 samples_run.rs）。
+
+## 2. samples_run 对着空 assets/samples（如实报样本不足，退出码 0）
+filename,rows,blocks,elapsed_ms
+
+样本不足：assets/samples 里没有可识别的图片（当前支持 PNG / JPEG）。
+按停止条件 6，FR-2.2 的 ≥0.92 判据记为**未闭环**，不是通过；自绘度量（self_metric.rs）不能替它。
+
+## 3. nettop -p <self_metric pid> -L 6 -s 1 —— 六窗零条连接行（只有表头）
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+
+## 4. 同命令阳性对照：curl -s https://www.apple.com 的 pid 采样，出现真实流量行（bytes_in=260821）
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+14:53:44.730777,curl.36226,,,260821,589,973,37473,0,,,,,,,,,,,,
+time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+14:53:45.730588,curl.36226,,,260821,589,973,37473,0,,,,,,,,,,,,
+
+## 5. cargo tree -p ice-vision -e normal 对 reqwest/hyper/rustls/native-tls/openssl/ureq 命中行数
+0
