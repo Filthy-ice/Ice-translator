@@ -1,0 +1,322 @@
+{
+  "baseline": null,
+  "design": [
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    },
+    {
+      "requirement": "REQ-007",
+      "section": "## REQ-007 实现与验证"
+    },
+    {
+      "requirement": "REQ-008",
+      "section": "## REQ-008 实现与验证"
+    },
+    {
+      "requirement": "REQ-009",
+      "section": "## REQ-009 实现与验证"
+    },
+    {
+      "requirement": "REQ-010",
+      "section": "## REQ-010 实现与验证"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009",
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "note": "全量单测；含 P4/P5/P6 既有 525 项的回归（文本链路、密钥边界、形态切换、提示条淡出、识别链四入口与五种编辑动作不得回退）；本包新增的 bg/typeset/paint/composite/export 五组无头断言、两条新 Job 的块边界停止、三段状态机与过期互不越界都在这套里"
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-008",
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-vision"
+      ],
+      "note": "S5~S8 逐段单独可测：三档边界 0.15/0.35 两侧、贴边收缩、alpha 加权、fg 簇取法、缩字号步进与 55% 下限改判 degraded、标点禁则与两条断行路、对齐推断三档、对比度 ≥4.5:1、三档擦除的像素结果、先全部擦除再全部绘制的次序、输入 `RgbaImage` 逐像素不变、缺字形只报计数、`VisionError::Font` 那条错误路、PNG/JPEG 编码选择与 alpha 保留"
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-004",
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-core"
+      ],
+      "note": "`ice-core::font` 成为字体路径与 face 号的唯一出处后：`HEITI_SC_FACE = 1` 常量、`estimated_font_size()` 的 `bbox.h × 0.75` 与 8.0 下限、`Language::breaks_by_char` 在 CJK/拉丁两类的取值、`TextBlock.translation`/`degraded` 两字段的 serde 兼容（旧 JSON 仍可反序列化）、config 相关断言不回退"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-001",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
+      "note": "无头断言：每块一次请求且请求数 = 启用块数、单块 Err 不影响其余 Ok、`None` 的块不进绘制清单、翻译段在块边界真停而已完成的 `translation` 不被清、识别/合成段\"忽略这次结果\"后界面零变化、三段过期序号互不越界、E 区四颗按钮的前置条件矩阵逐格、G 区在成品存在时不再画占位文字、纹理 ID 换代、保存面板协议（取消 ≠ 失败）、`write_image` 的字节长度校验、覆盖层底色不硬编码半透明黑底白字；P6 那两条占位前提测试被替换后其余断言全绿"
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-001",
+        "REQ-005",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "note": "含新增 `unsafe`（NSSavePanel 异步回调）与逐像素写的指针算术：clippy 零警告"
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009",
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "note": "格式门禁"
+    },
+    {
+      "id": "V-007",
+      "requirements": [
+        "REQ-005",
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "tree",
+        "-p",
+        "ice-vision",
+        "-e",
+        "normal"
+      ],
+      "note": "依赖图取证（`ab_glyph_rasterizer`/`owned_ttf_parser` 从 dev 提为正常依赖**之后**重跑，提升前那张输出不能交差）：ice-vision 的传递依赖里 SHALL NOT 出现 reqwest/hyper/rustls 等任何带网络能力的 crate，也 SHALL NOT 出现 egui/eframe 等 UI 依赖（NFR-6）"
+    },
+    {
+      "id": "V-008",
+      "requirements": [
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "python3",
+        "-B",
+        "tools/check_traceability.py"
+      ],
+      "note": "需求↔用例双向闭合：FR-2.4~2.9 与 TC-2.4~2.9、W-4.1~W-4.6 在 docs/traceability.md 与 docs/06 两侧都对得上；docs/06 §4 那 6 行\"待 P7\"逐条补结论，四项人工评分仍记未闭环"
+    },
+    {
+      "id": "V-009",
+      "requirements": [
+        "REQ-008",
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "scan"
+      ],
+      "note": "敏感信息基线扫描（含度量 CSV、nettop 留档、走查证据件、构造样图 IMG-13）"
+    },
+    {
+      "id": "V-010",
+      "requirements": [
+        "REQ-001",
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "bash",
+        "-c",
+        "! grep -RInE 'sk-[A-Za-z0-9]{20,}' docs features crates"
+      ],
+      "note": "Key 形态字符串零命中（NFR-3、ADR-005）；图片链同样不把识别文本或译文写进日志，日志只允许变体名/rows/blocks/计数/elapsed_ms/尺寸/错误码/desc_len，CSV 只允许文件名与计数"
+    },
+    {
+      "id": "V-011",
+      "requirements": [
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "ice-vision",
+        "--example",
+        "compose_metric"
+      ],
+      "note": "自绘度量（下限测试，不是达标证据）：三档判定对不对、擦除后与真背景的色差、越框面积、degraded 是否按判据出现；译文用内置对照表不打网络，同一输入两次运行结果相同"
+    },
+    {
+      "id": "V-012",
+      "requirements": [
+        "REQ-001",
+        "REQ-003",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真机跑一条完整链：识别 → 翻译全部 → 生成图片 → 保存 / 复制图片两条出路的实拿（文件真写出来、剪贴板粘到别处得到同一张图），三段各自耗时，`nettop -p` 复查口径按 design 收窄后的那句写——图片字节与像素全程不出网成立，识别文本经 P3 外发是用户主动触发的正常行为；原图文件哈希在合成前后不变"
+    },
+    {
+      "id": "V-013",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-004",
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真实端点与真实截图上的观察值：N 块串行翻译的耗时与限流行为、单块失败的隔离与只重试这一块、三档判定在深色截图/照片背景/纯色弹窗上分得对不对、回填有没有补丁感、中→德长译文窄块（IMG-13 与真图各一张）到底裁不裁；这些是运行观察，不代替四项人工评分"
+    },
+    {
+      "id": "V-014",
+      "requirements": [
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-010"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "用户按 docs/06 新增的 W-4.1~W-4.6 真人走查，并亲自按 docs/04 §5 的评分表给出四项人工分：回填可读性 ≥4.0、位置准确性 ≥3.5、观感自然度 ≥3.0、覆盖层可用率 ≥0.9；`assets/samples/` 仍为空时这四项与 FR-2.2 的 ≥0.92 同样记**未闭环**而不是 ✅，四个数一个字不动——只有用户能给，Agent 不许自证"
+    }
+  ]
+}
