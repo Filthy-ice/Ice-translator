@@ -13,8 +13,10 @@
         "REQ-004"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/Cargo.toml"
+      ]
     },
     {
       "id": "T-002",
@@ -23,8 +25,10 @@
         "REQ-002"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/tray.rs"
+      ]
     },
     {
       "id": "T-003",
@@ -35,8 +39,12 @@
         "REQ-003"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/tray.rs",
+        "crates/ice-app/src/system/mod.rs",
+        "crates/ice-app/src/app.rs"
+      ]
     },
     {
       "id": "T-004",
@@ -47,8 +55,14 @@
         "REQ-006"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/mode.rs",
+        "crates/ice-app/src/state.rs",
+        "crates/ice-app/src/app.rs",
+        "crates/ice-app/src/system/tray.rs",
+        "crates/ice-app/src/system/hotkeys.rs"
+      ]
     },
     {
       "id": "T-005",
@@ -58,8 +72,13 @@
         "REQ-006"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/app.rs",
+        "crates/ice-app/src/state.rs",
+        "crates/ice-app/src/system/tray.rs",
+        "crates/ice-app/src/views/settings.rs"
+      ]
     },
     {
       "id": "T-006",
@@ -68,8 +87,11 @@
         "REQ-007"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/app.rs",
+        "crates/ice-app/src/mode.rs"
+      ]
     },
     {
       "id": "T-007",
@@ -84,8 +106,16 @@
         "REQ-007"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "docs/traceability.md",
+        "docs/02-architecture.md",
+        "docs/03-ui-design.md",
+        "docs/05-dev-guide.md",
+        "docs/06-test-cases.md",
+        "docs/07-acceptance.md",
+        "project/ROADMAP.md"
+      ]
     }
   ]
 }

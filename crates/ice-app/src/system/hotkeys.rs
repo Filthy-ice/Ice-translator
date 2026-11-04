@@ -16,6 +16,9 @@ pub enum Action {
     ToggleTopmost,
     /// Cmd+W / 窗口关闭按钮：常驻后台而不是退出（FR-5.2）
     HideWindow,
+    /// 托盘左键 / 菜单第一项：把收起来的窗口叫回来（FR-5.4）。
+    /// 没有键盘入口——它只由 `system::tray` 转交，与 `HideWindow` 成对。
+    RevealWindow,
     Quit,
     /// Shift+Enter：不提交，换行由 `TextEdit` 自己插入
     Newline,

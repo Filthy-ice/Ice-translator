@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 
 use crate::jobs::{self, JobRunner, OutcomeReceiver};
 use crate::mode;
-use crate::state::{self, AppState, ImageInput, KeyState, Tab, Tone};
+use crate::state::{self, AppState, ImageInput, KeyState, Tab, Tone, TrayState};
 use crate::system::alpha;
 use crate::system::clipboard::{self, CopyKind};
 use crate::system::dblclick;
@@ -32,6 +32,7 @@ use crate::system::screen;
 use crate::system::secrets;
 use crate::system::single_instance::InstanceLock;
 use crate::system::titlebar;
+use crate::system::tray;
 use crate::theme;
 use crate::views::{self, Effects};
 
@@ -202,6 +203,7 @@ impl IceApp {
             }
             Action::ToggleTopmost => self.toggle_topmost(ctx),
             Action::HideWindow => self.hide(ctx),
+            Action::RevealWindow => self.reveal(ctx),
             Action::Quit => self.quit(ctx),
             // 换行由 `TextEdit` 自己插入（它的 `return_key` 就是 Shift+Enter），应用不参与
             Action::Newline => {}
@@ -229,10 +231,60 @@ impl IceApp {
         mode::quit(ctx, &mut self.state, &mut self.pending_geometry);
     }
 
-    /// 收进后台（Cmd+W / 关闭按钮）。恢复判定与心跳见 `watch_visibility`。
+    /// 收进后台（Cmd+W / 关闭按钮）。去哪儿由 `state.tray` 决定，见 `mode::hide`；
+    /// 降级档的恢复判定与心跳见 `watch_visibility`。
     fn hide(&mut self, ctx: &egui::Context) {
-        mode::hide(ctx, &mut self.state);
+        let tray = self.state.tray;
+        mode::hide(ctx, &mut self.state, tray);
+        // 托盘那一支用不上这个闸门（唤回只有"点那枚图标"一条路），降级支要用：
+        // 记的是"收起来的时刻"，`watch_visibility` 按 `state.tray` 决定读不读它。
         self.reveal_guard.on_hide(Instant::now());
+    }
+
+    /// 托盘唤回（左键，或菜单第一项）。已经可见时什么都不做：重发几何会把用户刚铺满的
+    /// 窗口缩回去，而那一次点击只是想确认软件还在。
+    fn reveal(&mut self, ctx: &egui::Context) {
+        if !self.state.hidden {
+            return;
+        }
+        let tray = self.state.tray;
+        mode::reveal(ctx, &mut self.state, &mut self.pending_geometry, tray);
+    }
+
+    /// 菜单栏托盘：定档、每帧核对、把点出来的意图交回**既有**的 `run` 分派。
+    ///
+    /// 三个决定各有一条理由：
+    /// - **只在没定档时装**（`Unknown`）。装上之后每帧只做核对；装不上之后就停在
+    ///   `Unavailable`，不再每帧重造状态项——反复造会在菜单栏里长出第二枚图标（REQ-001）。
+    /// - **结果变了才说话**（与 `apply_zoom_hook`、`apply_dblclick_hook` 同一手法）：
+    ///   逐帧记会把日志刷满。macOS 上装不上要给用户一条提示条，因为那一档的关窗语义
+    ///   跟着换回"收进后台"，界面得说实话（REQ-005、REQ-006）。
+    /// - **意图走 `run(action)`**，不在这外面另写一套兑现。三条意图与快捷键、设置页、
+    ///   绿键落在同一批动作上，`Action::Quit` 必须是既有的那一条（TC-5.4-b）。
+    fn poll_tray(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame, effects: &mut Effects) {
+        let next = match self.state.tray {
+            TrayState::Unknown => {
+                let scale = frame
+                    .winit_window()
+                    .map_or(1.0, |window| window.scale_factor());
+                tray::install(self.state.mode(), ctx, scale)
+            }
+            TrayState::Available => tray::sync(self.state.mode()),
+            TrayState::Unavailable => TrayState::Unavailable,
+        };
+        if next != self.state.tray {
+            tracing::info!(?next, "托盘这一档定下来了");
+            if tray::SUPPORTED && next == TrayState::Unavailable {
+                self.state.toast(
+                    Tone::Warn,
+                    "菜单栏图标没能装上：关窗会收进后台，Dock 磁贴也留在原地",
+                );
+            }
+            self.state.tray = next;
+        }
+        if let Some(outcome) = tray::take_outcome() {
+            self.run(tray::action_of(outcome), ctx, effects);
+        }
     }
 
     /// 把手按下：窗口拖拽交给原生（REQ-002）。
@@ -979,23 +1031,51 @@ impl IceApp {
         self.runner.submit(&self.runtime, job, ctx);
     }
 
-    /// 隐藏期间的看护（缺陷 D-2）。
+    /// 隐藏期间的看护（缺陷 D-2）——**只服务降级档**（`TrayState::Unavailable`，收起来 = 最小化）。
     ///
     /// 必须挂在 `App::logic` 上：最小化之后 eframe 不再跑 egui pass，只按
     /// `MISSED_REDRAW_TIMEOUT` 调 `logic`（`update_logic_only`），`ui` 一帧都不执行。
     /// 之前把判定和心跳写在 `ui` 里，窗口一收起来就全断了——从 Dock 叫回来时没有任何
     /// 一帧去发现"回来了"，画面就停在旧的那一帧上。
     /// `run_logic` 会刷新 `viewport()` 里的几何与焦点，也会把这里发的命令带出去，够用。
+    ///
+    /// 托盘那一档（`Available`）整条都跳过：窗口是我们自己 `Visible(false)` 隐的，
+    /// "回来了"由用户点那枚图标说了才算，不需要在这儿猜；两条并行唤醒路径留着，
+    /// 出的就是"图标点一下窗口弹两回"这类只对一半的缺陷（REQ-006）。
     fn watch_visibility(&mut self, ctx: &egui::Context) {
+        if self.state.tray == TrayState::Available {
+            return;
+        }
         let (inner_rect, focused) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().focused));
         if self
             .reveal_guard
             .check(self.state.hidden, Instant::now(), inner_rect, focused)
         {
-            mode::reveal(ctx, &mut self.state, &mut self.pending_geometry);
+            let tray = self.state.tray;
+            mode::reveal(ctx, &mut self.state, &mut self.pending_geometry, tray);
         }
         if self.state.hidden {
             ctx.request_repaint_after(mode::HIDDEN_HEARTBEAT);
+        }
+    }
+
+    /// 帧末续期：只给有观众的帧续（REQ-007）。
+    ///
+    /// 隐藏期一次都不发：窗口不可见时每续一次期就多跑一次 pass，而这段时间唯一该发生的
+    /// 唤醒是"托盘被点了"——那一下自己会 `request_repaint`（`system::tray` 的回调），
+    /// eframe 那侧本来也会给不可见窗兜底跑一次 pass，所以不需要常驻心跳。
+    /// 提示条因此停在原样，唤回后接着淡出，用户看不见中间这几帧。
+    fn renew_repaints(&mut self, ctx: &egui::Context) {
+        if self.state.hidden {
+            return;
+        }
+        if self.state.tick_toasts() {
+            ctx.request_repaint();
+        }
+        if !self.state.toasts.is_empty() {
+            // 淡出要一帧一帧才看得出动：按 `TOAST_FADE_STEP`（16ms，1s 约 60 帧）续重绘，
+            // 提示条一消失就停——不常驻重绘，空闲时 CPU 才能压到 1% 以下（NFR-2）
+            ctx.request_repaint_after(state::TOAST_FADE_STEP);
         }
     }
 
@@ -1304,6 +1384,7 @@ impl eframe::App for IceApp {
         let close_requested = ctx.input(|i| i.viewport().close_requested());
 
         let mut effects = Effects::default();
+        self.poll_tray(&ctx, frame, &mut effects);
         self.poll_titlebar_click(&mut effects);
         self.poll_dblclick(&mut effects);
         for action in actions {
@@ -1358,15 +1439,7 @@ impl eframe::App for IceApp {
         }
 
         self.run_effects(&ctx, effects);
-
-        if self.state.tick_toasts() {
-            ctx.request_repaint();
-        }
-        if !self.state.toasts.is_empty() {
-            // 淡出要一帧一帧才看得出动：按 `TOAST_FADE_STEP`（16ms，1s 约 60 帧）续重绘，
-            // 提示条一消失就停——不常驻重绘，空闲时 CPU 才能压到 1% 以下（NFR-2）
-            ctx.request_repaint_after(state::TOAST_FADE_STEP);
-        }
+        self.renew_repaints(&ctx);
         self.flush_config(false);
     }
 
@@ -1479,23 +1552,55 @@ mod tests {
         assert!(app.state.in_flight.is_none());
     }
 
+    /// 关窗去哪儿由 `state.tray` 定，两支都要"进程不退、内容原样"（TC-5.4-c）。
+    /// 唤回走的是同一个 `run` 分派：托盘那枚图标发的 `Action::RevealWindow` 与这里同一条路。
     #[test]
     fn hide_window_keeps_the_process_and_the_content() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut state = plain_state();
-        state.source = "别丢我".into();
-        let mut app = app(dir.path(), state);
-        let c = ctx();
-        let mut effects = Effects::default();
+        for (tray, tucked_away) in [
+            (TrayState::Available, egui::ViewportCommand::Visible(false)),
+            (
+                TrayState::Unavailable,
+                egui::ViewportCommand::Minimized(true),
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut state = plain_state();
+            state.source = "别丢我".into();
+            state.tray = tray;
+            let mut app = app(dir.path(), state);
+            let c = ctx();
+            let mut effects = Effects::default();
 
-        app.run(Action::HideWindow, &c, &mut effects);
+            app.run(Action::HideWindow, &c, &mut effects);
 
-        let commands = c.viewport(|vp| vp.commands.clone());
-        assert!(commands.contains(&egui::ViewportCommand::CancelClose));
-        assert!(commands.contains(&egui::ViewportCommand::Minimized(true)));
-        assert!(app.state.hidden);
-        assert!(!app.state.quitting, "隐藏不是退出");
-        assert_eq!(app.state.source, "别丢我");
+            let commands = c.viewport(|vp| vp.commands.clone());
+            assert!(commands.contains(&egui::ViewportCommand::CancelClose));
+            assert!(
+                commands.contains(&tucked_away),
+                "{tray:?} 少发了 {tucked_away:?}"
+            );
+            assert!(app.state.hidden);
+            assert!(!app.state.quitting, "隐藏不是退出");
+            assert_eq!(app.state.source, "别丢我", "收起来不许动内容一个字");
+
+            app.run(Action::RevealWindow, &c, &mut effects);
+            assert!(!app.state.hidden, "{tray:?} 这一档唤不回来");
+            let commands = c.viewport(|vp| vp.commands.clone());
+            assert!(
+                !commands.contains(&egui::ViewportCommand::Close),
+                "收起来与唤回全程都不该发 Close"
+            );
+
+            // 已经可见时再来一次是空操作：那一下常常只是用户想确认软件还在，
+            // 重发几何会把刚铺满的窗口缩回去
+            let before = c.viewport(|vp| vp.commands.len());
+            app.run(Action::RevealWindow, &c, &mut effects);
+            assert_eq!(
+                c.viewport(|vp| vp.commands.len()),
+                before,
+                "第二次唤回多发命令了"
+            );
+        }
     }
 
     /// 把窗口的几何与焦点喂给无头 `Context`，等价于 `update_viewport_info` 每帧的刷新
@@ -1547,6 +1652,79 @@ mod tests {
         assert!(
             commands.contains(&egui::ViewportCommand::Decorations(true)),
             "当前形态的几何要整套重发，逼 winit 同步 surface 尺寸"
+        );
+    }
+
+    /// 数这一帧里所有 `request_repaint*`。egui 0.37 的重绘观察者每一次请求都会触发
+    /// （连"不会让下次重绘提前"的那些也算），正好用来数"到底要了几帧"。
+    fn repaint_counter(ctx: &egui::Context) -> std::sync::Arc<std::sync::Mutex<Vec<Duration>>> {
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<Duration>>> = std::sync::Arc::default();
+        let sink = std::sync::Arc::clone(&seen);
+        ctx.set_repaint_observer(move |info| sink.lock().unwrap().push(info.delay));
+        seen
+    }
+
+    /// REQ-007 的无头那半：观众不在场时一帧都不许多要。
+    /// 每续一次期 eframe 就多跑一整个 pass，提示条因此停在原样、唤回后接着淡出——
+    /// 中间那几帧本来就没人看。
+    #[test]
+    fn a_hidden_frame_asks_for_no_repaint_even_with_a_live_toast() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        app.state.toast(Tone::Info, "还没淡完");
+        let c = ctx();
+        let seen = repaint_counter(&c);
+
+        app.renew_repaints(&c);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [state::TOAST_FADE_STEP],
+            "可见帧按 16ms 一档续淡出，不是零延迟的忙轮询"
+        );
+
+        app.state.hidden = true;
+        app.renew_repaints(&c);
+        app.renew_repaints(&c);
+        assert_eq!(seen.lock().unwrap().len(), 1, "隐藏期两次续期一次都不许发");
+    }
+
+    /// 托盘装上以后，唤醒只剩"点那枚图标"一条路：`watch_visibility` 整条跳过，
+    /// 既不发降级档的 250ms 心跳，也不让 `RevealGuard` 靠几何与焦点猜"回来了没有"。
+    /// 两条并行唤醒路径留着出的就是"点一下弹两回"（REQ-006）；降级档那条由
+    /// `restoring_from_the_dock_is_noticed_by_the_logic_hook` 继续守着。
+    #[test]
+    fn the_tray_branch_leaves_no_second_wakeup_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        app.state.tray = TrayState::Available;
+        let c = ctx();
+        let mut effects = Effects::default();
+        app.run(Action::HideWindow, &c, &mut effects);
+
+        // 喂进"窗口回来了"的证据，并让静默期真的过掉：降级档在这一步就会自己弹回来，
+        // 少了这句等待，这条测试删掉早退也照样绿
+        feed_viewport(
+            &c,
+            Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::Vec2::new(1080.0, 720.0),
+            )),
+            Some(true),
+        );
+        std::thread::sleep(mode::REVEAL_GRACE + Duration::from_millis(50));
+        let seen = repaint_counter(&c);
+        let before = seen.lock().unwrap().len();
+
+        app.watch_visibility(&c);
+
+        assert!(
+            app.state.hidden,
+            "唤回只由托盘那一下决定，几何与焦点都只是猜测"
+        );
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            before,
+            "托盘档不许有心跳：隐藏期唯一的唤醒源是回调里那一次 request_repaint"
         );
     }
 

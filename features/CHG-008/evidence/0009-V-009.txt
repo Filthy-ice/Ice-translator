@@ -1,0 +1,2 @@
+[2m2026-11-04T09:26:09.171789Z[0m [32m INFO[0m [2mice_translator[0m[2m:[0m 取得单实例锁 [3mpid[0m[2m=[0m65572 [3mpath[0m[2m=[0m/Users/filthy-ice/Library/Application Support/IceTranslator/ice-translator.lock
+[2m2026-11-04T09:26:09.349713Z[0m [32m INFO[0m [2mice_translator::app[0m[2m:[0m 托盘这一档定下来了 [3mnext[0m[2m=[0mAvailable

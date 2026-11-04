@@ -33,7 +33,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_a
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 10.0;
             ai_group(ui, state, effects, ai_available);
-            window_group(ui, effects);
+            window_group(ui, state, effects);
             defaults_group(ui, state, effects);
             appearance_group(ui, state);
             data_group(ui, state, effects);
@@ -48,7 +48,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_a
 ///
 /// 「恢复默认窗口尺寸」管的是缺陷留下的坏数据（D-10 把两个尺寸槽写成一样）：
 /// 程序不猜哪个值本该属于谁，也不自动改写，只有用户按下去才恢复。
-fn window_group(ui: &mut egui::Ui, effects: &mut Effects) {
+fn window_group(ui: &mut egui::Ui, state: &AppState, effects: &mut Effects) {
     let ctx = ui.ctx().clone();
     group(ui, "窗口", |ui| {
         ui.horizontal(|ui| {
@@ -65,7 +65,7 @@ fn window_group(ui: &mut egui::Ui, effects: &mut Effects) {
         ui.horizontal(|ui| {
             let quit = ui.button("退出程序");
             record(&ctx, "btn_quit", quit.rect);
-            ui.label(RichText::new("红灯 / Cmd+W 是收进后台，不是退出").color(theme::MUTED));
+            ui.label(RichText::new(crate::system::tray::hint_text(state.tray)).color(theme::MUTED));
             if quit.clicked() {
                 effects.quit = true;
             }

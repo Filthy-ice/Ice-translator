@@ -304,6 +304,21 @@ pub enum Split {
     Nothing,
 }
 
+/// 菜单栏托盘在**这一台机器上**装出来没有（CHG-008：FR-5.4 + FR-5.2 前半句改判）。
+///
+/// **运行时状态，不落盘**：它是"这一进程这次能不能用"的事实，写进配置就是对着下一台机器
+/// 撒谎。三档里 `Unknown` 只代表"还没问过"（第一帧之前），界面按 `Unavailable` 的口径说话，
+/// 不许出现"文案说有托盘、实际没有"的混合状态（REQ-006）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TrayState {
+    #[default]
+    Unknown,
+    /// 状态项已装好，关窗收进菜单栏
+    Available,
+    /// 装不上（或非 macOS）：关窗退回收进后台，磁贴留在 Dock
+    Unavailable,
+}
+
 /// 拆分时从 `image_rows` 里捞出来的一行：行号 + 原文 + 本帧尺寸下的像素框 + 该行置信度。
 /// 只在 [`AppState::split_block`] 内部当中间变量用。
 struct RowPiece {
@@ -364,6 +379,9 @@ pub struct AppState {
     pub quitting: bool,
     /// 窗口当前是否处于隐藏/最小化态
     pub hidden: bool,
+    /// 菜单栏托盘这一档在这台机器上生效没有（[`TrayState`]）。帧循环每帧核对后写入，
+    /// 关窗去向、唤回入口、设置页文案、心跳四件事都读它——只有一个分叉点，不许各处自己判断。
+    pub tray: TrayState,
     /// 窗口当前是不是被"双击标题栏"铺满了整块屏（任务 #25）。
     ///
     /// **运行时状态，不落盘**：铺满是这一屏这一次观看的临时姿势，重启后回到 `full_rect`
@@ -426,6 +444,7 @@ impl AppState {
             confirm: None,
             quitting: false,
             hidden: false,
+            tray: TrayState::Unknown,
             filled: false,
             config_dirty: false,
             key_input: String::new(),
