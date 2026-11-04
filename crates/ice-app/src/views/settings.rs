@@ -73,14 +73,11 @@ fn window_group(ui: &mut egui::Ui, effects: &mut Effects) {
     });
 }
 
-/// 把控件矩形记在临时数据里，供无头测试命中点击（与 `compact::record` 同一套办法）：
+/// 把控件矩形记在临时数据里，供无头测试命中点击；登记与取回都在 `views` 那张共用表里
+/// （为什么要登记见 `views::rect_id`），设置页占 `settings` 区。
 /// 这两颗按钮的行为契约是"置一个意图"，只能真的点一下才知道接没接上。
 fn record(ctx: &egui::Context, salt: &str, rect: egui::Rect) {
-    ctx.data_mut(|d| d.insert_temp(rect_id(salt), rect));
-}
-
-fn rect_id(salt: &str) -> egui::Id {
-    egui::Id::NULL.with("ice-translator.settings").with(salt)
+    super::record_rect(ctx, "settings", salt, rect);
 }
 
 fn group(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
@@ -349,27 +346,46 @@ fn default_pair(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) 
     });
 }
 
-/// 常用三语（中/英/日）恒在列表里，其余按需启用（FR-1.4）
+/// 常用三语（中/英/日）恒在列表里，其余按需启用（FR-1.4）。
+///
+/// 收成一颗下拉（用户 2026-11-03："更多语言怎么是平面展示？不能做成下拉多选吗？"）：
+/// 它是**多选**，所以每一项用 `toggle_value` 而不是 `selectable_label`——后者是单选语义，
+/// 点第二项会把第一项顶掉。`ComboBox::show_ui` 的弹层在点在内部时不关，连着勾几项才成立。
 fn extra_languages(ui: &mut egui::Ui, state: &mut AppState) {
     row(ui, "更多语言", |ui| {
-        ui.vertical(|ui| {
-            for lang in optional_languages() {
-                let mut enabled = state.config.translation.extra_languages.contains(&lang);
-                if ui.checkbox(&mut enabled, lang.display_name()).changed() {
-                    if enabled {
-                        state.config.translation.extra_languages.push(lang);
-                    } else {
-                        state
-                            .config
-                            .translation
-                            .extra_languages
-                            .retain(|l| *l != lang);
+        egui::ComboBox::from_id_salt("extra_languages")
+            .selected_text(extra_languages_summary(
+                &state.config.translation.extra_languages,
+            ))
+            .show_ui(ui, |ui| {
+                for lang in optional_languages() {
+                    let mut enabled = state.config.translation.extra_languages.contains(&lang);
+                    if ui.toggle_value(&mut enabled, lang.display_name()).changed() {
+                        toggle_extra_language(state, lang, enabled);
                     }
-                    state.mark_config_dirty();
                 }
-            }
-        });
+            });
     });
+}
+
+/// 收起时这一行显示什么：全名铺开比整页还长，所以只报数量，具体是哪几种点开看勾。
+fn extra_languages_summary(chosen: &[Language]) -> String {
+    if chosen.is_empty() {
+        "不启用".to_string()
+    } else {
+        format!("已选 {} 种", chosen.len())
+    }
+}
+
+/// 勾选或取消一条额外语言：写入仍是"有则去、无则加"，与竖排勾选那版逐字同义。
+fn toggle_extra_language(state: &mut AppState, lang: Language, enabled: bool) {
+    let list = &mut state.config.translation.extra_languages;
+    if enabled {
+        list.push(lang);
+    } else {
+        list.retain(|l| *l != lang);
+    }
+    state.mark_config_dirty();
 }
 
 /// 可勾选的语言 = 全部语言减去常驻的常用语言。纯函数，便于断言。
@@ -495,10 +511,10 @@ fn appearance_group(ui: &mut egui::Ui, state: &mut AppState) {
             if ui
                 .checkbox(
                     &mut state.config.ui.dim_when_unfocused,
-                    "悬浮窗失焦时半透明",
+                    "精简窗失焦时半透明",
                 )
                 .on_hover_text(
-                    "只在简洁悬浮窗生效：没有焦点时整块窗（含标题栏）透出桌面，聚焦后恢复 100%",
+                    "只在精简窗口生效：没有焦点时整块窗（含标题栏）透出桌面，聚焦后恢复 100%",
                 )
                 .changed()
             {
@@ -657,6 +673,7 @@ fn term_list(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
 mod tests {
     use super::*;
     use crate::state::Job;
+    use crate::views::recorded_rect;
     use ice_core::config::Config;
     use ice_core::glossary::Glossary;
 
@@ -708,9 +725,7 @@ mod tests {
         /// 页面在窗口里实际分到的矩形：真机扣掉工具条 + 状态条 + `CentralPanel` 内边距之后
         /// 剩下的那块，由 `settings::show` 自己记下，测试只负责读。
         fn panel(&self) -> egui::Rect {
-            self.ctx
-                .data_mut(|d| d.get_temp::<egui::Rect>(rect_id("panel")))
-                .unwrap_or_else(|| panic!("没有记下 CentralPanel 的矩形"))
+            super::super::recorded_rect(&self.ctx, "settings", "panel")
         }
 
         fn step(&mut self, state: &mut AppState, effects: &mut Effects, events: Vec<egui::Event>) {
@@ -749,9 +764,7 @@ mod tests {
         }
 
         fn rect(&self, salt: &str) -> egui::Rect {
-            self.ctx
-                .data_mut(|d| d.get_temp::<egui::Rect>(rect_id(salt)))
-                .unwrap_or_else(|| panic!("没有记下 {salt} 的矩形"))
+            recorded_rect(&self.ctx, "settings", salt)
         }
     }
 
@@ -987,6 +1000,33 @@ mod tests {
         assert_eq!(
             optional.len(),
             Language::all().len() - Language::preferred().len()
+        );
+    }
+
+    /// 下拉里连点两项 = 两项都在（多选，不是单选顶掉）。写入逻辑抽出来才断言得动，
+    /// 界面那层只负责把 `toggle_value` 的 changed 交给它。
+    #[test]
+    fn toggling_two_extra_languages_keeps_both_and_dirties_the_config() {
+        let mut state = state();
+        toggle_extra_language(&mut state, Language::Ko, true);
+        toggle_extra_language(&mut state, Language::De, true);
+        assert_eq!(
+            state.config.translation.extra_languages,
+            vec![Language::Ko, Language::De],
+            "第二项不该把第一项顶掉"
+        );
+
+        toggle_extra_language(&mut state, Language::Ko, false);
+        assert_eq!(state.config.translation.extra_languages, vec![Language::De]);
+        assert!(state.config_dirty, "三项操作都改了配置");
+    }
+
+    #[test]
+    fn the_collapsed_row_counts_the_selection_instead_of_naming_it() {
+        assert_eq!(extra_languages_summary(&[]), "不启用");
+        assert_eq!(
+            extra_languages_summary(&[Language::Ko, Language::De, Language::Ru]),
+            "已选 3 种"
         );
     }
 

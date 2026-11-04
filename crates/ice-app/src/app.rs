@@ -602,7 +602,7 @@ impl IceApp {
             }
             titlebar::Outcome::Unavailable => {
                 if !ZOOM_UNHOOKED_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    tracing::warn!("接不上标题栏绿键，从悬浮窗切回全量只剩 Cmd+Shift+M");
+                    tracing::warn!("接不上标题栏绿键，从精简窗切回全量只剩 Cmd+Shift+M");
                 }
             }
         }
@@ -1062,7 +1062,7 @@ impl IceApp {
                 Tone::Info,
                 match mode {
                     UiMode::Full => "已切到全量窗口",
-                    UiMode::Compact => "已切到简洁悬浮窗",
+                    UiMode::Compact => "已切到精简窗口",
                 },
             );
         }

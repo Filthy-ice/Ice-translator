@@ -7,7 +7,7 @@
 //! 视图不碰系统：面板、剪贴板读图、拖拽落地统统记成 `Effects`，帧末由 `app.rs` 执行；
 //! 派发识别走 `Effects::job`（`Job::ImageOcr`），与文本翻译共用同一条派发口。
 
-use egui::{self, Align, ColorImage, Id, Layout, RichText, TextureOptions, Ui};
+use egui::{self, ColorImage, Id, RichText, TextureOptions, Ui};
 use ice_vision::{Admitted, LOW_CONFIDENCE_WARN};
 
 use crate::state::{AppState, RecognitionStage, Split, Tone};
@@ -341,49 +341,47 @@ fn count_after(state: &AppState) -> usize {
         .unwrap_or(0)
 }
 
-/// I 区：状态行（REQ-006 五态 + 耗时 + 「忽略这次识别」）。
+/// I 区：状态行（REQ-006 五态 + 耗时 + 「忽略这次识别」+ 右下角主题滑块）。
 ///
 /// 调用点在 `views/mod.rs`，排在 `CentralPanel` **之前**：本页正文那节 `ScrollArea` 是
 /// `auto_shrink([false, false])`，会吃掉当时所有的剩余高度，状态条若排在它后面只剩 0px 一格，
 /// 那颗「忽略这次识别」根本画不出来（点不到也就测不到）。与文本页的 E 动作底栏同一条规矩。
 pub(crate) fn status_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
-    let frame = egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(8, 6));
-    egui::Panel::bottom("image_status")
-        .frame(frame)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                caption(ui, "I 识别");
-                let color = match &state.image_stage {
-                    RecognitionStage::Failed(_) => theme::ERROR,
-                    RecognitionStage::Recognizing => theme::WARN,
-                    RecognitionStage::Done { .. } => theme::OK,
-                    RecognitionStage::Idle | RecognitionStage::NoText => theme::MUTED,
-                };
-                let label = if state.image_elapsed_ms == 0 {
-                    state.image_stage.label()
-                } else {
-                    format!(
-                        "{} · {} ms",
-                        state.image_stage.label(),
-                        state.image_elapsed_ms
-                    )
-                };
-                ui.colored_label(color, label);
-                if state.image_stage.cancellable() {
-                    // 靠右：识别中这一行只有这一颗按钮，放在文案后面会让人以为它是句说明
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let ignore = ui.button("忽略这次识别");
-                        record(ui.ctx(), "ignore", ignore.rect);
-                        if ignore.clicked() {
-                            effects.ignore_image = true;
-                        }
-                        ignore.on_hover_text(
-                            "底层那次识别撤不回来；这一颗只是说结果回来时不要填进列表",
-                        );
-                    });
-                }
-            });
+    super::window_bar("image_status", egui::Margin::symmetric(8, 6), ui, |ui| {
+        ui.horizontal(|ui| {
+            caption(ui, "I 识别");
+            let color = match &state.image_stage {
+                RecognitionStage::Failed(_) => theme::ERROR,
+                RecognitionStage::Recognizing => theme::WARN,
+                RecognitionStage::Done { .. } => theme::OK,
+                RecognitionStage::Idle | RecognitionStage::NoText => theme::MUTED,
+            };
+            let label = if state.image_elapsed_ms == 0 {
+                state.image_stage.label()
+            } else {
+                format!(
+                    "{} · {} ms",
+                    state.image_stage.label(),
+                    state.image_elapsed_ms
+                )
+            };
+            ui.colored_label(color, label);
+            // 「忽略这次识别」钉在这一行的右边缘。滑块 2026-11-04 挪去状态栏那一行之后，
+            // 这条子带回到"有按钮才存在"：条件包住整条带没有副作用了（包住滑块才会——
+            // 那会让这一页在某些帧根本没有滑块，见 `views::window_bar` 上面那段历史）。
+            if state.image_stage.cancellable() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let ignore = ui.button("忽略这次识别");
+                    record(ui.ctx(), "ignore", ignore.rect);
+                    if ignore.clicked() {
+                        effects.ignore_image = true;
+                    }
+                    ignore
+                        .on_hover_text("底层那次识别撤不回来；这一颗只是说结果回来时不要填进列表");
+                });
+            }
         });
+    });
 }
 
 fn region(ui: &mut egui::Ui, min_height: f32, body: impl FnOnce(&mut Ui)) {
@@ -402,18 +400,14 @@ fn caption(ui: &mut egui::Ui, text: &str) {
 }
 
 /// 把控件矩形交给 `Context::data`，让无头测试能拿到"打开图片"到底画在哪一格。
-/// 与工具条、图钉、主题滑块同一套路（`views/mod.rs`）。
-fn record(ctx: &egui::Context, salt: &'static str, rect: egui::Rect) {
-    ctx.data_mut(|data| data.insert_temp(entry_id(salt), rect));
-}
-
-fn entry_id(salt: &'static str) -> Id {
-    Id::NULL.with("ice-translator.image-entry").with(salt)
+/// 登记与取回都在 `views` 那张共用表里（为什么要登记见 `views::rect_id`），本页占 `image` 区。
+fn record(ctx: &egui::Context, salt: &str, rect: egui::Rect) {
+    super::record_rect(ctx, "image", salt, rect);
 }
 
 /// 每一行勾选框的矩形。
 ///
-/// 与上面那三颗入口分开记，是因为块号是运行期才知道的数：salt 是 `&'static str`，
+/// 与上面那三颗入口分开记，是因为块号是运行期才知道的数：`salt` 是字符串，
 /// 装不下"第几块"。测试要点的从来只有一号块那一格，所以按块号建 Id 就够了。
 fn record_checkbox(ctx: &egui::Context, id: u32, rect: egui::Rect) {
     ctx.data_mut(|data| {
@@ -434,13 +428,13 @@ pub(crate) fn checkbox_rect(ctx: &egui::Context, id: u32) -> egui::Rect {
 
 /// 这一格到底画没画：`None` = 这一帧根本没出现这颗控件
 #[cfg(test)]
-pub(crate) fn entry_rect(ctx: &egui::Context, salt: &'static str) -> Option<egui::Rect> {
-    ctx.data_mut(|data| data.get_temp::<egui::Rect>(entry_id(salt)))
+pub(crate) fn entry_rect(ctx: &egui::Context, salt: &str) -> Option<egui::Rect> {
+    super::rect_slot(ctx, "image", salt)
 }
 
 #[cfg(test)]
-pub(crate) fn recorded_entry(ctx: &egui::Context, salt: &'static str) -> egui::Rect {
-    entry_rect(ctx, salt).unwrap_or_else(|| panic!("图片页的 {salt} 没有记下矩形"))
+pub(crate) fn recorded_entry(ctx: &egui::Context, salt: &str) -> egui::Rect {
+    super::recorded_rect(ctx, "image", salt)
 }
 
 #[cfg(test)]

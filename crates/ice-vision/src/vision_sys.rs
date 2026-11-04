@@ -24,7 +24,11 @@ use objc2_vision::{
 use crate::error::{VisionError, VisionResult};
 use crate::layout::{NormalizedRect, RowObservation};
 
-/// 语言候选（ADR-002 定的三条，写死而不开放给用户：候选表决定识别行为）。
+/// 语言候选（ADR-002 定的三条）。
+///
+/// 开着 `automaticallyDetectsLanguage` 之后这一张表不再是门，而是**优先提示**：中英日在表里，
+/// 框架按它们做纠错；表外的谚文、西里尔等由自动检测接管。写死而不开放给用户这件事照旧
+/// ——它决定识别行为，不是用户偏好。
 const RECOGNITION_LANGUAGES: [&str; 3] = ["zh-Hans", "en", "ja"];
 
 /// 一行像素的字节数：RGBA8，无行填充。
@@ -59,8 +63,15 @@ pub fn recognize_rows(image: &RgbaImage) -> VisionResult<Vec<RowObservation>> {
     );
     request.setRecognitionLanguages(&languages);
     request.setUsesLanguageCorrection(true);
-    // 开着它等于把"用哪种语言"交给框架自由发挥（且只在 Revision3 起生效），度量结果不可复现。
-    request.setAutomaticallyDetectsLanguage(false);
+    // 自动判脚本 = 把识别范围从上面那三条候选放开到框架支持的全部文字。
+    //
+    // 关着它时那张候选表是**硬门**，本机 `examples/self_metric.rs` 前后各跑三轮量到的：
+    // 整页韩文 0 行（用户 2026-11-03 的"未识别到文字"就是这个形状），俄文有行但字符正确率
+    // 0.0000；放开后韩文 3 行 / 1.0000，俄文 0.6835。中英日与段落、表格那五类**没有因此变差**
+    // （中英混排 0.9375→0.9792、表格 0.7059→0.7353，余下三类两轮都是 1.0000）。
+    // `revision` 没有显式设过，本机取框架默认，而这项开关只在 Revision3 起生效——所以它是
+    // **运行时能力**而不是编译期保证；换机器或系统时以那两条非零行为准，不许凭这行注释推断。
+    request.setAutomaticallyDetectsLanguage(true);
 
     // 元素类型上抛给父类：ObjC 侧数组本来只存 id，转的只是 Rust 的泛型标记。
     // # Safety

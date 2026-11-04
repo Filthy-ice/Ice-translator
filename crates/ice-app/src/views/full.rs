@@ -14,7 +14,7 @@ use crate::system::clipboard::{self, CopyKind, EMPTY_TRANSLATION_HINT};
 use crate::system::hotkeys::SOURCE_EDITOR_ID;
 use crate::theme;
 
-use super::{Effects, THEME_SWITCH_W, theme_switch};
+use super::{Effects, window_bar};
 
 /// 底栏按钮的标准尺寸：等宽排列（F-09）
 const BUTTON_SIZE: egui::Vec2 = egui::Vec2::new(84.0, 28.0);
@@ -419,97 +419,81 @@ fn bar_height(size: egui::Vec2, rows: usize) -> f32 {
     rows as f32 * size.y + (rows - 1) as f32 * BAR_SPACING + 2.0 * BAR_MARGIN
 }
 
-/// F-09 / REQ-013：E 动作底栏。`Panel::bottom` 自占一行，左侧字数、右侧按钮组。
+/// F-09 / REQ-013：E 动作底栏，左侧字数、右侧按钮组。
 ///
-/// 由 `views::show` 在**窗口层**调用（只有文本页有），不在 `full::show` 里：放进
-/// `CentralPanel` 的话，它下面还压着那层框架的 8px 内边距，按钮就成了"上 7、下 15"
-/// （用户 2026-10-28 那句"按钮上下留白距离不同"）。窗口层的条子与状态条相接、横向满窗，
-/// 上下各留 `BAR_MARGIN`，REQ-013 那句"贴窗口下边"才真的成立。
-///
-/// **这条栏必须自己画底色**，不能像以前那样留空：挪到窗口层之后，它下面不再有
-/// `CentralPanel` 那层 `panel_fill` 兜着，而 eframe 的默认 `clear_color` 是
-/// `rgba(12,12,12,180)`（半透明深灰，`eframe/src/epi.rs:251`）——留空就是在那一条
-/// 窗口区域上开个洞，直接透出桌面（用户 2026-10-28 第二次报的"这颜色怎么回事"）。
-/// 工具条与状态条同样由 `Frame::side_top_panel` 画着 `panel_fill`，看不出这件事。
-///
-/// 从"浮层"改成"自占"的理由（用户 2026-10-27 那句"底部还是被遮住了"）：浮层不参与布局，
+/// 外壳（窗口层 `Panel::bottom` + 自画 `panel_fill`）的几何规矩在 `views::window_bar`，
+/// 三条栏共用那一条理由，这里只讲本栏的三件：
+/// ① 由 `views::show` 在 `CentralPanel` **之前**调用（只有文本页有），上下各留 `BAR_MARGIN`，
+/// REQ-013 那句"贴窗口下边"才真的成立。
+/// ② 从"浮层"改成"自占"的理由（用户 2026-10-27 那句"底部还是被遮住了"）：浮层不参与布局，
 /// 正文必须靠预留空白躲它，预留公式与实画公式一旦不同步就又被压一行。底栏占位之后，
 /// "最后一行被盖住"在结构上不成立，不需要任何预留。
-///
-/// 左右两块各用一个定长子 `Ui`，中间不会互相压：字数那格可以省略号截断，按钮那格不行。
+/// ③ 左右两块各用一个定长子 `Ui`，中间不会互相压：字数那格可以省略号截断，按钮那格不行。
 /// 按钮按 `rev()` 排进 `right_to_left`，视觉顺序仍是「翻译」在最左。
 ///
-/// 主题滑块（`views::theme_switch`）排进这条 `right_to_left` 子带的**第一个**，于是它落在
-/// 整条栏的右边缘——右下角（用户 2026-10-28 变更 J："而且全量界面也要有这个开关…也在右下角"）。
-/// 它与简洁窗那颗是同一个函数、写的同一个 `config.ui.theme`，不是第二套深浅色实现。
-/// 按钮组因此少掉一格宽度（`THEME_SWITCH_W` + 一道间距）：`bar_layout` 拿的是扣完之后的数，
-/// 不扣的话窄窗里最后一颗按钮会画到栏外（与简洁窗"换出来的第二排画到面板外面"同一个坑）。
+/// 主题滑块**不在这条栏里**（2026-11-04 用户变更）：它原来排进这条 `right_to_left` 子带的第一格，
+/// 于是贴住整条栏的右边缘。用户当天指出历史页没有这条栏，同位置排过去很突兀，"所以还是放在最
+/// 下方吧，和状态栏一行"，于是它连同图片页、历史页那两份一起挪进 `views::status_bar`。
+/// 这一栏因此拿回 `THEME_SWITCH_W` + 一道间距那一格宽度。
 pub(crate) fn bottom_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
     let actions = bar_actions(state);
     let fill = ui.visuals().panel_fill;
-    let frame = egui::Frame::NONE.fill(fill).inner_margin(BAR_MARGIN);
-    let panel = egui::Panel::bottom("full_bottom_bar")
-        .frame(frame)
-        .show(ui, |ui| {
-            let button_area = ui.available_width() - META_SLOT - THEME_SWITCH_W - BAR_SPACING;
-            let (size, rows) = bar_layout(button_area, actions.len());
-            let height = bar_height(size, rows) - 2.0 * BAR_MARGIN;
-            let rect = egui::Rect::from_min_size(
-                ui.cursor().min,
-                egui::vec2(ui.available_width(), height),
-            );
+    let bar = window_bar("full_bottom_bar", BAR_MARGIN, ui, |ui| {
+        let button_area = ui.available_width() - META_SLOT;
+        let (size, rows) = bar_layout(button_area, actions.len());
+        let height = bar_height(size, rows) - 2.0 * BAR_MARGIN;
+        let rect =
+            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), height));
 
-            let mut left = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(egui::Rect::from_min_size(
-                        rect.min,
-                        egui::vec2(META_SLOT, height),
-                    ))
-                    .layout(Layout::left_to_right(Align::Center)),
-            );
-            // 一条文字、多段颜色（`缓存` 绿、`更新中` 黄），不再是一排胶囊：胶囊比文字高，
-            // 挂进译文框就成了用户那句"里面非要有东西"。
-            let font_id = left.style().text_styles[&egui::TextStyle::Body].clone();
-            let mut job = egui::text::LayoutJob::default();
-            for (index, (text, color)) in bar_meta(state).into_iter().enumerate() {
-                let separator = if index == 0 { "" } else { " · " };
-                let muted = egui::TextFormat::simple(font_id.clone(), theme::MUTED);
-                job.append(separator, 0.0, muted);
-                job.append(&text, 0.0, egui::TextFormat::simple(font_id.clone(), color));
-            }
-            left.add_sized([META_SLOT - 8.0, size.y], egui::Label::new(job).truncate());
+        let mut left = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(egui::Rect::from_min_size(
+                    rect.min,
+                    egui::vec2(META_SLOT, height),
+                ))
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        // 一条文字、多段颜色（`缓存` 绿、`更新中` 黄），不再是一排胶囊：胶囊比文字高，
+        // 挂进译文框就成了用户那句"里面非要有东西"。
+        let font_id = left.style().text_styles[&egui::TextStyle::Body].clone();
+        let mut job = egui::text::LayoutJob::default();
+        for (index, (text, color)) in bar_meta(state).into_iter().enumerate() {
+            let separator = if index == 0 { "" } else { " · " };
+            let muted = egui::TextFormat::simple(font_id.clone(), theme::MUTED);
+            job.append(separator, 0.0, muted);
+            job.append(&text, 0.0, egui::TextFormat::simple(font_id.clone(), color));
+        }
+        left.add_sized([META_SLOT - 8.0, size.y], egui::Label::new(job).truncate());
 
-            let mut right = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(egui::Rect::from_min_max(
-                        egui::pos2(rect.min.x + META_SLOT, rect.min.y),
-                        rect.max,
-                    ))
-                    .layout(Layout::right_to_left(Align::Center)),
-            );
-            let busy = state.in_flight.is_some();
-            // 右下角的主题滑块：RTL 子带里第一个进去的贴最右，所以它排在这串按钮之前
-            theme_switch(&mut right, state, "full");
-            for action in actions.iter().rev() {
-                let response = right.add(egui::Button::new(action.label(busy)).min_size(size));
-                if response.clicked() {
-                    match *action {
-                        BarAction::Translate => {
-                            if !busy {
-                                effects.request(state.submit());
-                            }
+        let mut right = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x + META_SLOT, rect.min.y),
+                    rect.max,
+                ))
+                .layout(Layout::right_to_left(Align::Center)),
+        );
+        let busy = state.in_flight.is_some();
+        for action in actions.iter().rev() {
+            let response = right.add(egui::Button::new(action.label(busy)).min_size(size));
+            if response.clicked() {
+                match *action {
+                    BarAction::Translate => {
+                        if !busy {
+                            effects.request(state.submit());
                         }
-                        BarAction::Copy(kind) => copy(state, effects, kind),
-                        BarAction::Failure(action) => failure_action(state, effects, action),
                     }
+                    BarAction::Copy(kind) => copy(state, effects, kind),
+                    BarAction::Failure(action) => failure_action(state, effects, action),
                 }
             }
-            // 两块都画在丢弃的子 Ui 里，父级（面板）自己一条都没分配：不手工推进光标，
-            // 面板高度就塌回"一个按钮"，换出来的第二排直接画到面板外面（与简洁窗同一个坑）
-            ui.advance_cursor_after_rect(rect);
-        });
+        }
+        // 两块都画在丢弃的子 Ui 里，父级（面板）自己一条都没分配：不手工推进光标，
+        // 面板高度就塌回"一个按钮"，换出来的第二排直接画到面板外面（与简洁窗同一个坑）
+        ui.advance_cursor_after_rect(rect);
+    });
     ui.ctx().data_mut(|d| {
-        d.insert_temp(bottom_bar_id(), (panel.response.rect, fill));
+        d.insert_temp(bottom_bar_id(), (bar.rect, fill));
     });
 }
 
@@ -575,8 +559,7 @@ pub fn failure_action(state: &mut AppState, effects: &mut Effects, action: Failu
 mod tests {
     use super::*;
     use crate::state::{Failure, Job, KeyState};
-    use crate::views::recorded_theme_switch;
-    use ice_core::config::{Config, MAX_LETTER_SPACING, MAX_LINE_SPACING, Theme};
+    use ice_core::config::{Config, MAX_LETTER_SPACING, MAX_LINE_SPACING};
     use ice_core::glossary::Glossary;
     use ice_core::language::{EngineKind, Language};
     use ice_providers::error::ProviderError;
@@ -1064,62 +1047,6 @@ mod tests {
             body.max.y,
             bar.min.y
         );
-    }
-
-    /// 用户 2026-10-28 变更 J："而且全量界面也要有这个开关…也在右下角"。
-    /// 全量窗右下角这块与简洁窗那颗是同一个函数，所以判据也一样：贴住条子右边缘、
-    /// 落在条子那一格内，并且点轨道左端确实把 `config.ui.theme` 改成深色。
-    #[test]
-    fn the_full_window_has_the_same_theme_switch_at_its_bottom_right() {
-        let mut state = state();
-        state.config.ui.theme = Theme::System;
-        let mut effects = Effects::default();
-        let ctx = run_text_page(&mut state, &mut effects, 1080.0, 2);
-        let (bar, _) = recorded_bar(&ctx);
-        let switch = recorded_theme_switch(&ctx, "full");
-        let buttons_right = bar.max.x - BAR_MARGIN;
-
-        assert!(
-            (buttons_right - switch.max.x).abs() <= 0.5,
-            "主题滑块没贴到底栏右边缘：{switch:?}（条子 {bar:?}）"
-        );
-        assert!(
-            switch.min.y >= bar.min.y - 0.5 && switch.max.y <= bar.max.y + 0.5,
-            "主题滑块跑出了底栏那一格，不在右下角：{switch:?}（条子 {bar:?}）"
-        );
-        assert!(
-            switch.width() >= THEME_SWITCH_W - 0.5,
-            "主题滑块被底栏压窄了：{switch:?}"
-        );
-
-        // 点轨道的左端（盖住太阳那一头）→ 深色，并把配置标脏。
-        // 指针事件按 `Harness::click` 那一套来：先移动、再按下、最后一帧松开（`pressed: false`）
-        state.config.ui.theme = Theme::System;
-        state.config_dirty = false;
-        let at = egui::pos2(switch.min.x + 2.0, switch.center().y);
-        let mut time = 0.0;
-        for frame in 0..3 {
-            let mut raw = raw_input(1080.0, 720.0);
-            raw.time = Some(time);
-            time += 1.0 / 60.0;
-            if frame == 0 {
-                raw.events.push(egui::Event::PointerMoved(at));
-            }
-            raw.events.push(egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Primary,
-                pressed: frame != 2,
-                modifiers: egui::Modifiers::NONE,
-            });
-            ctx.run_ui(raw, |ui| run_text_ui(ui, &mut state, &mut effects))
-                .drop_without_applying_deltas();
-        }
-        assert_eq!(
-            state.config.ui.theme,
-            Theme::Dark,
-            "在全量窗右下角那块滑块的左端点下去，没切到深色"
-        );
-        assert!(state.config_dirty, "改了主题没置脏标记，配置不会落盘");
     }
 
     /// 走查缺陷（用户 2026-10-27）：长译文滚到底，最后一行被右下角动作条盖住。

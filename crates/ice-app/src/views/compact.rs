@@ -129,14 +129,9 @@ fn apply_dim(ui: &mut egui::Ui, alpha: f32) {
 
 /// 把控件矩形记在临时数据里，供无头布局测试断言。
 ///
-/// 看不见像素的测试只能靠这些数判断"控件有没有溢出窗口""把手有没有压住按钮"——
-/// P4 的 D-1/D-3 那批缺陷正是版面越界而测试无从发现。
+/// 登记与取回都在 `views` 那张共用表里（为什么要登记见 `views::rect_id`），简洁窗占 `compact` 区。
 fn record(ctx: &egui::Context, salt: &str, rect: Rect) {
-    ctx.data_mut(|d| d.insert_temp(rect_id(salt), rect));
-}
-
-fn rect_id(salt: &str) -> egui::Id {
-    egui::Id::NULL.with("ice-translator.compact").with(salt)
+    super::record_rect(ctx, "compact", salt, rect);
 }
 
 /// 一块空白当拖拽把手：按下即请求原生窗口拖拽，指针悬停时变成抓手。
@@ -418,8 +413,8 @@ fn body(ui: &mut egui::Ui, state: &AppState) {
 mod tests {
     use super::*;
     use crate::state::{Failure, Job, KeyState};
-    use crate::views::Effects;
-    use crate::views::{KNOB_RADIUS, PIN_TOGGLE_W, theme_at, theme_slot};
+    use crate::views::{Effects, THEME_EDGE_INSET, recorded_rect, rect_slot};
+    use crate::views::{PIN_TOGGLE_W, knob_center_x, theme_at, theme_slot};
     use ice_core::config::{Config, MIN_COMPACT_H, MIN_COMPACT_W, Theme};
     use ice_core::glossary::Glossary;
     use ice_core::language::EngineKind;
@@ -523,8 +518,7 @@ mod tests {
     }
 
     fn rect(ctx: &egui::Context, salt: &str) -> Rect {
-        ctx.data_mut(|d| d.get_temp::<Rect>(rect_id(salt)))
-            .unwrap_or_else(|| panic!("没有记下 {salt} 的矩形"))
+        recorded_rect(ctx, "compact", salt)
     }
 
     fn scroll_offset(ctx: &egui::Context) -> f32 {
@@ -1000,8 +994,9 @@ mod tests {
             "图钉没有落在滑块左边：{pin:?}（滑块 {switch:?}）"
         );
         assert!(
-            (bar.max.x - PANEL_X_MARGIN - switch.max.x).abs() <= 0.5,
-            "加进图钉把滑块顶离了行的右边缘——那一格仍是右下角：{switch:?}（行 {bar:?}）"
+            (bar.max.x - PANEL_X_MARGIN - THEME_EDGE_INSET - switch.max.x).abs() <= 0.5,
+            "加进图钉把滑块顶离了行的右边缘——那一格仍是右下角（让开 {THEME_EDGE_INSET}px 那一档）：\
+             {switch:?}（行 {bar:?}）"
         );
         assert!(
             pin.width() >= PIN_TOGGLE_W - 0.5,
@@ -1115,9 +1110,7 @@ mod tests {
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
         assert!(
-            h.ctx
-                .data_mut(|d| d.get_temp::<Rect>(rect_id("btn_top")))
-                .is_none(),
+            rect_slot(&h.ctx, "compact", "btn_top").is_none(),
             "动作行里还画着一颗置顶按钮——变更 I 要它变成图钉"
         );
     }
@@ -1135,9 +1128,7 @@ mod tests {
         let mut effects = Effects::default();
         h.warm(&mut state, &mut effects, false);
         assert!(
-            h.ctx
-                .data_mut(|d| d.get_temp::<Rect>(rect_id("btn_quit")))
-                .is_none(),
+            rect_slot(&h.ctx, "compact", "btn_quit").is_none(),
             "悬浮窗动作行里还画着退出按钮——变更 J 要那个位置让给主题滑块"
         );
         assert!(!effects.quit, "没有按钮却置了退出意图，退出通道被别处误触");
@@ -1146,6 +1137,11 @@ mod tests {
     /// 用户 2026-10-28 变更 J："悬浮时放在右下…也在右下角"。右下角 = 行的右边缘
     /// （这一行就是窗口的最底一块），所以钉住的是两条：横向贴到内容区右边、
     /// 纵向落在动作行那一格内。
+    ///
+    /// 2026-11-04 用户在真机上指出贴边那一条要改：窗口圆角 + 内侧那圈不画色的留白会啃掉
+    /// 贴边控件的右上角，浅色下尤其明显（"按钮会被覆盖一部分…向窗口左侧挪动3-5px"）。
+    /// 所以横向判据从"贴到内容区右边缘"改成"**离内容区右边缘正好让开 `THEME_EDGE_INSET`**"，
+    /// 让位量写在 `theme_switch` 自己身上，全量与精简两处一起生效。
     #[test]
     fn the_theme_switch_is_pinned_to_the_bottom_right() {
         let mut h = Harness::new(window().size());
@@ -1157,8 +1153,8 @@ mod tests {
         let engine = rect(&h.ctx, "engine");
 
         assert!(
-            (bar.max.x - PANEL_X_MARGIN - switch.max.x).abs() <= 0.5,
-            "主题滑块没贴到行的右边缘：{switch:?}（行 {bar:?}）"
+            (bar.max.x - PANEL_X_MARGIN - THEME_EDGE_INSET - switch.max.x).abs() <= 0.5,
+            "主题滑块没在行的右边缘让开让位量：{switch:?}（行 {bar:?}）"
         );
         assert!(
             switch.min.y >= bar.min.y - 0.5 && switch.max.y <= bar.max.y + 0.5,
@@ -1252,7 +1248,8 @@ mod tests {
                 })
                 .collect();
             // 只认滑块**自己那一格**里的形状：整条动作行上还有一根横贯窗口的分隔线，
-            // 拿它当图案就算亮了。太阳那圈半径 3.6、月亮是折线 `Path`，所以半径 > 7 的
+            // 拿它当图案就算亮了。太阳那圈半径 3.6、月亮是两条开放折线 `Path`（外弧+内弧，
+            // 2026-11-04 变更 S 之前是一条闭合环），所以半径 > 7 的
             // 只有滑块那枚实心圆（它同时有一道描边，两条都算同一个圆心）。
             let switch = rect(&h.ctx, "btn_theme");
             let inside =
@@ -1288,11 +1285,8 @@ mod tests {
         h.warm(&mut state, &mut effects, false);
         let switch = rect(&h.ctx, "btn_theme");
 
-        for (theme, knob_x) in [
-            (Theme::Dark, switch.min.x + KNOB_RADIUS),
-            (Theme::System, switch.center().x),
-            (Theme::Light, switch.max.x - KNOB_RADIUS),
-        ] {
+        for theme in [Theme::Dark, Theme::System, Theme::Light] {
+            let knob_x = knob_center_x(switch, theme);
             let (text, circles, suns, moons) = painted(&mut h, &mut state, &mut effects, theme);
             assert!(
                 !text.iter().any(|t| t == "自动"),
@@ -1300,8 +1294,8 @@ mod tests {
             );
             assert_eq!(
                 (suns, moons),
-                (1, 1),
-                "{theme:?} 档该同时画出太阳与月亮两枚图案，只是被盖住的那一枚看不出来"
+                (1, 2),
+                "{theme:?} 档该同时画出太阳与月亮两枚图案（月亮=外弧+内弧两条），只是被盖住的那一枚看不出来"
             );
             assert!(
                 circles.iter().any(|x| (x - knob_x).abs() <= 0.6),
@@ -1437,8 +1431,10 @@ mod tests {
     ///   估成 15.6px 是往宽里偏，宁可把下限要求算高）
     /// - 每颗按钮加左右 `button_padding.x`，再抬到 egui 的 `interact_size.x` 下限上
     ///   （`Button` 的 `min_size` 与样式下限取大，"AI" 那颗实际是 40px 而不是 31.6px）
-    /// - 主题滑块量**实测**宽度（`THEME_SWITCH_W` 是定值，控件里没有文字，字号缩放不影响它；
-    ///   变更 F 那一版还要跟"两个汉字 + 内边距"取大，是因为「自动」那两个字，现在没了）
+    /// - 主题滑块量**实测**宽度再加让位量（`THEME_SWITCH_W` 是定值，控件里没有文字，字号缩放
+    ///   不影响它；变更 F 那一版还要跟"两个汉字 + 内边距"取大，是因为「自动」那两个字，现在没了。
+    ///   2026-11-04 起槽位比控件本身宽 `THEME_EDGE_INSET`——记录下来的是画出来那一格，
+    ///   行实际吃掉的是再加 4px，度量要按后者算，否则窄一档会被估成"装得下"而真机换行）
     /// - 相邻两项加 `item_spacing.x`，面板再加左右各 8
     ///
     /// 滑块钉在右边缘之后，把手挪到左排与它中间那段空白，两头各要 `GAP_PADDING`。
@@ -1484,7 +1480,7 @@ mod tests {
             (text + 2.0 * style.spacing.button_padding.x).max(style.spacing.interact_size.x)
         };
         let items: Vec<f32> = labels.iter().map(|label| per_button(label)).collect();
-        let switch_px = rect(&h.ctx, "btn_theme").width();
+        let switch_px = rect(&h.ctx, "btn_theme").width() + THEME_EDGE_INSET;
         let pin_px = rect(&h.ctx, "btn_pin").width();
         let needed = items.iter().sum::<f32>()
             + switch_px
@@ -1499,7 +1495,8 @@ mod tests {
         // ② 原来那条"必须解释 320 那一档那次换行"的历史判据跟着置顶按钮一起退休了。
         // ③ 需求宽度从变更 I 那一版的 314px 降到 262px（少一整颗 `退出`，右边缘那块滑块只有
         //    定值的 40px），2026-10-29 图钉从原生标题栏挪进这一行又加回 34px（一枚 26 + 一道
-        //    间距）= 296px。`MIN_COMPACT_W` **两头都不跟着收/放**——用户 2026-10-28 那句
+        //    间距）= 296px，2026-11-04 滑块向窗口内让开 `THEME_EDGE_INSET`（圆角那一角的啃噬）
+        //    再加 4px = **300px**。`MIN_COMPACT_W` **两头都不跟着收/放**——用户 2026-10-28 那句
         //    "按钮不允许换行"要的是真机上中文变宽也仍然放得下一行；控件数变化不是动下限的理由。
         let row = rect(&h.ctx, "actions");
         assert!(
@@ -1513,8 +1510,8 @@ mod tests {
             window().width()
         );
         assert!(
-            (needed - 296.0).abs() <= 1.0,
-            "按度量的需求宽度变了：{needed}（文档 03 §3 末段与 `07-acceptance.md` 记的是 296px）——\
+            (needed - 300.0).abs() <= 1.0,
+            "按度量的需求宽度变了：{needed}（文档 03 §3 末段与 `07-acceptance.md` 记的是 300px）——\
              改了文案、加减了控件或动了间距就要把那两处一起改"
         );
     }

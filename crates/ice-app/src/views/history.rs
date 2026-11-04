@@ -23,6 +23,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, history: &HistoryStore) {
     list(ui, state);
 }
 
+// 历史页**没有自己的底栏**。2026-11-03 曾为"每页都要有主题滑块"单开一条只装一颗滑块的
+// `Panel::bottom`，次日用户指出这一页没有动作按钮那一行，滑块跟文本页排在同一位置反而突兀：
+// "所以还是放在最下方吧，和状态栏一行"。滑块因此挪进 `views::status_bar`（三页共用那一行），
+// 这一页回到只有正文。
 fn toolbar(ui: &mut egui::Ui, state: &mut AppState, history: &HistoryStore) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("搜索").strong());

@@ -28,6 +28,12 @@ const FONT_PATH: &str = "/System/Library/Fonts/STHeiti Medium.ttc";
 ///
 /// P5 踩过的坑：选错面既不崩也不缺字，只有肉眼看得出差别——所以这里显式给索引，不写 0 碰运气。
 const HEITI_SC_FACE: u32 = 1;
+/// 白名单外那两类用例换这一支。
+///
+/// 换两支字体是因为**黑体里没有谚文字形也没有西里尔字形**，用同一张 `Face` 画韩文只会得到
+/// 一片空白，量出来的 0.0000 说不清是"没认出来"还是"没画出来"。这一支是单面字体（不必猜
+/// `.ttc` 的第几面），cmap 里谚文、西里尔、假名、拉丁都在。
+const GOTHIC_PATH: &str = "/System/Library/Fonts/Supplemental/AppleGothic.ttf";
 /// 字号固定 28px：度量要的是"同一台机器、同一档字号"的可比数字，字号不该是变量。
 const PIXEL_SIZE: f32 = 28.0;
 /// 画布四周留白：Vision 对贴边的字会掉置信度，留白是给识别留的，不是给好看留的。
@@ -40,11 +46,17 @@ struct Run {
     baseline: f32,
 }
 
-/// 一个用例：名字 + 它的绘制清单。标注由 `runs` 现算，不手写第二份，否则改动会不同步。
-struct Sample {
+/// 一个用例：名字 + 绘制清单 + 画这些字用的那支字体。标注由 `runs` 现算，不手写第二份，
+/// 否则改动会不同步。
+///
+/// 字体挂在用例上而不是全局一份：排版（基线、行高、画布尺寸）和绘制都必须用同一张 `Face`，
+/// 否则"坐标算的是黑体、笔画描的是另一支"，逐字符正确率就失去了可复算性。
+struct Sample<'f> {
     name: &'static str,
     /// 这一用例在测什么（打出来，省得对着名字猜）
     purpose: &'static str,
+    face: &'f Face<'f>,
+    font_path: &'static str,
     runs: Vec<Run>,
 }
 
@@ -88,20 +100,36 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // 第二支字体只为那两类白名单外的用例存在。读不到就少跑两类并说清楚，
+    // 不整个退出——那会让"中英日韩的量还是有的"这件事也跟着消失。
+    let gothic_bytes = std::fs::read(GOTHIC_PATH).ok();
+    let gothic = gothic_bytes
+        .as_ref()
+        .and_then(|bytes| Face::parse(bytes, 0).ok());
 
-    let samples = samples(&face);
+    let samples = samples(&face, gothic.as_ref());
     let mut observations: Vec<Observation> = Vec::new();
-    let mut missing_glyphs = 0usize;
+    // 缺字形按字体分开记：两支字体里有一支画不出谚文，和两支都画不出几笔，是两件事
+    let mut missing: Vec<(&'static str, usize)> = Vec::new();
     for round in 0..args.repeat {
         for sample in &samples {
-            let image = render(&face, &sample.runs);
+            let image = render(sample.face, &sample.runs);
             if let Some(dir) = &args.save_dir {
                 let path = dir.join(format!("{round:02}-{}.png", sample.name));
                 if let Err(err) = DynamicImage::ImageRgba8(image.clone()).save(&path) {
                     eprintln!("存不进 {}：{err}", path.display());
                 }
             }
-            missing_glyphs += count_missing(&face, &sample.runs);
+            let gone = count_missing(sample.face, &sample.runs);
+            if gone > 0 {
+                match missing
+                    .iter_mut()
+                    .find(|(path, _)| *path == sample.font_path)
+                {
+                    Some(entry) => entry.1 += gone,
+                    None => missing.push((sample.font_path, gone)),
+                }
+            }
             match recognize_one(&image) {
                 Ok(outcome) => {
                     let accuracy = char_accuracy(&label_of(&sample.runs), &outcome.text);
@@ -125,8 +153,23 @@ fn main() -> ExitCode {
                         );
                     }
                 }
-                Err(message) => {
-                    eprintln!("第 {round} 轮的 {} 识别失败：{message}", sample.name);
+                // 一张 28px、黑白分明、行距 2.2 倍的图**一行都没认出来**，这是度量结果本身
+                // （REQ-002 的语言白名单关着时，韩文整页就是这个形状），不该让整个程序以
+                // 非零退出码收场——那样只剩下"跑挂了"，看不出挂的是哪一类。
+                Err(ice_vision::VisionError::NoTextFound) => {
+                    observations.push(Observation {
+                        name: sample.name,
+                        rows: 0,
+                        blocks: 0,
+                        elapsed_ms: 0,
+                        accuracy: 0.0,
+                    });
+                    if args.verbose {
+                        println!("[{round}] {} 一条识别行都没有", sample.name);
+                    }
+                }
+                Err(err) => {
+                    eprintln!("第 {round} 轮的 {} 识别失败：{err}", sample.name);
                     return ExitCode::from(1);
                 }
             }
@@ -148,14 +191,14 @@ fn main() -> ExitCode {
             average(mine.iter().map(|o| o.elapsed_ms as usize)),
         );
     }
-    summarize(&observations, missing_glyphs, &samples);
+    summarize(&observations, &missing, &samples);
     ExitCode::SUCCESS
 }
 
 /// 平均编辑距离之外的总口径：全部用例的平均与最低字符正确率。
 ///
 /// 最后那句不是客套，是这条度量的边界声明——自动数字再高也不等于 FR-2.2 达标。
-fn summarize(observations: &[Observation], missing_glyphs: usize, samples: &[Sample]) {
+fn summarize(observations: &[Observation], missing: &[(&str, usize)], samples: &[Sample]) {
     let accuracies: Vec<f64> = observations.iter().map(|o| o.accuracy).collect();
     if accuracies.is_empty() {
         return;
@@ -172,9 +215,9 @@ fn summarize(observations: &[Observation], missing_glyphs: usize, samples: &[Sam
         "字符正确率：平均 {:.4}，最低 {min:.4}",
         mean(accuracies.iter().copied())
     );
-    if missing_glyphs > 0 {
+    for (path, gone) in missing {
         println!(
-            "注意：有 {missing_glyphs} 个字符在 {FONT_PATH} 里找不到字形——标注里出现了画不出来的字，上面这些数字要打折看。"
+            "注意：有 {gone} 个字符在 {path} 里找不到字形——标注里出现了画不出来的字，上面这些数字要打折看。"
         );
     }
     println!("这条自动度量是**下限测试**：程序自绘的干净文字是 Vision 最容易的一类。");
@@ -203,18 +246,20 @@ fn average(values: impl Iterator<Item = usize>) -> usize {
     sum.checked_div(count).unwrap_or(0)
 }
 
-fn samples(face: &Face) -> Vec<Sample> {
+fn samples<'f>(heiti: &'f Face<'f>, gothic: Option<&'f Face<'f>>) -> Vec<Sample<'f>> {
     // 三类"干净文字"：行距给到 2.2 倍字号，行与行明显是独立段
     let wide = PIXEL_SIZE * 2.2;
     // 段落那类：行距压到 1.25 倍，五行本该被 REQ-004 的判据接成块——这一条测的就是合并
     let tight = PIXEL_SIZE * 1.25;
 
-    vec![
+    let mut samples = vec![
         Sample {
             name: "en_plain",
             purpose: "纯英文行",
+            face: heiti,
+            font_path: FONT_PATH,
             runs: lines(
-                face,
+                heiti,
                 &[
                     "The quick brown fox jumps over the lazy dog",
                     "Ice Translator reads the picture on this machine",
@@ -226,8 +271,10 @@ fn samples(face: &Face) -> Vec<Sample> {
         Sample {
             name: "zh_plain",
             purpose: "纯中文行",
+            face: heiti,
+            font_path: FONT_PATH,
             runs: lines(
-                face,
+                heiti,
                 &[
                     "请在设置里填写接口地址",
                     "本机识别不上传任何图片",
@@ -239,8 +286,10 @@ fn samples(face: &Face) -> Vec<Sample> {
         Sample {
             name: "mixed",
             purpose: "中英混排",
+            face: heiti,
+            font_path: FONT_PATH,
             runs: lines(
-                face,
+                heiti,
                 &[
                     "打开 Settings 后粘贴 API Key",
                     "第 3 步：点击 Translate 按钮",
@@ -252,8 +301,10 @@ fn samples(face: &Face) -> Vec<Sample> {
         Sample {
             name: "paragraph",
             purpose: "多行同段落，考 REQ-004 的合并",
+            face: heiti,
+            font_path: FONT_PATH,
             runs: lines(
-                face,
+                heiti,
                 &[
                     "本报告比较了三种识别方案的准确率，",
                     "并在同一台机器上重复运行了十次，",
@@ -266,8 +317,10 @@ fn samples(face: &Face) -> Vec<Sample> {
         Sample {
             name: "table",
             purpose: "两列表格，考表格防护（同行不同列不许并成一块）",
+            face: heiti,
+            font_path: FONT_PATH,
             runs: table(
-                face,
+                heiti,
                 &[
                     ("引擎", "字符正确率"),
                     ("Vision", "0.94"),
@@ -278,7 +331,47 @@ fn samples(face: &Face) -> Vec<Sample> {
                 PIXEL_SIZE * 3.0,
             ),
         },
-    ]
+    ];
+
+    // 白名单外的那两类：`automaticallyDetectsLanguage` 关着时它们**必须**是零行——
+    // REQ-002 那三条语言候选就是硬门（用户 2026-11-03 拿一段韩文撞上的正是这道门）。
+    // 开着它则是"框架自己判脚本"，这两类应当认得出内容。
+    match gothic {
+        Some(face) => {
+            samples.push(Sample {
+                name: "ko_plain",
+                purpose: "纯韩文行（语言候选白名单外）",
+                face,
+                font_path: GOTHIC_PATH,
+                runs: lines(
+                    face,
+                    &[
+                        "이미지는 이 컴퓨터에서만 분석됩니다",
+                        "번역 결과는 블록별로 편집할 수 있습니다",
+                        "입력 상자에서 키를 확인하세요",
+                    ],
+                    wide,
+                ),
+            });
+            samples.push(Sample {
+                name: "ru_plain",
+                purpose: "纯俄文行（语言候选白名单外）",
+                face,
+                font_path: GOTHIC_PATH,
+                runs: lines(
+                    face,
+                    &[
+                        "Введите адрес в настройках",
+                        "Распознавание работает локально",
+                        "Результат можно редактировать",
+                    ],
+                    wide,
+                ),
+            });
+        }
+        None => eprintln!("读不到 {GOTHIC_PATH}：跳过 ko_plain / ru_plain 两类用例"),
+    }
+    samples
 }
 
 /// 一列竖排的行，左对齐到同一条基线 x。
@@ -475,10 +568,12 @@ impl OutlineBuilder for ToPixels<'_> {
 }
 
 /// 一张自绘图跑完整条识别链（S0 入场 → S1~S3），只带回计数与拼好的识别串。
-fn recognize_one(image: &RgbaImage) -> Result<Outcome, String> {
+///
+/// 错误按类型带回（不是字符串）：`NoTextFound` 在调用方是一条 0 行的度量结果，
+/// 其它错误才是真的跑挂了。
+fn recognize_one(image: &RgbaImage) -> Result<Outcome, ice_vision::VisionError> {
     let admitted = admit_rgba(image.clone(), "self_metric");
-    let (rows, document, progress) =
-        recognize_with_rows(&admitted.image).map_err(|err| err.to_string())?;
+    let (rows, document, progress) = recognize_with_rows(&admitted.image)?;
     let text = normalize(
         &document
             .blocks

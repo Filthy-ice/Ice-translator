@@ -31,6 +31,67 @@ const TOOLBAR_Y_MARGIN: i8 = 6;
 /// 状态条的高度（`03-ui-design.md` §1）
 pub const STATUS_HEIGHT: f32 = 28.0;
 
+// ---- 控件命中矩形的登记处 ----
+
+/// 一格里画了什么、画在哪儿：无头测试唯一能拿到的版面事实。
+///
+/// 看不见像素的测试只能靠这些矩形判断"控件有没有溢出窗口""把手有没有压住按钮""两颗控件
+/// 的响应区重不重"——P4 的 D-1/D-3 那批缺陷正是版面越界而测试无从发现。这套办法原先在
+/// `compact`/`settings`/`image` 三个文件里各抄了一份（同一个 `Id::NULL.with(前缀).with(salt)`
+/// 加一次 `insert_temp`），2026-11-04 抽成这一处，四个宿主共用。
+///
+/// `namespace` 按宿主分（`compact`/`settings`/`image`/`toolbar`/`theme`/`pin`）：同一帧里
+/// 不同栏的 `salt` 允许重名（两种形态都有 `pin`、三页都有主题滑块），不分区就会互相覆盖。
+pub(crate) fn rect_id(namespace: &str, salt: &str) -> egui::Id {
+    egui::Id::NULL
+        .with("ice-translator.rect")
+        .with(namespace)
+        .with(salt)
+}
+
+/// 画的时候登记自己那一格。生产路径也在调用（不只是测试构建里才有），所以不带 `cfg(test)`。
+pub(crate) fn record_rect(ctx: &egui::Context, namespace: &str, salt: &str, rect: egui::Rect) {
+    ctx.data_mut(|data| data.insert_temp(rect_id(namespace, salt), rect));
+}
+
+/// 这一格到底画没画：`None` = 这一帧根本没出现这颗控件（反向断言要用它）。
+#[cfg(test)]
+pub(crate) fn rect_slot(ctx: &egui::Context, namespace: &str, salt: &str) -> Option<egui::Rect> {
+    ctx.data_mut(|data| data.get_temp::<egui::Rect>(rect_id(namespace, salt)))
+}
+
+#[cfg(test)]
+pub(crate) fn recorded_rect(ctx: &egui::Context, namespace: &str, salt: &str) -> egui::Rect {
+    rect_slot(ctx, namespace, salt)
+        .unwrap_or_else(|| panic!("{namespace} 里的 {salt} 没有记下矩形"))
+}
+
+// ---- 窗口层底栏的外壳 ----
+
+/// 页面底栏共用的外壳：文本页 E 动作栏、图片页 I 状态栏（历史页没有底栏，滑块那颗在状态条）。
+///
+/// 两条几何规矩只在这里写一遍，两个宿主不再各抄一份：
+/// ① 只能是 `Panel::bottom`，而且调用点排在 `CentralPanel` **之前**——中央区会吃掉当时所有
+/// 的剩余矩形，画在它里面就被那层 8px 内边距顶离窗口下边（用户 2026-10-28 那句
+/// "按钮上下留白距离不同"，实测上 7、下 15）。
+/// ② 底色必须自己画 `panel_fill`——这一条下面不再有 `CentralPanel` 那层底色兜着，而 eframe
+/// 默认 `clear_color` 是半透明深灰（`eframe/src/epi.rs:251`），留空等于在窗口上开个洞直接
+/// 透出桌面（同一天那句"这颜色怎么回事"）。
+pub(crate) fn window_bar(
+    name: &str,
+    margin: impl Into<egui::Margin>,
+    ui: &mut egui::Ui,
+    content: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    let frame = egui::Frame::NONE
+        .fill(ui.visuals().panel_fill)
+        .inner_margin(margin);
+    egui::Panel::bottom(name)
+        .frame(frame)
+        .show(ui, |ui| content(ui))
+        .response
+}
+
 /// 一帧里 view 想让外部世界做的事。
 ///
 /// view 只改 `AppState`，副作用记在这里、帧末由 `app.rs` 统一执行；这样 view 函数能无头调用，
@@ -104,13 +165,14 @@ pub fn show(
     // E 动作底栏（REQ-013）：文本页专属，建在 `CentralPanel` 之前才拿得到位置（`CentralPanel`
     // 吃掉剩余矩形）。放在窗口层而不是页内，是为了让它贴住状态条——落在 `CentralPanel` 里时，
     // 它下方还压着那层框架的 8px 内边距，按钮上下留白就差了 8px（用户 2026-10-28 报的缺陷）。
-    if state.tab == Tab::Text {
-        full::bottom_bar(ui, state, effects);
-    }
-    // 图片页的 I 区状态条同理：本页正文是一节铺满剩余高度的 `ScrollArea`，状态条画在它
-    // 下面会被挤成 0px（那颗「忽略这次识别」就点不到）。它也是一条窗口层的底栏。
-    if state.tab == Tab::Image {
-        image::status_bar(ui, state, effects);
+    //
+    // 这一层现在**只有两处宿主**：文本页那颗动作栏、图片页那颗"I 识别 + 忽略这次识别"。
+    // 主题滑块 2026-11-04 挪进上面那条状态栏（`views::status_bar`），三页共用一行，历史页
+    // 不再为它单开一条栏；设置页不画滑块，那一页自己有「主题」那一行。
+    match state.tab {
+        Tab::Text => full::bottom_bar(ui, state, effects),
+        Tab::Image => image::status_bar(ui, state, effects),
+        Tab::History | Tab::Settings => {}
     }
 
     egui::CentralPanel::default().show(ui, |ui| match state.tab {
@@ -146,10 +208,9 @@ fn toolbar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_av
             engine_picker(ui, state, effects, ai_available);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let floating = ui
-                    .button("悬浮窗")
-                    .on_hover_text("切到简洁悬浮窗（Cmd+Shift+M）");
-                ui.ctx()
-                    .data_mut(|d| d.insert_temp(toolbar_id("floating"), floating.rect));
+                    .button("精简")
+                    .on_hover_text("切到精简窗口（Cmd+Shift+M）");
+                record_rect(ui.ctx(), "toolbar", "floating", floating.rect);
                 if floating.clicked() {
                     effects.toggle_mode = true;
                 }
@@ -244,10 +305,17 @@ pub(crate) fn engine_picker(
 }
 
 /// D 区：状态条（F-11）。三态——就绪 / 翻译中 / 错误；错误态带"去设置"入口。
+///
+/// 右端那颗主题滑块也住在这一行（用户 2026-11-04："历史没有这一行，如果放在同样的位置就很突兀，
+/// 所以还是放在最下方吧，和状态栏一行"）。挪过来之后它有了**唯一一个宿主**：文本 / 图片 / 历史
+/// 三页共用这一条 `Panel::bottom`，不再各建一条底栏去挂它——原来三条宿主栏里那三份
+/// `right_to_left` 子带（以及历史页那条只为一颗滑块而存在的栏）随之删掉。
+/// 设置页仍然不画：那一页自己有「主题」那一行，两颗并排会打架。
 fn status_bar(ui: &mut egui::Ui, state: &mut AppState, ai_available: bool) {
     egui::Panel::bottom("status")
         .exact_size(STATUS_HEIGHT)
         .show(ui, |ui| {
+            record_rect(ui.ctx(), "status", "band", ui.max_rect());
             ui.horizontal(|ui| {
                 let color = if state.failure.is_some() {
                     theme::ERROR
@@ -261,6 +329,13 @@ fn status_bar(ui: &mut egui::Ui, state: &mut AppState, ai_available: bool) {
                     && ui.small_button("去设置").clicked()
                 {
                     state.go_to_key_settings();
+                }
+                if state.tab != Tab::Settings {
+                    // 状态文字是 LTR 排下来的，滑块要贴右缘就得另起一条 RTL 子带；
+                    // 子带从当前光标起算，所以它排在"去设置"右边那一段空白里。
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        theme_switch(ui, state, "status");
+                    });
                 }
             });
         });
@@ -289,6 +364,30 @@ pub(crate) const THEME_SWITCH_H: f32 = 20.0;
 /// 滑块半径：太阳光芒外沿 7.6、月亮半径 7，8px 的实心圆刚好把它们整个盖住——
 /// "盖住"是这块控件的全部语义，盖不住就等于没做到。
 pub(crate) const KNOB_RADIUS: f32 = 8.0;
+/// 滑块离窗口右边缘的让位量（用户 2026-11-04："由于边框是圆角的，而且边框内部边上好像还有一圈
+/// 看不见颜色的空气墙，主题切换按钮太贴边会导致浅色状态下，按钮会被覆盖一部分。精简窗也存在这个
+/// 问题，是不是将其向窗口左侧挪动3-5px？"）。
+///
+/// 让位做在 `theme_switch` 自己身上（槽位比控件宽这一截），所以状态栏那一行与精简窗动作行
+/// **两处一起生效**，不用在两个宿主里各减一次；要调手感只动这一个数。
+///
+/// 这一截只解决"离窗口边框太近"。用户 2026-11-04 看了第一版仍说"还是没有完全显示"，真机截图
+/// 量出来啃掉那一小条的**不是窗口边缘**：轨道右端在 x=59、窗口边框在 x=73，中间空着 14px；
+/// 被吃掉的是滑块自己那一头，规矩在 `KNOB_TRACK_GAP`。
+pub(crate) const THEME_EDGE_INSET: f32 = 4.0;
+/// 滑块圆心离轨道两端的**额外**让位（在 `KNOB_RADIUS` 之外）。
+///
+/// 原来圆心就贴着轨道端头内缩一个半径，滑块最外沿于是**正好落在轨道轮廓线上**：轨道那一圈
+/// 描边 1px 画在矩形内侧，滑块那一圈 1.5px 描边画在圆周居中，两者在切点处叠在一起，轨道右端
+/// 那半个圆帽被整个盖掉。深色下两圈颜色接近看不出来，浅色下轨道只剩描边可看（实测底色 249、
+/// 轨道线 226），于是那枚滑块看着不像"在开关里面"，而像"把开关顶破了一角"——这就是
+/// "按钮会被覆盖一部分"的真实机制。
+///
+/// 让开 3px 之后：滑块最外沿离轨道轮廓 2.25px（3 减掉描边的一半），轨道两端那两个月牙形的
+/// 留白重新露出来，滑块回到轨道**内部**。三档的圆心与太阳/月亮的图案中心共用这一个函数
+/// （`knob_center_x`），所以"盖住哪一侧"的语义没变：滑块半径 8 仍大于太阳光芒外沿 7.6
+/// 与月亮半径 7。
+pub(crate) const KNOB_TRACK_GAP: f32 = 3.0;
 
 /// 三档在轨道上的位置（0 = 左端盖住太阳，1 = 右端盖住月亮）
 pub(crate) fn theme_slot(theme: ice_core::config::Theme) -> f32 {
@@ -298,6 +397,16 @@ pub(crate) fn theme_slot(theme: ice_core::config::Theme) -> f32 {
         Theme::System => 0.5,
         Theme::Light => 1.0,
     }
+}
+
+/// 某档时滑块的圆心横坐标——同时也是那一侧图案（太阳/月亮）的圆心。
+///
+/// 画滑块、画图案、测试量位置都走这一个函数，免得"贴不贴轨道边"这件事有两份口径
+/// （见 `KNOB_TRACK_GAP`）。
+pub(crate) fn knob_center_x(rect: egui::Rect, theme: ice_core::config::Theme) -> f32 {
+    let left = rect.min.x + KNOB_RADIUS + KNOB_TRACK_GAP;
+    let right = rect.max.x - KNOB_RADIUS - KNOB_TRACK_GAP;
+    left + (right - left) * theme_slot(theme)
 }
 
 /// 轨道上某一点落在哪一档：取最近的一档，所以左四分之一是深色、右四分之一是浅色、
@@ -313,10 +422,8 @@ pub(crate) fn theme_at(t: f32) -> ice_core::config::Theme {
     }
 }
 
-fn theme_switch_id(salt: &'static str) -> egui::Id {
-    egui::Id::NULL
-        .with("ice-translator.theme-switch")
-        .with(salt)
+fn theme_switch_id(salt: &str) -> egui::Id {
+    rect_id("theme", salt)
 }
 
 pub(crate) fn theme_switch(
@@ -325,14 +432,23 @@ pub(crate) fn theme_switch(
     salt: &'static str,
 ) -> egui::Rect {
     // 只占位不响应（`allocate_at_least` 会自带一次 interact，两次点击判定会让同一枚
-    // 指针被两个响应者各消费一遍）；真正的命中交给下面那个带稳定 `Id` 的 `interact`
-    let (_auto_id, rect) = ui.allocate_space(egui::vec2(THEME_SWITCH_W, THEME_SWITCH_H));
+    // 指针被两个响应者各消费一遍）；真正的命中交给下面那个带稳定 `Id` 的 `interact`。
+    //
+    // 槽位比画出来的那一格宽 `THEME_EDGE_INSET`：`right_to_left` 的带子里 `allocate_space`
+    // 从光标往左占，所以槽的**右**端就是原本贴窗口边缘那一头，让位留在右边，画与命中都只吃
+    // 左边那 `THEME_SWITCH_W`。这颗控件只出现在 RTL 带子里（状态栏右端、精简窗动作行右端），
+    // 换到 LTR 里让位会跑到左侧——加新宿主时注意这点。
+    let (_auto_id, slot) = ui.allocate_space(egui::vec2(
+        THEME_SWITCH_W + THEME_EDGE_INSET,
+        THEME_SWITCH_H,
+    ));
+    let rect = egui::Rect::from_min_size(slot.min, egui::vec2(THEME_SWITCH_W, THEME_SWITCH_H));
     let visuals = ui.visuals();
     let painter = ui.painter_at(rect);
     let center_y = rect.center().y;
-    // 两端滑块的圆心：滑块贴着轨道两头，所以内缩一个半径
-    let left_x = rect.min.x + KNOB_RADIUS;
-    let right_x = rect.max.x - KNOB_RADIUS;
+    // 两端图案的圆心 = 滑块在那两档时的圆心，同一个函数算出来，盖住的关系恒成立
+    let left_x = knob_center_x(rect, ice_core::config::Theme::Dark);
+    let right_x = knob_center_x(rect, ice_core::config::Theme::Light);
     let icon_stroke = egui::Stroke::new(1.5, visuals.widgets.inactive.fg_stroke.color);
 
     painter.rect_filled(
@@ -349,8 +465,7 @@ pub(crate) fn theme_switch(
     draw_sun(&painter, egui::pos2(left_x, center_y), icon_stroke);
     draw_moon(&painter, egui::pos2(right_x, center_y), icon_stroke);
     // 滑块最后画：它是不透明的那块圆，盖住哪一侧就露出另一侧
-    let t = theme_slot(state.config.ui.theme);
-    let knob = egui::pos2(left_x + (right_x - left_x) * t, center_y);
+    let knob = egui::pos2(knob_center_x(rect, state.config.ui.theme), center_y);
     painter.circle_filled(knob, KNOB_RADIUS, visuals.widgets.inactive.bg_fill);
     painter.circle_stroke(knob, KNOB_RADIUS, icon_stroke);
 
@@ -365,15 +480,8 @@ pub(crate) fn theme_switch(
             }
         }
     }
-    ui.ctx()
-        .data_mut(|d| d.insert_temp(theme_switch_id(salt), rect));
+    record_rect(ui.ctx(), "theme", salt, rect);
     rect
-}
-
-#[cfg(test)]
-pub(crate) fn recorded_theme_switch(ctx: &egui::Context, salt: &'static str) -> egui::Rect {
-    ctx.data_mut(|d| d.get_temp::<egui::Rect>(theme_switch_id(salt)))
-        .unwrap_or_else(|| panic!("{salt} 那一侧的主题开关没有记下矩形"))
 }
 
 /// 置顶图钉那一格（FR-3.4 的可见入口）。
@@ -403,7 +511,7 @@ fn pin_tip(pinned: bool) -> &'static str {
 }
 
 fn pin_id(salt: &'static str) -> egui::Id {
-    egui::Id::NULL.with("ice-translator.pin-toggle").with(salt)
+    rect_id("pin", salt)
 }
 
 /// 画一枚图钉并接住点击。返回它的矩形，和 `theme_switch` 一样把矩形记进 `Context::data`
@@ -429,7 +537,7 @@ pub(crate) fn pin_toggle(
         effects.toggle_topmost = true;
     }
     response.on_hover_text(pin_tip(pinned));
-    ui.ctx().data_mut(|d| d.insert_temp(pin_id(salt), rect));
+    record_rect(ui.ctx(), "pin", salt, rect);
     rect
 }
 
@@ -461,18 +569,7 @@ fn draw_pin(painter: &egui::Painter, at: egui::Pos2, pinned: bool, color: egui::
 
 #[cfg(test)]
 pub(crate) fn recorded_pin(ctx: &egui::Context, salt: &'static str) -> egui::Rect {
-    ctx.data_mut(|d| d.get_temp::<egui::Rect>(pin_id(salt)))
-        .unwrap_or_else(|| panic!("{salt} 那一侧的图钉没有记下矩形"))
-}
-
-fn toolbar_id(salt: &'static str) -> egui::Id {
-    egui::Id::NULL.with("ice-translator.toolbar").with(salt)
-}
-
-#[cfg(test)]
-pub(crate) fn recorded_toolbar_rect(ctx: &egui::Context, salt: &'static str) -> egui::Rect {
-    ctx.data_mut(|d| d.get_temp::<egui::Rect>(toolbar_id(salt)))
-        .unwrap_or_else(|| panic!("工具条上的 {salt} 没有记下矩形"))
+    recorded_rect(ctx, "pin", salt)
 }
 
 /// 一段圆弧采样成折线（epaint 0.37 没有圆弧图元，只能自己按角度取点）
@@ -501,11 +598,20 @@ fn draw_sun(painter: &egui::Painter, at: egui::Pos2, stroke: egui::Stroke) {
     }
 }
 
-/// 月亮：月牙轮廓 = 外弧 + 内弧，两段弧共用两个尖端。
+/// 月亮：月牙轮廓 = 外弧 + 内弧，两段弧各画一条**开放**折线，两端在尖端重合。
 ///
 /// 只描边不填充：`PathShape` 的 `fill` 只支持凸多边形（`path_shape.rs:16`），月牙不是凸的，
 /// 填出来会画歪。外弧取整圆的左侧 230°，内弧的圆心右移 `BIAS`、半径取到同样穿过那两个
 /// 尖端，两弧之间剩下的就是月牙。
+///
+/// **为什么不能合成一条 `closed_line`**（2026-11-04 变更 S）：两弧在尖端只夹 27°，闭合成环
+/// 之后那里就是一个 152.8° 的发卡弯。epaint 的 `add_line_loop`（`tessellator.rs:432`）对每个
+/// 顶点做 miter join——法线取相邻两段法线的平均再除以长度平方，夹角越尖放大越多，152.8° 那一
+/// 点放大到 4.25 倍，再叠上同方向的 feather 扩张，就沿角平分线甩出一条亮线。真机量到的是从尖端
+/// 向右下 6.7px、亮度 214（和笔画本身一样亮）的斜线——用户看到的"月亮右上角有个斜杠"。
+/// 它的长短方向还随滑块的亚像素位置变，所以"拉大一点就不见了"，不是消失是缩到半个像素。
+/// 开放折线的首尾走 `add_line_path` 那一支，用各自那一段的法线，没有 miter，尖端恢复成
+/// 1.5px 的平头。
 fn draw_moon(painter: &egui::Painter, at: egui::Pos2, stroke: egui::Stroke) {
     const TIP: f32 = 65.0_f32.to_radians();
     const R: f32 = 7.0;
@@ -515,17 +621,19 @@ fn draw_moon(painter: &egui::Painter, at: egui::Pos2, stroke: egui::Stroke) {
     // `+y` 朝下，所以这是月牙朝下的那个尖端；它的极角就是内弧的端点角
     let tip = at + egui::vec2(R * TIP.cos(), R * TIP.sin());
     let offset = tip - inner_center;
-    let mut points = arc_points(at, R, TIP, std::f32::consts::TAU - TIP, STEPS);
-    points.extend(arc_points(
+    let outer = arc_points(at, R, TIP, std::f32::consts::TAU - TIP, STEPS);
+    let inner = arc_points(
         inner_center,
         offset.length(),
         std::f32::consts::TAU - offset.angle(),
         offset.angle(),
         STEPS,
-    ));
-    painter.add(egui::Shape::Path(egui::epaint::PathShape::closed_line(
-        points, stroke,
-    )));
+    );
+    for points in [outer, inner] {
+        painter.add(egui::Shape::Path(egui::epaint::PathShape::line(
+            points, stroke,
+        )));
+    }
 }
 
 /// 提示条：**窗口正中**，最多三条，出生即开始线性淡出，`TOAST_LIFETIME`（1s）到点消失。
@@ -685,6 +793,263 @@ mod tests {
             );
             assert_eq!(state.tab, tab, "渲染过程不该把页签改掉");
             assert!(effects.job.is_none(), "切到 {tab:?} 不该发起请求");
+        }
+    }
+
+    /// 无头取出这一帧画布上的全部文字。位置类断言读控件矩形就够，**标签**类断言只能读这个
+    /// ——`run_frame` 把 output 丢了，这里单独跑一遍不丢。
+    fn drawn_texts(
+        state: &mut AppState,
+        effects: &mut Effects,
+        store: &HistoryStore,
+    ) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let screen = egui::vec2(1080.0, 720.0);
+        let mut shapes: Vec<egui::epaint::ClippedShape> = Vec::new();
+        for frame in 0..2 {
+            let mut raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
+                ..Default::default()
+            };
+            raw.time = Some(frame as f64 / 60.0);
+            let mut output = ctx.run_ui(raw, |ui| show(ui, state, effects, store, false));
+            // 形状在这一帧的 output 里，`drop_without_applying_deltas` 之前要先把它们拿走
+            shapes = std::mem::take(&mut output.shapes);
+            output.drop_without_applying_deltas();
+        }
+        shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 用户 2026-11-03："还有悬浮窗三个字，改成精简两个字。"
+    ///
+    /// 那颗按钮的位置由 `the_pin_sits_left_of_the_floating_button_and_sets_the_same_intent`
+    /// 锁着，这一条锁的是它**写着什么**：旧名字不许在任何一处残留（改判不是加别名）。
+    #[test]
+    fn the_mode_button_is_labeled_with_the_new_name_only() {
+        let (_dir, store) = temp_history();
+        let mut state = state();
+        let mut effects = Effects::default();
+        let texts = drawn_texts(&mut state, &mut effects, &store);
+        let joined = texts.concat();
+
+        assert!(
+            texts.iter().any(|text| text.trim() == "精简"),
+            "工具条上那颗形态按钮没写着「精简」：{texts:?}"
+        );
+        assert!(!joined.contains("悬浮窗"), "界面上还留着旧名字：{texts:?}");
+    }
+
+    /// 用户 2026-11-03："主题颜色切换图标除设置页都应该有" + 次日"还是放在最下方吧，和状态栏一行"。
+    ///
+    /// 两句合起来才是现在这条判据：三页都要有，而且都在**同一行**（状态栏），所以 salt 也只有一个
+    /// `status`——原来三条宿主栏各一个 salt（`full`/`image`/`history`）是为了证明"每页自己那条栏里
+    /// 画了一颗"，现在那条证明不再存在，改判据读同一格、逐页跑一帧。
+    /// 设置页是反向的：那一页自己有「主题」那一行，再画一颗就是两个入口并排打架。
+    #[test]
+    fn the_theme_switch_is_drawn_on_every_tab_but_settings() {
+        let (_dir, store) = temp_history();
+        let screen = egui::vec2(900.0, 620.0);
+        for tab in [Tab::Text, Tab::Image, Tab::History] {
+            let mut state = state();
+            state.tab = tab;
+            let ctx = run_frame(&mut state, &mut Effects::default(), &store, screen, 2);
+            let rect = rect_slot(&ctx, "theme", "status")
+                .unwrap_or_else(|| panic!("{tab:?} 这一页的状态栏没画主题滑块"));
+            assert!(
+                rect.width() >= THEME_SWITCH_W - 0.5,
+                "{tab:?} 的滑块被状态栏压窄了：{rect:?}"
+            );
+        }
+
+        let mut state = state();
+        state.tab = Tab::Settings;
+        let ctx = run_frame(&mut state, &mut Effects::default(), &store, screen, 2);
+        assert!(
+            rect_slot(&ctx, "theme", "status").is_none(),
+            "设置页又画了第二颗主题滑块，与那一行的「主题」并排"
+        );
+    }
+
+    /// 用户 2026-11-04 那两句一起锁在这里：
+    /// ① "历史没有这一行，如果放在同样的位置就很突兀，所以还是放在最下方吧，和状态栏一行"
+    ///    ——判据是滑块落在状态栏那一格**之内**，同时**不在**文本页动作栏那一格之内（两条栏不重叠，
+    ///    状态栏在动作栏下面，所以两个断言合起来才排除"还挂在动作栏右端"）。
+    /// ② "边框是圆角的，而且边框内部边上好像还有一圈看不见颜色的空气墙，主题切换按钮太贴边会导致
+    ///    浅色状态下，按钮会被覆盖一部分……向窗口左侧挪动3-5px"——判据是它的右端离状态栏内容区
+    ///    右边缘正好让开 `THEME_EDGE_INSET`，不是"随便有点空隙"。
+    /// ③ 老的点击判据跟着搬过来：点轨道左端（盖住太阳那一头）→ 深色 + 标脏。
+    #[test]
+    fn the_theme_switch_sits_in_the_status_row_and_offsets_from_the_edge() {
+        let (_dir, store) = temp_history();
+        let mut state = state();
+        state.config.ui.theme = ice_core::config::Theme::System;
+        let mut effects = Effects::default();
+        let screen = egui::vec2(1080.0, 720.0);
+        let ctx = run_frame(&mut state, &mut effects, &store, screen, 2);
+        let band = recorded_rect(&ctx, "status", "band");
+        let switch = recorded_rect(&ctx, "theme", "status");
+        let (action_bar, _) = full::recorded_bar(&ctx);
+
+        assert!(
+            switch.min.y >= band.min.y - 0.5 && switch.max.y <= band.max.y + 0.5,
+            "滑块不在状态栏那一行：{switch:?}（状态栏 {band:?}）"
+        );
+        assert!(
+            switch.min.y >= action_bar.max.y - 0.5,
+            "滑块还留在文本页动作栏那一行：{switch:?}（动作栏 {action_bar:?}）"
+        );
+        assert!(
+            (band.max.x - THEME_EDGE_INSET - switch.max.x).abs() <= 0.5,
+            "滑块没在右边缘让开 {THEME_EDGE_INSET}px：{switch:?}（状态栏 {band:?}）"
+        );
+        assert!(
+            switch.width() >= THEME_SWITCH_W - 0.5,
+            "滑块被状态栏压窄了：{switch:?}"
+        );
+
+        state.config.ui.theme = ice_core::config::Theme::System;
+        state.config_dirty = false;
+        run_click(
+            &mut state,
+            &mut effects,
+            &store,
+            screen,
+            egui::pos2(switch.min.x + 2.0, switch.center().y),
+        );
+        assert_eq!(
+            state.config.ui.theme,
+            ice_core::config::Theme::Dark,
+            "在状态栏那一点的滑块左端点下去，没切到深色"
+        );
+        assert!(state.config_dirty, "改了主题没置脏标记，配置不会落盘");
+    }
+
+    /// 用户 2026-11-04 看了让开窗口边缘那一版之后："还是没有完全显示，怎么回事"。
+    ///
+    /// 没治好是因为**病因找错了**。拿他那张 74×31 的截图逐像素量：轨道右端在 x=59，窗口右边框
+    /// 在 x=73，中间空着 14px（8 面板内边距 + 4 让位 + 边框），窗口边缘根本没碰到它；被盖掉的
+    /// 是轨道**自己**那半个圆帽——滑块圆心原来贴着端头内缩一个半径，于是滑块最外沿正好落在轨道
+    /// 轮廓线上，而它的描边 1.5px 是居中的，等于又顶出去 0.75px。浅色下轨道只剩一圈线（实测底色
+    /// 249、线 226），那圈线在端头被滑块的同色描边打断，看着就是"按钮缺了一角"。
+    ///
+    /// 判据因此是几何而不是观感：三档里滑块连描边一起都得待在轨道那一格**内部**，
+    /// 两端各留出一截看得见的轨道。
+    #[test]
+    fn the_knob_stays_inside_the_track_at_both_ends() {
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(120.0, 40.0),
+            egui::vec2(THEME_SWITCH_W, THEME_SWITCH_H),
+        );
+        // 滑块那圈描边宽 1.5、画在圆周居中，所以外沿要算上半个
+        let half_stroke = 0.75;
+        let reach = KNOB_RADIUS + half_stroke;
+
+        for theme in [
+            ice_core::config::Theme::Dark,
+            ice_core::config::Theme::System,
+            ice_core::config::Theme::Light,
+        ] {
+            let knob = egui::Rect::from_center_size(
+                egui::pos2(knob_center_x(rect, theme), rect.center().y),
+                egui::vec2(2.0 * reach, 2.0 * reach),
+            );
+            assert!(
+                rect.contains_rect(knob),
+                "{theme:?} 档滑块连描边一起顶出了轨道那一格：{knob:?} 不在 {rect:?} 内——\
+                 轨道端头那半个圆帽会被盖掉，浅色下看着就是按钮缺了一角"
+            );
+        }
+    }
+
+    /// 用户 2026-11-04："精简模式下，窗口小的时候，这个月亮右上角有个斜杠，拉大一点就不见了，
+    /// 你看看这两张图的微小区别"。两张截图逐像素量出来，斜杠**一直都在**，只是长短随亚像素相位变：
+    /// 窄窗（442px）那日从尖端 (422, 245) 向右下延伸到 (428, 248)，亮度 214，和笔画本身同色；
+    /// 宽窗（500px）只到 (485, 329)，亮度 115，看着就"没了"。
+    ///
+    /// 病因是 `closed_line`：月牙外弧与内弧在尖端只夹 27°，闭合成环后那一点是 152.8° 的发卡弯，
+    /// epaint 在那里做 miter join（`tessellator.rs:432`，法线 `(n0+n1)/2` 再除以长度平方），
+    /// 放大 4.25 倍，再叠同向 feather，就甩出一条沿角平分线的亮线。
+    ///
+    /// 所以这条锁三件事：① 那一格里是**两条**折线（外弧 + 内弧），不是一条环；② 两条都不 `closed`；
+    /// ③ 相邻段转角不超过 30°（外弧每段才转 12.1°，一旦有人把尖端接回成发卡弯，这个数直接飙到 152°），
+    /// 并且所有点都落在月亮自己的 8.5px 半径内——斜杠那种 9.5px 的外甩藏不住。
+    #[test]
+    fn the_moon_is_two_open_arcs_so_its_tip_cannot_spike() {
+        /// 相邻两段折线之间的最大转角（度）；零长段跳过，免得 `normalized()` 出 NaN。
+        fn max_turn_deg(points: &[egui::Pos2]) -> f32 {
+            points
+                .windows(3)
+                .filter_map(|w| {
+                    let (a, b) = (w[1] - w[0], w[2] - w[1]);
+                    (a.length_sq() > 1e-6 && b.length_sq() > 1e-6).then(|| {
+                        a.normalized()
+                            .dot(b.normalized())
+                            .clamp(-1.0, 1.0)
+                            .acos()
+                            .to_degrees()
+                    })
+                })
+                .fold(0.0, f32::max)
+        }
+
+        let (_dir, store) = temp_history();
+        let mut state = state();
+        let mut effects = Effects::default();
+        let screen = egui::vec2(1080.0, 720.0);
+        let (ctx, shapes) = run_shapes(&mut state, &mut effects, &store, screen);
+        let switch = recorded_rect(&ctx, "theme", "status");
+        let moon = egui::pos2(
+            knob_center_x(switch, ice_core::config::Theme::Light),
+            switch.center().y,
+        );
+
+        let arcs: Vec<&egui::epaint::PathShape> = shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Path(path)
+                    if switch.contains(path.visual_bounding_rect().center()) =>
+                {
+                    Some(path)
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            arcs.len(),
+            2,
+            "月亮该由外弧+内弧两条开放折线画成，实得 {} 条：{:?}",
+            arcs.len(),
+            arcs.iter()
+                .map(|p| (p.closed, p.points.len()))
+                .collect::<Vec<_>>()
+        );
+        for path in &arcs {
+            assert!(
+                !path.closed,
+                "月牙又闭合成环了——尖端那个 152.8° 发卡弯会被 miter join 甩出一道斜杠"
+            );
+            let turn = max_turn_deg(&path.points);
+            assert!(
+                turn <= 30.0,
+                "折线里藏着一个 {turn:.1}° 的急转弯，epaint 会在那里放大法线画出多余的线：{:?}",
+                path.points.first()
+            );
+            let far = path
+                .points
+                .iter()
+                .map(|p| p.distance(moon))
+                .fold(0.0, f32::max);
+            assert!(
+                far <= 8.5,
+                "月牙画到了离圆心 {far:.1}px 的地方（半径 7 + 半个笔画），超出月亮自己那一圈"
+            );
         }
     }
 
@@ -856,7 +1221,7 @@ mod tests {
     }
 
     /// 用户 2026-10-29 走查后指定的位置："全量窗挪动到精简（悬浮窗）两个字左侧"。
-    /// 那条带子是 `right_to_left`，「悬浮窗」先占右边缘，图钉落在它左边才叫"左侧"；
+    /// 那条带子是 `right_to_left`，那颗形态按钮先占右边缘，图钉落在它左边才叫"左侧"；
     /// 置顶那条通道一个字没改——点的仍是 `effects.toggle_topmost`，与 `Cmd+Shift+P` 同一个字段。
     #[test]
     fn the_pin_sits_left_of_the_floating_button_and_sets_the_same_intent() {
@@ -865,12 +1230,12 @@ mod tests {
         let mut effects = Effects::default();
         let screen = egui::vec2(1080.0, 720.0);
         let ctx = run_frame(&mut state, &mut effects, &store, screen, 2);
-        let floating = recorded_toolbar_rect(&ctx, "floating");
+        let floating = recorded_rect(&ctx, "toolbar", "floating");
         let pin = recorded_pin(&ctx, "full");
 
         assert!(
             pin.max.x <= floating.min.x + 0.5,
-            "图钉没有落在「悬浮窗」左侧：{pin:?}（按钮 {floating:?}）"
+            "图钉没有落在「精简」左侧：{pin:?}（按钮 {floating:?}）"
         );
         assert!(
             pin.width() >= PIN_TOGGLE_W - 0.5,
