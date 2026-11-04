@@ -107,7 +107,7 @@
         "-p",
         "ice-core"
       ],
-      "note": "`ice-core::font` 成为字体路径与 face 号的唯一出处后：`HEITI_SC_FACE = 1` 常量、`estimated_font_size()` 的 `bbox.h × 0.75` 与 8.0 下限、`Language::breaks_by_char` 在 CJK/拉丁两类的取值、`TextBlock.translation`/`degraded` 两字段的 serde 兼容（旧 JSON 仍可反序列化）、config 相关断言不回退"
+      "note": "`ice-core::font` 成为字体路径与 face 号的唯一出处后：`HEITI_SC_FACE_INDEX = 1` 常量、`estimated_font_size()` 的 `bbox.h × 0.75` 与 8.0 下限、`Language::breaks_by_char` 在 CJK/拉丁两类的取值、`TextBlock.translation`/`degraded` 两字段的 serde 兼容（旧 JSON 仍可反序列化）、config 相关断言不回退"
     },
     {
       "id": "V-004",
