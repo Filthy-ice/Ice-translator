@@ -627,7 +627,7 @@ pub fn apply(
 ) {
     if state.hidden {
         state.set_mode(mode);
-        state.filled = false;
+        state.fill = None;
         return;
     }
     // 先把当前几何记回配置，否则切回来时会跳到上一次的旧位置。
@@ -637,7 +637,7 @@ pub fn apply(
     state.set_mode(mode);
     // 换形态就是放弃铺满，且**必须在 `capture` 之后**清：铺满期间 `capture` 靠这个标记
     // 不写任何东西，实时的那个整屏尺寸因此从来没进过槽，切回来的几何还是"铺满之前"的。
-    state.filled = false;
+    state.fill = None;
     let target = target_size(&state.config.ui, mode);
     tracing::debug!(?mode, w = target.x, h = target.y, "下发形态切换的几何命令");
     for command in commands_for_mode(&state.config.ui, mode) {
@@ -676,19 +676,17 @@ pub const CONFIG_SAVE_INTERVAL: Duration = Duration::from_millis(500);
 /// 记住窗口位置与大小（FR-3.6）。屏幕拔掉后旧坐标会落到可用区外，启动时回屏幕中心。
 ///
 /// `pending` 是 D-6 的护栏：切换后还没落定的那几帧只写位置轴，尺寸轴沿用槽里的旧值。
-/// 铺满整屏期间（`state.filled`）整个函数直接返回，见函数体第一句。
+///
+/// 铺满期间（`state.fill`）**两个轴都不写槽**，见函数体里那一支：整块几何是"这一屏可用区
+/// 多大"决定的，不是用户选的尺寸，让它写进 `full_rect` 就是把 D-6/D-10 换个入口重犯一遍——
+/// 还原时已经没有"铺满之前"可回，FR-3.6 记着的也会变成整屏，重启后窗口再也不是用户上次的大小。
+/// 但护栏照量：不量就没人发现"铺小了"，`retry` 也永远立不起来，铺满就成了唯一一条
+/// 没有自愈的几何路径（D-24，用户 2026-11-04："双击放大界面还不是全屏"）。
 ///
 /// 几何一变就立一个 `CONFIG_SAVE_INTERVAL` 的重绘钟（REQ-009）：`flush_config(false)`
 /// 只在有帧跑的时候才被调用，而拖动结束后没有任何东西再请求重绘——脏标记会一直挂着，
 /// 强杀就丢（SIGTERM 不走 `on_exit`，P1 实测）。
 pub fn capture(ctx: &egui::Context, state: &mut AppState, pending: &mut PendingGeometry) {
-    // 铺满期间整块几何是"这一屏可用区多大"决定的，不是用户选的尺寸（任务 #25）。让它写进槽
-    // 就是把 D-6/D-10 那一类缺陷换个入口重犯一遍：还原时已经没有"铺满之前"可回，而 FR-3.6
-    // 记着的也会变成整屏，重启后窗口再也不是用户上次的大小。位置轴一并抑制——铺满时拖动
-    // 窗口量到的原点同样属于"临时的观看姿势"，不属于记着的几何。
-    if state.filled {
-        return;
-    }
     let (inner, outer) = ctx.input(|i| {
         let viewport = i.viewport();
         (viewport.inner_rect, viewport.outer_rect)
@@ -696,6 +694,16 @@ pub fn capture(ctx: &egui::Context, state: &mut AppState, pending: &mut PendingG
     let Some(rect) = capture_rect(inner, outer) else {
         return;
     };
+    let measured = Vec2::new(rect.w, rect.h);
+    if state.fill.is_some() {
+        let settled = pending.size_axis_writable(measured, Instant::now());
+        if pending.is_pending() && !settled {
+            // 宽限期还没到就得再来一帧，否则 egui"有事才画"会把这一支永远停在这里——
+            // 铺满时槽一个字都不写，那条由槽变化立起来的 `CONFIG_SAVE_INTERVAL` 钟帮不上忙。
+            ctx.request_repaint_after(MODE_GEOMETRY_GRACE);
+        }
+        return;
+    }
     let mode = state.config.ui.mode;
     // 日志要用的两个数在写回之前取，写回后它们就是"被保住的那个尺寸轴"了
     let target = target_size(&state.config.ui, mode);
@@ -705,7 +713,6 @@ pub fn capture(ctx: &egui::Context, state: &mut AppState, pending: &mut PendingG
         &mut state.config.ui.compact_rect
     };
     let kept = Vec2::new(slot.w, slot.h);
-    let measured = Vec2::new(rect.w, rect.h);
     let was_pending = pending.is_pending();
     let writable = pending.size_axis_writable(measured, Instant::now());
     if was_pending && !writable && !pending.is_pending() {
@@ -874,7 +881,7 @@ pub fn reveal(
     // 收起前若是铺满的（任务 #25），这一次重发本身就把它还原了：`commands_for_mode` 用的
     // 是槽里记着的几何，而铺满期间那个槽没被写过。标记跟着清，否则下一次双击会走"还原"
     // 那一支，窗口原地不动。
-    state.filled = false;
+    state.fill = None;
     tracing::info!(mode = ?state.config.ui.mode, ?tray, "窗口恢复可见，重发几何");
     if tray == TrayState::Available {
         // 磁贴回来，并把应用叫到用户面前（spec Q-004）
@@ -1469,7 +1476,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut state = state();
         state.hidden = true;
-        state.filled = true;
+        state.fill = Some(area());
 
         reveal(
             &ctx,
@@ -1479,7 +1486,7 @@ mod tests {
         );
 
         assert!(
-            !state.filled,
+            state.fill.is_none(),
             "重发的就是槽里的几何，等于已经还原；标记留着会让下一次双击原地不动"
         );
         let commands = queued(&ctx);
@@ -2264,7 +2271,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut state = state();
         let remembered = state.config.ui.full_rect;
-        state.filled = true;
+        state.fill = Some(area());
         feed_live(
             &ctx,
             Rect::from_min_size(Pos2::new(0.0, 25.0), Vec2::new(1440.0, 780.0)),
@@ -2285,7 +2292,7 @@ mod tests {
     fn a_mode_switch_while_filled_gives_up_the_fill() {
         let ctx = egui::Context::default();
         let mut state = state();
-        state.filled = true;
+        state.fill = Some(area());
         feed_live(
             &ctx,
             Rect::from_min_size(Pos2::ZERO, Vec2::new(1440.0, 780.0)),
@@ -2294,7 +2301,7 @@ mod tests {
         let mode = toggle(&ctx, &mut state, &mut PendingGeometry::default());
 
         assert_eq!(mode, UiMode::Compact);
-        assert!(!state.filled, "换形态就是放弃铺满");
+        assert!(state.fill.is_none(), "换形态就是放弃铺满");
         assert!(
             queued(&ctx).contains(&ViewportCommand::InnerSize(Vec2::new(460.0, 160.0))),
             "切简洁请求的仍是简洁尺寸，而不是被整屏写脏后的那个值"

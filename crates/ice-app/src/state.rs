@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use eframe::egui::Rect;
 use ice_core::config::{Config, UiMode};
 use ice_core::document::{OcrDocument, PixelRect, TextBlock};
 use ice_core::glossary::{Glossary, Term};
@@ -382,13 +383,17 @@ pub struct AppState {
     /// 菜单栏托盘这一档在这台机器上生效没有（[`TrayState`]）。帧循环每帧核对后写入，
     /// 关窗去向、唤回入口、设置页文案、心跳四件事都读它——只有一个分叉点，不许各处自己判断。
     pub tray: TrayState,
-    /// 窗口当前是不是被"双击标题栏"铺满了整块屏（任务 #25）。
+    /// 窗口当前是不是被"双击标题栏"铺满了，以及**铺的是哪块矩形**（任务 #25）。
+    ///
+    /// `Some(area)` 就是"正在铺满"，`None` 是没有。存矩形而不是存布尔：铺满的目标尺寸是
+    /// 这块屏的可用区算出来的，重发（D-10 护栏）必须拿同一个矩形再算一遍，只存布尔的话
+    /// 第二轮就要从配置里现推一个位置，两处推到不同的数就等于护栏判的不是发出去那件事。
     ///
     /// **运行时状态，不落盘**：铺满是这一屏这一次观看的临时姿势，重启后回到 `full_rect`
-    /// 才是"记住位置尺寸"（FR-3.6）。它同时是 `mode::capture` 的抑制开关——铺满期间实时
-    /// 几何就是整屏，让它写进 `full_rect` 就等于把 D-6/D-10 那一类缺陷换个入口重犯一遍：
+    /// 才是"记住位置尺寸"（FR-3.6）。它同时是 `mode::capture` 写槽的抑制开关——铺满期间
+    /// 实时几何就是整屏，让它写进 `full_rect` 就等于把 D-6/D-10 那一类缺陷换个入口重犯一遍：
     /// 还原时已经没有"铺满之前的尺寸"可回了。
-    pub filled: bool,
+    pub fill: Option<Rect>,
     /// 有配置改动待落盘
     pub config_dirty: bool,
     /// 设置页里正在编辑的 Key 明文缓冲。只在内存，退出前不清空也不落盘、不进日志。
@@ -445,7 +450,7 @@ impl AppState {
             quitting: false,
             hidden: false,
             tray: TrayState::Unknown,
-            filled: false,
+            fill: None,
             config_dirty: false,
             key_input: String::new(),
             image: None,

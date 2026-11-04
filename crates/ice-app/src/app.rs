@@ -557,8 +557,19 @@ impl IceApp {
         let was_pending = self.pending_geometry.is_pending();
         mode::capture(ctx, &mut self.state, &mut self.pending_geometry);
         if let Some(target) = self.pending_geometry.take_retry() {
-            tracing::debug!(w = target.x, h = target.y, "尺寸未落定，重发尺寸与原点请求");
-            for command in mode::resend_commands(&self.state.config.ui, self.state.mode(), target) {
+            // 铺满那一支重发的是**当初那块可用区**（`state.fill`），不是从配置里现推的位置：
+            // 槽里记的还是铺满之前的几何，现推会把窗口拽回铺满前，再叠上没落定的尺寸（D-24）。
+            let commands = match self.state.fill {
+                Some(area) => mode::fill_commands(area, target),
+                None => mode::resend_commands(&self.state.config.ui, self.state.mode(), target),
+            };
+            tracing::debug!(
+                w = target.x,
+                h = target.y,
+                filled = self.state.fill.is_some(),
+                "尺寸未落定，重发尺寸与原点请求"
+            );
+            for command in commands {
                 ctx.send_viewport_cmd(command);
             }
             ctx.request_repaint_after(mode::MODE_GEOMETRY_GRACE);
@@ -724,11 +735,11 @@ impl IceApp {
             // 几何还没报到（建窗当帧）：这一帧既算不出装饰差值也定不了铺满目标，下一帧再来
             return;
         };
-        let (commands, target, filled) = if self.state.filled {
+        let (commands, target, fill) = if self.state.fill.is_some() {
             (
                 mode::restore_commands(&self.state.config.ui),
                 mode::target_size(&self.state.config.ui, UiMode::Full),
-                false,
+                None,
             )
         } else {
             // 可用区按**窗口所在那块屏**取（`work_area`），不是整个桌面并集：两块屏的用户
@@ -737,20 +748,23 @@ impl IceApp {
                 return;
             };
             let size = mode::fill_size(area, inner.size(), outer.size());
-            (mode::fill_commands(area, size), size, true)
+            (mode::fill_commands(area, size), size, Some(area))
         };
-        if fill_is_no_op(filled, target, &self.state.config.ui) {
+        if fill_is_no_op(fill.is_some(), target, &self.state.config.ui) {
             return;
         }
-        self.state.filled = filled;
+        self.state.fill = fill;
         for command in commands {
             ctx.send_viewport_cmd(command);
         }
         self.pending_geometry.set(target, Instant::now());
+        // `area` 是这一句里最有用的数：D-24 现场"下发的目标比实测大一截"到底大在哪个屏、
+        // 哪块可用区上，只看尺寸看不出来。只记矩形，不记屏名也不记任何用户内容（NFR-3）。
         tracing::debug!(
-            filled,
+            filled = fill.is_some(),
             w = target.x,
             h = target.y,
+            area = ?fill,
             "双击标题栏：下发铺满/还原的几何命令"
         );
         ctx.request_repaint();
@@ -1381,13 +1395,13 @@ static DBLCLICK_UNWATCHED_WARNED: std::sync::atomic::AtomicBool =
 
 /// 这一次双击是不是空操作（`toggle_fill` 的判定核心，抽出来才能无头断言）。
 ///
-/// `filled` 是这一次判完之后**要落到** `state.filled` 上的值，`target` 是即将下发的内尺寸。
+/// `filling` 是这一次判完之后**要不要把窗口标成铺满**，`target` 是即将下发的内尺寸。
 /// 还原一侧永远不空：把窗口送回槽里记着的那组几何就是它的目的，量对不对都由它兜。
 /// 铺满只在"槽里记的已经是这个整屏尺寸"时空转——典型成因是上一轮铺满被原生拒绝、护栏在
-/// D-10 第二段把整屏采纳进了槽。此时命令发出去窗口一动不动，`filled` 却翻成 true、
-/// `capture` 跟着停写，下一次双击就变成"还原到一个整屏的槽"，用户看不到任何反应。
-fn fill_is_no_op(filled: bool, target: egui::Vec2, cfg: &UiConfig) -> bool {
-    filled && target == mode::target_size(cfg, UiMode::Full)
+/// D-10 第二段把整屏采纳进了槽。此时命令发出去窗口一动不动，`state.fill` 却成了 `Some`、
+/// `capture` 跟着停写槽，下一次双击就变成"还原到一个整屏的槽"，用户看不到任何反应。
+fn fill_is_no_op(filling: bool, target: egui::Vec2, cfg: &UiConfig) -> bool {
+    filling && target == mode::target_size(cfg, UiMode::Full)
 }
 
 /// 这一档**整窗属性**要不要真的下发给窗口服务器（`apply_native_alpha` 与
@@ -3227,7 +3241,7 @@ mod tests {
             commands.contains(&ViewportCommand::OuterPosition(Pos2::new(0.0, 25.0))),
             "原点要落在可用区的顶，菜单栏下面：{commands:?}"
         );
-        assert!(app.state.filled);
+        assert!(app.state.fill.is_some());
         assert!(
             app.pending_geometry.is_pending(),
             "铺满的目标没进护栏，还原时拦不住实时尺寸"
@@ -3242,6 +3256,50 @@ mod tests {
         );
     }
 
+    /// D-24（用户 2026-11-04："双击放大界面还不是全屏"）：铺满没铺到位时护栏要照样量、
+    /// 照样重发，而**重发的必须是当初那块可用区**。上一版 `capture` 在铺满期间整个函数
+    /// 直接返回（为了不写槽），于是连测量一起跳过——命令被原生砍掉一截没人发现，也不会自愈；
+    /// 而还原那一支反倒每次都精确落位，两条路只有一条有护栏就是这里的成因。
+    #[test]
+    fn a_fill_that_lands_short_is_replayed_with_the_same_area() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        let c = ctx();
+        let area = Rect::from_min_size(Pos2::new(0.0, 25.0), egui::Vec2::new(1440.0, 875.0));
+        let target = egui::Vec2::new(1440.0, 843.0);
+        app.state.fill = Some(area);
+        app.pending_geometry.set(target, Instant::now());
+        // 现场：宽铺满了，高度只到 661——正是要被重发的那种"矮了一截"
+        feed_window(
+            &c,
+            Rect::from_min_size(Pos2::new(0.0, 57.0), egui::Vec2::new(1440.0, 661.0)),
+            Rect::from_min_size(Pos2::new(0.0, 25.0), egui::Vec2::new(1440.0, 693.0)),
+            egui::Vec2::new(1440.0, 900.0),
+        );
+        app.pending_geometry
+            .set_stage_clock_for_tests(Instant::now() - mode::MODE_GEOMETRY_GRACE, false);
+
+        app.refresh_geometry(&c);
+
+        let commands = queued(&c);
+        assert!(
+            commands.contains(&ViewportCommand::InnerSize(target)),
+            "第一段宽限期到期没重发尺寸：{commands:?}"
+        );
+        assert!(
+            commands.contains(&ViewportCommand::OuterPosition(area.min)),
+            "重发要铺回当初那块可用区，拿配置里铺满之前的位置会把窗口拽回原处：{commands:?}"
+        );
+        assert_eq!(
+            (
+                app.state.config.ui.full_rect.w,
+                app.state.config.ui.full_rect.h
+            ),
+            (1080.0, 720.0),
+            "护栏照量，但铺满期间实时尺寸一个字都不许进槽"
+        );
+    }
+
     /// 再双击一次还原：发的是槽里记着的那组几何（不是可用区、也不是当前实时尺寸），
     /// 并且不顺带重发装饰与下限。
     #[test]
@@ -3250,7 +3308,10 @@ mod tests {
         let mut app = app(dir.path(), plain_state());
         let c = ctx();
         let rect = app.state.config.ui.full_rect;
-        app.state.filled = true;
+        app.state.fill = Some(Rect::from_min_size(
+            Pos2::new(0.0, 25.0),
+            egui::Vec2::new(1440.0, 875.0),
+        ));
         // 实时几何是"已经铺满"的那一档：还原请求发出去之后它还没变，正是护栏要挡的那几帧
         feed_window(
             &c,
@@ -3271,7 +3332,7 @@ mod tests {
             !commands.contains(&ViewportCommand::Decorations(true)),
             "铺满没改过装饰，还原不该顺带重发：{commands:?}"
         );
-        assert!(!app.state.filled, "还原完就不该还说自己是铺满的");
+        assert!(app.state.fill.is_none(), "还原完就不该还说自己是铺满的");
         assert!(
             app.pending_geometry.is_pending(),
             "还原也是一组异步请求，护栏要跟着上（D-6）"
@@ -3279,7 +3340,7 @@ mod tests {
     }
 
     /// 上一轮铺满被原生拒绝、护栏在 D-10 第二段把整屏尺寸采纳进了槽之后，再双击"铺满"
-    /// 是空操作：命令发出去窗口一动不动，`filled` 却翻成 true、`capture` 跟着停写，
+    /// 是空操作：命令发出去窗口一动不动，`state.fill` 却成了 `Some`、`capture` 跟着停写槽，
     /// 下一次双击就变成"还原到一个整屏的槽"，用户看到的是第一下没反应。
     #[test]
     fn filling_to_the_size_already_recorded_is_refused() {
