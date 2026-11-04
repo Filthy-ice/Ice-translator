@@ -238,6 +238,7 @@ fn source_pane(ui: &mut egui::Ui, state: &mut AppState) {
         .inner_margin(GROUP_INNER_PAD)
         .fill(fill)
         .stroke(stroke)
+        .shadow(theme::pane_shadow(pane.visuals().dark_mode))
         .show(&mut pane, |ui| {
             ui.allocate_ui(
                 egui::vec2(ui.available_width(), body - 2.0 * GROUP_INNER_PAD),
@@ -339,6 +340,7 @@ fn translation_pane(ui: &mut egui::Ui, state: &mut AppState) {
     egui::Frame::group(boxed.style())
         .inner_margin(GROUP_INNER_PAD)
         .fill(fill)
+        .shadow(theme::pane_shadow(boxed.visuals().dark_mode))
         .show(&mut boxed, |ui| {
             // ScrollArea 的 auto_shrink(false) 会吃光"可用高度"而不是 set_min_height，
             // 不关进一个定高子 Ui，译文框就会比源文框高出一截

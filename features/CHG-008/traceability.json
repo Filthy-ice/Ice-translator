@@ -237,7 +237,7 @@
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
       "required": true,
-      "note": "用户按 docs/06 的 W-2.40 真人走查（并复核 W-2.26 的退出入口、W-1.25 的 Dock 磁贴对照）：这枚图认不认得出是本应用、菜单三项的 wording 顺不顺、『关窗收进托盘 + 左键唤回 + 磁贴消失』是不是你要的语义、设置页那句说明与真实去向一致；逐行结论写进 docs/07-acceptance.md 的变更登记与 P5/P6 段"
+      "note": "用户按 docs/06 的 W-2.40 真人走查（并复核 W-2.26 的退出入口、W-1.25 的 Dock 磁贴对照）：这枚图认不认得出是本应用、菜单四项的 wording 顺不顺、『关窗收进托盘 + 左键唤回 + 磁贴消失』是不是你要的语义、设置页那句说明与真实去向一致；逐行结论写进 docs/07-acceptance.md 的变更登记与 P5/P6 段"
     }
   ]
 }

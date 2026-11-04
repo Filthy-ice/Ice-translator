@@ -466,8 +466,7 @@ pub(crate) fn theme_switch(
     draw_moon(&painter, egui::pos2(right_x, center_y), icon_stroke);
     // 滑块最后画：它是不透明的那块圆，盖住哪一侧就露出另一侧
     let knob = egui::pos2(knob_center_x(rect, state.config.ui.theme), center_y);
-    painter.circle_filled(knob, KNOB_RADIUS, visuals.widgets.inactive.bg_fill);
-    painter.circle_stroke(knob, KNOB_RADIUS, icon_stroke);
+    draw_knob(&painter, knob, visuals.dark_mode, icon_stroke);
 
     let response = ui.interact(rect, theme_switch_id(salt), egui::Sense::click_and_drag());
     if response.dragged() || response.clicked() {
@@ -482,6 +481,22 @@ pub(crate) fn theme_switch(
     }
     record_rect(ui.ctx(), "theme", salt, rect);
     rect
+}
+
+/// 滑块那颗圆疙瘩：三层同色系圆盘错位叠出立体感（配色见 `theme::knob_tones`）。
+///
+/// 从下往上：①接触投影（大半像素、往下沉 1px，让它"立在槽上"而不是"印在槽上"）
+/// ②背光本体 ③受光面（半径 0.78、往上偏 0.3 半径，本体因此在下缘露出一圈暗边）。
+/// ④描边沿用图标那一笔，保证浅色下这颗圆边缘仍然清楚。
+///
+/// 外沿最远到 `center.y + 9.5`，轨道半高 10——投影不会漏到轨道外面。
+fn draw_knob(painter: &egui::Painter, center: egui::Pos2, dark: bool, edge: egui::Stroke) {
+    let tones = theme::knob_tones(dark);
+    let r = KNOB_RADIUS;
+    painter.circle_filled(center + egui::vec2(0.0, 1.0), r + 0.5, tones.drop);
+    painter.circle_filled(center, r, tones.body);
+    painter.circle_filled(center + egui::vec2(0.0, -r * 0.3), r * 0.78, tones.lit);
+    painter.circle_stroke(center, r, edge);
 }
 
 /// 置顶图钉那一格（FR-3.4 的可见入口）。
@@ -1051,6 +1066,75 @@ mod tests {
                 "月牙画到了离圆心 {far:.1}px 的地方（半径 7 + 半个笔画），超出月亮自己那一圈"
             );
         }
+    }
+
+    /// 变更 V：滑块那颗圆疙瘩是**三层同色系圆盘错位叠**出来的，不是一张平涂的圆。
+    /// 立体感的唯一来源是那条不对称：受光面半径更小且**往上偏**，本体因此在**下缘露出一圈
+    /// 背光**；再下面那层半透明的投影往下沉 1px、比本体大半像素，让它"立在槽上"而不是
+    /// "印在槽上"。三层并回一层、或者谁忘了偏移，真机观感立刻退成贴纸。
+    #[test]
+    fn the_knob_is_three_offset_discs_not_a_flat_circle() {
+        let (_dir, store) = temp_history();
+        let mut state = state();
+        let mut effects = Effects::default();
+        let screen = egui::vec2(1080.0, 720.0);
+        let (ctx, shapes) = run_shapes(&mut state, &mut effects, &store, screen);
+        let switch = recorded_rect(&ctx, "theme", "status");
+
+        // 只收**实心**圆：轨道两端那颗太阳走 `circle_stroke`，`fill` 是全透明，不在这堆里
+        let discs: Vec<egui::epaint::CircleShape> = shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Circle(disc)
+                    if switch.contains(disc.center) && disc.fill != egui::Color32::TRANSPARENT =>
+                {
+                    Some(*disc)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            discs.len(),
+            3,
+            "那颗疙瘩该是三层圆盘，实得 {} 层",
+            discs.len()
+        );
+
+        let (drop, body, lit) = (&discs[0], &discs[1], &discs[2]);
+        // 半透明的那一层只有一张，它就是接触投影；画序也必须是投影 → 本体 → 受光面
+        let translucent: Vec<_> = discs.iter().filter(|d| d.fill.a() < 255).collect();
+        assert_eq!(translucent.len(), 1, "投影之外的两层都得是不透明的");
+        assert_eq!(
+            translucent[0].center, drop.center,
+            "半透明的那层不是最底下那张"
+        );
+        assert!(
+            drop.radius > body.radius && body.radius > lit.radius,
+            "三层半径该由大到小：{} / {} / {}",
+            drop.radius,
+            body.radius,
+            lit.radius
+        );
+        // 错位是"凸起来"的全部依据：投影沉在下面、受光面浮在上面，本体夹在中间不动
+        assert!(
+            drop.center.y > body.center.y,
+            "投影没往下沉，接触阴影就没了"
+        );
+        assert!(
+            lit.center.y < body.center.y,
+            "受光面没往上偏，本体下缘露不出那圈背光"
+        );
+        assert!(
+            (lit.center.x - body.center.x).abs() < 0.01,
+            "受光面横着偏了，光就不是从正上方来的"
+        );
+        // 投影不许漏到轨道外面：它的下沿最远只能到轨道内高那一圈
+        assert!(
+            drop.center.y + drop.radius <= switch.max.y,
+            "投影画到了轨道外面（{:.1} > {:.1}）",
+            drop.center.y + drop.radius,
+            switch.max.y
+        );
     }
 
     /// 用户 2026-10-28 报的两条缺陷一起锁在这里，量的是 `views::show` 这条真机路径：

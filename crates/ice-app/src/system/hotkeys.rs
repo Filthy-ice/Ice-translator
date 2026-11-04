@@ -19,6 +19,9 @@ pub enum Action {
     /// 托盘左键 / 菜单第一项：把收起来的窗口叫回来（FR-5.4）。
     /// 没有键盘入口——它只由 `system::tray` 转交，与 `HideWindow` 成对。
     RevealWindow,
+    /// 托盘菜单「设置」：打开设置页（窗口收着时先唤回）。
+    /// 同样没有键盘入口，兑现复用 `app.rs::open_settings`，不新增第二条开设置的路。
+    OpenSettings,
     Quit,
     /// Shift+Enter：不提交，换行由 `TextEdit` 自己插入
     Newline,

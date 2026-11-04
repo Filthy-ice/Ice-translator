@@ -7,14 +7,18 @@
 //! 1. **图标是我们自己画的单色线稿**，不是 Dock 那张彩色方砖的缩小版。托盘那枚按钮走的是
 //!    `setTemplate:` 的语义——"拿 alpha 当蒙版、由系统按深浅色上色"，给它一张彩图就等于
 //!    既要形状又要颜色，系统只能按 alpha 走，结果是一团灰（REQ-002）。
-//! 2. **回调里只立意图，不兑现**。`define_class!` 出来的方法既拿不到 `AppState` 也不该拿：
-//!    它把"用户点了什么"写进一个 `AtomicU8`，帧循环下一帧取走并走既有那条 `Action` 通道。
-//!    这是 `system::titlebar`、`system::dblclick` 之后的第三个同形状实例，不是巧合——
-//!    唤醒路径若各写各的，出的就是"菜单项生效、左键不生效"这类只对一半的缺陷。
-//! 3. **`request_repaint()` 是整条链的承重墙**。窗口 `orderOut` 之后不再收 `RedrawRequested`，
-//!    但 eframe 0.37 会给不可见窗直接跑一次 pass（`run.rs:244-250`，注释写明目的正是"确保
-//!    `Visible(true)` 这类命令仍被处理"），节流到 100ms（`run.rs:26-28`）。所以回调里补一次
-//!    重绘请求就够，**不需要**为唤醒常驻一个事件监视器（REQ-007）。
+//! 2. **左键与菜单项只立意图，右键的菜单就地弹出**。`define_class!` 出来的方法既拿不到
+//!    `AppState` 也不该拿：那三件事把"用户点了什么"写进一个 `AtomicU8`，由 `app.rs` 取走并走
+//!    既有那条 `Action` 通道——这是 `system::titlebar`、`system::dblclick` 之后的第三个同形状
+//!    实例，不是巧合。但**菜单本身不等帧循环**：它是纯 AppKit，不需要 `AppState`，在回调里
+//!    同步弹出反而少一层依赖（D-21 的另一半就丢在"等帧循环兑现"上，见第 3 条）。
+//! 3. **泵必须挂在 `App::logic`，不能挂在 `App::ui`**。窗口 `orderOut` 之后 eframe 走的是
+//!    `!show_ui` 那一支（`glow_integration.rs:708`），**只调 `logic()`、根本不调 `ui()`**；
+//!    可见帧里 `logic()` 也照跑（`epi_integration.rs:357`），所以一帧一次、不多不少。
+//!    装在 `ui()` 里等于"只在窗口已经看得见的时候才监听唤醒入口"——收进托盘之后意图永远躺在
+//!    槽里，左键唤不回、右键也不出菜单，正是用户 2026-11-04 那句"关闭后点击托盘还是没反应"。
+//!    `request_repaint()` 负责把睡着的事件循环叫醒（`run.rs:379` 对不可见窗节流到 100ms），
+//!    为唤醒常驻一个事件监视器仍然不需要（REQ-007）。
 //! 4. **整套生效或整套不生效**（REQ-006，本包最硬的否定式判据）。`TrayState` 是唯一分叉点：
 //!    关窗去向、唤回入口、设置页文案、心跳四个消费者都读它。混合状态 = 窗口 `Visible(false)`
 //!    收走了、磁贴被 `.accessory` 关了、唤醒入口又没装上——用户只剩"杀掉进程"一条路，
@@ -22,8 +26,9 @@
 //!
 //! 左键与右键分叉靠 `NSApplication::currentEvent().r#type()`：`sendActionOn` 把按钮的触发
 //! 掩码设成"左键抬起 + 右键抬起"，两种抬起都落到同一个方法上，方法里看当前事件是哪一种。
-//! 菜单**不常驻**挂在状态项上——`setMenu:` 挂上去之后左键就不走 action 了（spec Q-001），
-//! 所以只在右键成立那一刻挂上、`performClick` 逼它弹出，出完立刻摘掉。
+//! 菜单**从不常驻**挂在状态项上——`setMenu:` 挂上去之后左键就不走 action 了（spec Q-001），
+//! 所以只用 `popUpStatusItemMenu:` 就地弹一次：它在追踪期间自己接管那枚状态项，返回后我们
+//! 立刻把菜单摘干净并核对接线，左键那条路原样留着。
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -40,32 +45,37 @@ pub const SUPPORTED: bool = cfg!(target_os = "macos");
 
 /// 菜单第一项（左键立的是同一个意图，只是不经菜单）。
 pub const SHOW: &str = "显示窗口";
-/// 菜单第三项。它与设置页那颗、`Cmd+Q` 共指 `Action::Quit`，**不新增第二条退出实现**。
+/// 菜单第三项。与设置页、「去设置」那一条共指 `Action::OpenSettings`，**不新增第二条实现**。
+pub const SETTINGS: &str = "设置";
+/// 菜单最后一项。它与设置页那颗、`Cmd+Q` 共指 `Action::Quit`，**不新增第二条退出实现**。
 pub const QUIT: &str = "退出程序";
 
-// ---- 意图槽：回调写、帧循环读 ----
+// ---- 意图槽：回调写、`App::logic` 读 ----
 
 const CODE_NONE: u8 = 0;
 const CODE_REVEAL: u8 = 1;
 const CODE_TOGGLE_MODE: u8 = 2;
 const CODE_QUIT: u8 = 3;
+const CODE_SETTINGS: u8 = 4;
 
-/// 托盘被点出来的那件事。一个槽而不是三个布尔：一次回调只可能立一个意图，
-/// 三个标记会允许"同时既要退出又要唤回"这种根本不该存在的组合。
+/// 托盘被点出来的那件事。一个槽而不是四个布尔：一次回调只可能立一个意图，
+/// 四个标记会允许"同时既要退出又要唤回"这种根本不该存在的组合。
 static PENDING: AtomicU8 = AtomicU8::new(CODE_NONE);
 
-/// 唤醒源。隐藏的窗口收不到输入事件，`mark()` 必须能自己把帧循环叫起来，
+/// 唤醒源。隐藏的窗口收不到输入事件，`mark()` 必须能自己把事件循环叫起来，
 /// 所以这里存一份 `egui::Context`（克隆廉价，内部是 `Arc`）。
 static CONTEXT: OnceLock<egui::Context> = OnceLock::new();
 
-/// 托盘转交给帧循环的三件事之一。
+/// 托盘转交给应用分派的四件事之一。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Outcome {
     /// 左键、或菜单第一项：把窗口叫回来
     Reveal,
     /// 菜单第二项：切到另一侧形态（与 `Cmd+Shift+M` 落在同一条 `Action` 上）
     ToggleMode,
-    /// 菜单第三项：退出（与设置页那颗、`Cmd+Q` 同一条）
+    /// 菜单第三项：打开设置页（窗口收着时先唤回）
+    Settings,
+    /// 菜单最后一项：退出（与设置页那颗、`Cmd+Q` 同一条）
     Quit,
 }
 
@@ -74,6 +84,7 @@ impl Outcome {
         match self {
             Outcome::Reveal => CODE_REVEAL,
             Outcome::ToggleMode => CODE_TOGGLE_MODE,
+            Outcome::Settings => CODE_SETTINGS,
             Outcome::Quit => CODE_QUIT,
         }
     }
@@ -82,13 +93,14 @@ impl Outcome {
         match code {
             CODE_REVEAL => Some(Outcome::Reveal),
             CODE_TOGGLE_MODE => Some(Outcome::ToggleMode),
+            CODE_SETTINGS => Some(Outcome::Settings),
             CODE_QUIT => Some(Outcome::Quit),
             _ => None,
         }
     }
 }
 
-/// 立一个意图并把帧循环叫醒。ObjC 方法体里只做这一件事。
+/// 立一个意图并把事件循环叫醒。左键与三个菜单项的方法体里只做这一件事。
 pub fn mark(outcome: Outcome) {
     PENDING.store(outcome.code(), Ordering::SeqCst);
     if let Some(ctx) = CONTEXT.get() {
@@ -96,7 +108,7 @@ pub fn mark(outcome: Outcome) {
     }
 }
 
-/// 取走意图，取完清零。一帧内点多次只兑现一次：第二次点的时候上一件事已经在路上了
+/// 取走意图，取完清零。一次泵里点多次只兑现一次：第二次点的时候上一件事已经在路上了
 /// （与 `titlebar::take_click`、`dblclick::take_double_click` 同一纪律）。
 pub fn take_outcome() -> Option<Outcome> {
     Outcome::from_code(PENDING.swap(CODE_NONE, Ordering::SeqCst))
@@ -107,15 +119,16 @@ pub const fn action_of(outcome: Outcome) -> Action {
     match outcome {
         Outcome::Reveal => Action::RevealWindow,
         Outcome::ToggleMode => Action::ToggleMode,
+        Outcome::Settings => Action::OpenSettings,
         Outcome::Quit => Action::Quit,
     }
 }
 
-/// 菜单三项的文案（TC-5.4-b 的无头判据挂在这上面）。
+/// 菜单四项的文案（TC-5.4-b 的无头判据挂在这上面）。
 ///
 /// 第二项说的是"切到**另一侧**"的名字：当前在全量窗就写「精简」，在简洁窗就写「全量」。
 /// 写「悬浮窗」是 2026-10-29 已被用户改口的旧词（任务 #44）。
-pub fn menu_titles(mode: UiMode) -> [&'static str; 3] {
+pub fn menu_titles(mode: UiMode) -> [&'static str; 4] {
     [
         SHOW,
         if mode == UiMode::Full {
@@ -123,6 +136,7 @@ pub fn menu_titles(mode: UiMode) -> [&'static str; 3] {
         } else {
             "全量"
         },
+        SETTINGS,
         QUIT,
     ]
 }
@@ -191,42 +205,89 @@ const fn seg(a: Pt, b: Pt, width: f64) -> Stroke {
 /// 边缘羽化宽度（**像素**，不是点）。半个像素，够把 22px 的折角抹平，又不会把留白吃掉。
 const RAMP_PX: f64 = 0.5;
 
-/// 这一张线稿：一个窗口轮廓 + 一只朝上的折角，读作"窗口收进上面那条菜单栏"。
+/// 一只气泡的轮廓：外接矩形 + 圆角半径（22×22 点格子，y 向上）。
+#[derive(Clone, Copy)]
+struct Bubble {
+    min: Pt,
+    max: Pt,
+    radius: f64,
+}
+
+/// 前一只：图标里左上那只有「文」的白气泡。
+const FRONT: Bubble = Bubble {
+    min: pt(2.6, 9.4),
+    max: pt(11.2, 18.0),
+    radius: 2.4,
+};
+/// 后一只：右下那只带「A」的蓝气泡。它落在前一只范围内的轮廓**不画**（见 `OVERLAP_GAP`），
+/// 两只都画满就成一个"8"字，前后关系反而读不出来。
 ///
-/// 坐标都落在 22×22 的点格子里：轮廓宽 15、高 12.5，水平居中（`3.5 + 18.5 = 22`）；
-/// 折角跨 5、落差 2.5，顶点在 `y = 18.5`。
+/// 位置照 `icon-1024.png` 量：往右挪约 8 点、往下挪约 2 点，两只只在边上交一小段——
+/// 原图那两只就是并排贴着，不是叠成一团。
+const BACK: Bubble = Bubble {
+    min: pt(10.8, 7.2),
+    max: pt(19.4, 15.8),
+    radius: 2.4,
+};
+/// 前遮后的外放量：后一只的轮廓离前一只的边不到这个数就整段让位，留出一条缝。
+/// 缝太宽，后一只就变成一根孤零零的括号；太窄，两只贴成一只。
+const OVERLAP_GAP: f64 = 0.8;
+/// 轮廓的笔宽（点）。1.2 在 22px 上是别的菜单栏图标那一档的粗细，再细就断。
+const PEN: f64 = 1.2;
+/// 尾巴比轮廓细一档：尾巴是"指向"，粗了就成了第二块主体。
+const TAIL_PEN: f64 = 1.0;
+
+/// 两条尾巴：前一只的尖朝左下、后一只的尖朝右下，与 `assets/icon/icon-1024.png` 同向。
 ///
-/// TC-5.4-a 那四条钉的是**边界行为**（边长、纯黑、四角透明、包围盒居中且四周留白），
-/// 不是这几个具体数值——这张表可以改，四条判据不跟着改。
-const fn strokes() -> [Stroke; 6] {
-    let pen = 1.0;
+/// 尖都落在底边的**一端**（前一只靠左、后一只靠右），这样才带得出方向；尖落在底边正中
+/// 就成一个倒三角，读起来是"下面挂了个东西"，不是"这只气泡在说话"。
+const fn tails() -> [Stroke; 4] {
     [
-        // 窗口轮廓（长方形四条边）
-        seg(pt(3.5, 2.0), pt(18.5, 2.0), pen),
-        seg(pt(18.5, 2.0), pt(18.5, 14.5), pen),
-        seg(pt(18.5, 14.5), pt(3.5, 14.5), pen),
-        seg(pt(3.5, 14.5), pt(3.5, 2.0), pen),
-        // 朝上的折角（读作"往上收进菜单栏"）
-        seg(pt(8.5, 16.0), pt(11.0, 18.5), pen),
-        seg(pt(11.0, 18.5), pt(13.5, 16.0), pen),
+        seg(pt(3.4, FRONT.min.y), pt(4.2, 6.2), TAIL_PEN),
+        seg(pt(4.2, 6.2), pt(6.6, FRONT.min.y), TAIL_PEN),
+        seg(pt(15.0, BACK.min.y), pt(17.4, 4.4), TAIL_PEN),
+        seg(pt(17.4, 4.4), pt(18.2, BACK.min.y), TAIL_PEN),
     ]
 }
 
+/// 把一只气泡按 `pad` 四周外扩，用来当另一只的遮挡范围。
+const fn inflated(b: &Bubble, pad: f64) -> Bubble {
+    Bubble {
+        min: pt(b.min.x - pad, b.min.y - pad),
+        max: pt(b.max.x + pad, b.max.y + pad),
+        radius: b.radius + pad,
+    }
+}
+
 /// 画这一档的位图：所有像素的 RGB 恒为纯黑，只有 alpha 有形状（模板图靠 alpha 上色）。
+///
+/// 形状是应用图标的双气泡轮廓，不是"随便找个简笔画顶上"——用户 2026-11-04 那句
+/// "起码是我们原来图标的简笔画啊，这啥东西"。`assets/icon/icon-1024.png` 里那两只气泡
+/// 是这软件唯一的身份，菜单栏那 22px 放不下「文」和「A」，但放得下它们的形状。
+///
+/// TC-5.4-a 那四条钉的是**边界行为**（边长、纯黑、四角透明、包围盒居中且四周留白），
+/// 不是这几个具体数值——这张表可以改，四条判据不跟着改。
 pub fn glyph(tier: Tier) -> RgbaImage {
     let side = tier.px();
     let scale = f64::from(side) / Tier::HEIGHT;
     let mut image = RgbaImage::from_pixel(side, side, Rgba([0, 0, 0, 0]));
-    for stroke in strokes() {
-        paint(&mut image, &stroke, scale);
+    paint_bubble(
+        &mut image,
+        &BACK,
+        scale,
+        Some(&inflated(&FRONT, OVERLAP_GAP)),
+    );
+    for tail in tails() {
+        paint(&mut image, &tail, scale);
     }
+    paint_bubble(&mut image, &FRONT, scale, None);
     image
 }
 
 /// 把一个笔画刷进位图。像素取**中心点**判定，重叠处 alpha 取较大值。
 fn paint(image: &mut RgbaImage, stroke: &Stroke, scale: f64) {
-    let a = pt(stroke.a.x * scale, stroke.a.y * scale);
-    let b = pt(stroke.b.x * scale, stroke.b.y * scale);
+    let a = to_image(stroke.a, scale);
+    let b = to_image(stroke.b, scale);
     let radius = stroke.width * scale;
     let reach = radius + RAMP_PX;
     // 只扫这一笔的外接框，夹到画布内
@@ -252,6 +313,68 @@ fn paint(image: &mut RgbaImage, stroke: &Stroke, scale: f64) {
             *pixel = Rgba([0, 0, 0, pixel.0[3].max(alpha as u8)]);
         }
     }
+}
+
+/// 线稿坐标 → 位图坐标。线稿按 AppKit 的习惯写（原点左下、y 向上），PNG 的第 0 行在**顶部**，
+/// 所以落笔前翻一次。不翻的话"朝下的尾巴"会画成朝上——旧那张线稿就是这么错的。
+fn to_image(p: Pt, scale: f64) -> Pt {
+    pt(p.x * scale, (Tier::HEIGHT - p.y) * scale)
+}
+
+/// 一只气泡的轮廓刷进位图；`hide` 给了就把它范围内的像素全部让位（前一只遮后一只）。
+///
+/// 只扫这只形状自己的外接框，所以坐标分量都在画布尺寸以内，`hypot` 不可能溢出，
+/// 也就不需要线段那一套 `capped_sq` 防护。
+fn paint_bubble(image: &mut RgbaImage, bubble: &Bubble, scale: f64, hide: Option<&Bubble>) {
+    let min = to_image(pt(bubble.min.x, bubble.max.y), scale);
+    let max = to_image(pt(bubble.max.x, bubble.min.y), scale);
+    let radius = bubble.radius * scale;
+    let reach = PEN * scale * 0.5 + RAMP_PX;
+    let mask = hide.map(|h| {
+        let from = to_image(pt(h.min.x, h.max.y), scale);
+        let to = to_image(pt(h.max.x, h.min.y), scale);
+        Bubble {
+            min: from,
+            max: to,
+            radius: h.radius * scale,
+        }
+    });
+    let x0 = (min.x - reach).max(0.0) as u32;
+    let x1 = (max.x + reach).min(f64::from(image.width()) - 1.0) as u32;
+    let y0 = (min.y - reach).max(0.0) as u32;
+    let y1 = (max.y + reach).min(f64::from(image.height()) - 1.0) as u32;
+    for row in y0..=y1 {
+        for col in x0..=x1 {
+            let here = pt(f64::from(col) + 0.5, f64::from(row) + 0.5);
+            if mask
+                .as_ref()
+                .is_some_and(|m| signed_border(&here, m) <= 0.0)
+            {
+                continue;
+            }
+            let dist = signed_border(&here, &Bubble { min, max, radius }).abs();
+            let half = PEN * scale * 0.5;
+            if dist > half + RAMP_PX {
+                continue;
+            }
+            let alpha = if dist <= half {
+                255.0
+            } else {
+                ((half + RAMP_PX - dist) / RAMP_PX * 255.0).max(0.0)
+            };
+            let pixel = image.get_pixel_mut(col, row);
+            *pixel = Rgba([0, 0, 0, pixel.0[3].max(alpha as u8)]);
+        }
+    }
+}
+
+/// 点到圆角矩形**边界**的带符号距离：负=在里面，0=正上头，`abs()` 就是到轮廓的距离。
+fn signed_border(p: &Pt, b: &Bubble) -> f64 {
+    let hx = (b.max.x - b.min.x) * 0.5 - b.radius;
+    let hy = (b.max.y - b.min.y) * 0.5 - b.radius;
+    let qx = (p.x - (b.min.x + b.max.x) * 0.5).abs() - hx;
+    let qy = (p.y - (b.min.y + b.max.y) * 0.5).abs() - hy;
+    qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - b.radius
 }
 
 /// 点到线段的**平方**距离（免开方，直接与半径的平方比）。
@@ -307,7 +430,7 @@ pub fn glyph_bytes(tier: Tier) -> Vec<u8> {
 
 #[cfg(target_os = "macos")]
 mod mac {
-    use std::cell::{Cell, RefCell};
+    use std::cell::RefCell;
     use std::ffi::c_void;
 
     use objc2::rc::{Allocated, Retained};
@@ -328,18 +451,19 @@ mod mac {
         sel!(iceTrayClicked:)
     }
 
-    /// 菜单三项的选择器，与 `menu_titles` 一一对应。第一项与左键立**同一个**意图。
-    fn menu_sels() -> [Sel; 3] {
+    /// 菜单四项的选择器，与 `menu_titles` 一一对应。第一项与左键立**同一个**意图。
+    fn menu_sels() -> [Sel; 4] {
         [
             sel!(iceTrayShowWindow:),
             sel!(iceTrayToggleMode:),
+            sel!(iceTraySettings:),
             sel!(iceTrayQuit:),
         ]
     }
 
     define_class!(
-        /// 托盘那枚按钮与菜单三项共同的 target。四个方法体各自只有一行——
-        /// "要不要唤回、唤成什么"全部留在帧循环里，与快捷键共用同一条 effects 路径。
+        /// 托盘那枚按钮与菜单四项共同的 target。方法体各自只有一行——
+        /// "要不要唤回、唤成什么"全部留在应用的分派里，与快捷键共用同一条 effects 路径。
         #[unsafe(super(NSObject))]
         #[name = "IceTranslatorTrayTarget"]
         struct TrayTarget;
@@ -349,14 +473,10 @@ mod mac {
             // 再手写 `#[unsafe(method_family = none)]` 会和 `#[unsafe(method(...))]` 冲突。
             #[unsafe(method(iceTrayClicked:))]
             fn clicked(&self, _sender: &AnyObject) {
-                // `pop_menu` 合成那一次点击不再分叉：它唯一的作用是"让挂上去的菜单弹出来"，
-                // 再立一次意图就成了每帧自激的循环。
-                if INSIDE_SYNTHETIC_CLICK.with(|flag| flag.get()) {
-                    return;
-                }
                 if current_event_is_right_click() {
-                    // 挂菜单必须在帧循环里同步做（见 `pop_menu`），这里只登记"该弹一次"
-                    WANT_MENU.with(|flag| flag.set(true));
+                    // 右键就地弹菜单，**不等下一帧**：窗口收起来时 eframe 只跑 `App::logic`，
+                    // 把"弹出"登记成旗子交给帧循环，等于交给了一个可能永远不来的读者（D-21）。
+                    pop_menu();
                 } else {
                     mark(Outcome::Reveal);
                 }
@@ -370,6 +490,11 @@ mod mac {
             #[unsafe(method(iceTrayToggleMode:))]
             fn toggle_mode(&self, _sender: &AnyObject) {
                 mark(Outcome::ToggleMode);
+            }
+
+            #[unsafe(method(iceTraySettings:))]
+            fn settings(&self, _sender: &AnyObject) {
+                mark(Outcome::Settings);
             }
 
             #[unsafe(method(iceTrayQuit:))]
@@ -392,10 +517,6 @@ mod mac {
         /// 造好的那枚状态项。`Retained` 必须由我们持有：状态项一旦没有强引用，
         /// AppKit 会把它从菜单栏撤掉，图标就地消失。
         static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
-        /// 右键成立，该弹一次菜单（`sync` 取走并清零）
-        static WANT_MENU: Cell<bool> = const { Cell::new(false) };
-        /// 正在合成那一次点击（挡住它再立意图，见 `clicked`）
-        static INSIDE_SYNTHETIC_CLICK: Cell<bool> = const { Cell::new(false) };
     }
 
     /// 装好的一切强引用。每个字段都有非显然的持有理由：
@@ -405,7 +526,7 @@ mod mac {
     /// - `menu`：状态项上的菜单是我们临时挂/摘的，不自己拿住就没有人拿住；
     /// - `image`：`setImage:` 只收引用，放手后按钮留下的是一张已被回收的图；
     /// - `button`：接线每帧都要问它，取一次存下来比每帧 `item.button(mtm)` 少一条消息；
-    /// - `titles`：挂上去那三项用的字符串，留着才问得到"标题是不是已经对得上"——
+    /// - `titles`：挂上去那四项用的字符串，留着才问得到"标题是不是已经对得上"——
     ///   每帧现造 `NSString` 是白白的常驻分配。
     struct Tray {
         item: Retained<NSStatusItem>,
@@ -413,8 +534,8 @@ mod mac {
         image: Retained<NSImage>,
         target: Retained<TrayTarget>,
         menu: Retained<NSMenu>,
-        items: [Retained<NSMenuItem>; 3],
-        titles: [Retained<NSString>; 3],
+        items: [Retained<NSMenuItem>; 4],
+        titles: [Retained<NSString>; 4],
         tier: Tier,
     }
 
@@ -515,7 +636,7 @@ mod mac {
         })
     }
 
-    /// 每帧核对接线与菜单标题，并兑现右键那一次"临时挂菜单"。
+    /// 每帧核对接线与菜单标题（`App::logic` 里跑，可见与收起两条路都会跑到）。
     pub fn sync(mode: UiMode) -> TrayState {
         TRAY.with(|tray| {
             let mut slot = tray.borrow_mut();
@@ -526,38 +647,54 @@ mod mac {
                 hook(&tray.button, &tray.target);
             }
             ensure_titles(tray, mode);
-            if WANT_MENU.with(|flag| flag.replace(false)) {
-                pop_menu(tray);
-            }
             TrayState::Available
         })
     }
 
-    /// 挂上菜单 → 按一次按钮让它弹出 → 立刻摘下。三步连在一起、都在主线程的一帧里做完：
-    /// 菜单一常驻挂着，左键就不走 action 了（Q-001）。
+    /// 右键：就地弹出那四项，弹完把菜单摘干净、接线再核一遍。
     ///
-    /// "真的弹得出来"只有真机能定论（W-2.40）：`performClick:` 是合成一次点击，而状态项按钮
-    /// 在真实点击里靠自己的追踪循环弹菜单，合成这一次走不走同一条路，无头测问不出来。
-    /// 真机上若弹不出，退路是把这一支换成
-    /// `NSMenu::popUpMenuPositioningItem:atLocation:inView:`——左键唤回与三项动作都不受影响。
-    fn pop_menu(tray: &Tray) {
-        tray.item.setMenu(Some(&tray.menu));
-        INSIDE_SYNTHETIC_CLICK.with(|flag| {
-            flag.set(true);
-            // SAFETY: `performClick:` 在主线程同步派发按钮动作；`sender` 传 `None`
-            // 是文档允许的（我们的四个方法都不读发送者）。
-            unsafe { tray.button.performClick(None) };
-            flag.set(false);
+    /// 为什么不是"挂上 `menu` 再 `performClick:`"：那一支要等帧循环兑现，而窗口收起来时
+    /// eframe 只跑 `App::logic`、`ui()` 里的一切都不来（D-21 就是这么丢的）。菜单是纯
+    /// AppKit，不需要 `AppState`，在回调里同步走完就少一层依赖。
+    ///
+    /// `popUpStatusItemMenu:` 被标了 deprecated（苹果的说法是"改用 `menu` 属性"），但菜单
+    /// 一常驻挂着左键就不走 action 了（Q-001）——这一支是"弹完把按钮还给我"的那个。
+    ///
+    /// 四份强引用先克隆、松开 `TRAY` 的借用再进循环：`popUpStatusItemMenu:` 是**同步阻塞**
+    /// 的追踪循环，它在里面时再回头借同一个 `RefCell` 就是 double-borrow panic。
+    fn pop_menu() {
+        let handles = TRAY.with(|tray| {
+            tray.borrow().as_ref().map(|tray| {
+                (
+                    tray.item.clone(),
+                    tray.menu.clone(),
+                    tray.button.clone(),
+                    tray.target.clone(),
+                )
+            })
         });
-        tray.item.setMenu(None);
+        let Some((item, menu, button, target)) = handles else {
+            return;
+        };
+        #[allow(deprecated)]
+        item.popUpStatusItemMenu(&menu);
+        item.setMenu(None);
+        if !is_ours(&button, &target) {
+            hook(&button, &target);
+        }
     }
 
     /// 切激活策略：`false` = `.accessory`（Dock 磁贴消失），`true` = `.regular`（回来）。
     ///
     /// 这一句必须在主线程、且 `Visible(true)` **之前**发生：winit 的 `set_visible(true)`
     /// 走 `makeKeyAndOrderFront`，而 `.accessory` 态的窗口能不能成为 key window 由策略决定。
-    /// `activate()` 紧随其后（spec Q-004：唤回要真的走到用户面前）——真机上若嫌它抢焦点，
-    /// 删这一句就够，不影响其它判据。
+    ///
+    /// 紧跟的是 `activateIgnoringOtherApps(true)` 而不是 `activate()`。后者的文档原话是
+    /// "does not guarantee that the app will be activated at all"——它是**协作式**的，
+    /// 别的应用正前台时系统可以直接拒绝（D-21 就是这个：托盘点了，图标亮了一下，窗口没回来）。
+    /// 唤回是用户主动要求的，没有比这更明确的授权，所以用强制那一支；它确实被苹果标了
+    /// deprecated（改用 `NSRunningApplication.activate(from:)`，那套要 macOS 14 且要
+    /// `NSApplicationActivationReason`，我们的窗口本来就不是靠系统唤起来），故局部放行。
     pub fn set_policy(regular: bool) -> bool {
         // 菜单栏上没有那枚图标就不许关磁贴：唤醒入口都没装上，把 Dock 图标也收走等于
         // 把用户关在门外（REQ-006 那个"只剩杀掉进程一条路"的缺陷）。
@@ -576,12 +713,13 @@ mod mac {
         };
         let ok = app.setActivationPolicy(policy);
         if regular && ok {
-            app.activate();
+            #[allow(deprecated)]
+            app.activateIgnoringOtherApps(true);
         }
         ok
     }
 
-    /// 从零造出状态项：长度自适应、按钮接线、位图、菜单三项。
+    /// 从零造出状态项：长度自适应、按钮接线、位图、菜单四项。
     /// 任何一环取不到就返回 `None`，由调用方整档退回 `Unavailable`（REQ-006 要求
     /// "整套不生效"，不许半装）。
     fn build(mtm: MainThreadMarker, mode: UiMode, tier: Tier) -> Option<Tray> {
@@ -597,9 +735,9 @@ mod mac {
         let empty = NSString::from_str("");
         let menu = NSMenu::new(mtm);
         // 关掉自动使能：它的判定要求条目有 `validateMenuItem:` 一类的宿主，而我们那个 target
-        // 只有一个写意图的方法——开着它，三项可能整排被置灰。
+        // 只有一个写意图的方法——开着它，四项可能整排被置灰。
         menu.setAutoenablesItems(false);
-        let mut items: Vec<Retained<NSMenuItem>> = Vec::with_capacity(3);
+        let mut items: Vec<Retained<NSMenuItem>> = Vec::with_capacity(4);
         for (index, action) in menu_sels().into_iter().enumerate() {
             // SAFETY: `initWithTitle:action:keyEquivalent:` 是 `NSMenuItem` 的指定初始化器，
             // 首参要求刚 alloc、尚未初始化的内存（与上面 `make_image` 同一条纪律）。
@@ -624,7 +762,7 @@ mod mac {
             image,
             target,
             menu,
-            // 上面正好挂三项，与 `menu_sels()` / `menu_titles()` 的 arity 同源
+            // 上面正好挂四项，与 `menu_sels()` / `menu_titles()` 的 arity 同源
             items: items.try_into().ok()?,
             titles,
             tier,
@@ -732,13 +870,17 @@ mod tests {
         assert_eq!((decoded.width(), decoded.height()), (22, 22));
     }
 
-    /// 第二项永远说"另一侧"的名字，且不得写已被改口的「悬浮窗」（任务 #44）
+    /// 第二项永远说"另一侧"的名字，且不得写已被改口的「悬浮窗」（任务 #44）；
+    /// 第三项是「设置」——用户 2026-11-04 点名要的两件事："右键起码的显示页面要有吧？打开设置要有吧？"
     #[test]
     fn the_second_menu_item_names_the_other_mode() {
-        assert_eq!(menu_titles(UiMode::Full), ["显示窗口", "精简", "退出程序"]);
+        assert_eq!(
+            menu_titles(UiMode::Full),
+            ["显示窗口", "精简", "设置", "退出程序"]
+        );
         assert_eq!(
             menu_titles(UiMode::Compact),
-            ["显示窗口", "全量", "退出程序"]
+            ["显示窗口", "全量", "设置", "退出程序"]
         );
         for title in menu_titles(UiMode::Full)
             .iter()
@@ -748,7 +890,7 @@ mod tests {
         }
     }
 
-    /// 三个意图走同一个槽：取走即清零、连点只兑现一次；且 `Quit` 必须映射到**既有**的
+    /// 四个意图走同一个槽：取走即清零、连点只兑现一次；且 `Quit` 必须映射到**既有**的
     /// `Action::Quit`——托盘不许是第二条退出实现（TC-5.4-b）。
     ///
     /// 几件事写在一个测试里是刻意的：槽是进程级的，拆成多个 `#[test]` 会被并行跑到，
@@ -760,7 +902,12 @@ mod tests {
             None,
             "上一处的残留会让第一次点击凭空多切一刀"
         );
-        for outcome in [Outcome::Reveal, Outcome::ToggleMode, Outcome::Quit] {
+        for outcome in [
+            Outcome::Reveal,
+            Outcome::ToggleMode,
+            Outcome::Settings,
+            Outcome::Quit,
+        ] {
             mark(outcome);
             mark(outcome);
             assert_eq!(take_outcome(), Some(outcome));
@@ -768,6 +915,7 @@ mod tests {
         }
         assert_eq!(action_of(Outcome::Reveal), Action::RevealWindow);
         assert_eq!(action_of(Outcome::ToggleMode), Action::ToggleMode);
+        assert_eq!(action_of(Outcome::Settings), Action::OpenSettings);
         assert_eq!(action_of(Outcome::Quit), Action::Quit);
     }
 

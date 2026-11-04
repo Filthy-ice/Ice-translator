@@ -204,6 +204,12 @@ impl IceApp {
             Action::ToggleTopmost => self.toggle_topmost(ctx),
             Action::HideWindow => self.hide(ctx),
             Action::RevealWindow => self.reveal(ctx),
+            // 托盘菜单「设置」：收着就先唤回，再开设置页。兑现复用 `open_settings`
+            // （工具条与「去设置」那一条走的同一个入口），不在托盘里另写第二条。
+            Action::OpenSettings => {
+                self.reveal(ctx);
+                effects.open_settings = true;
+            }
             Action::Quit => self.quit(ctx),
             // 换行由 `TextEdit` 自己插入（它的 `return_key` 就是 Shift+Enter），应用不参与
             Action::Newline => {}
@@ -251,7 +257,12 @@ impl IceApp {
         mode::reveal(ctx, &mut self.state, &mut self.pending_geometry, tray);
     }
 
-    /// 菜单栏托盘：定档、每帧核对、把点出来的意图交回**既有**的 `run` 分派。
+    /// 菜单栏托盘的泵：定档、核对、把 `outcome` 交回**既有**的 `run` 分派。
+    /// 只由 `App::logic` 调（见那里的注释）——那是可见与收起两条路都会跑到的钩子。
+    ///
+    /// `scale` 与 `outcome` 由调用方给：真机那一次来自 `eframe::Frame` 与
+    /// `tray::take_outcome()`，测试给一份固定的，才不必去碰进程级那个意图槽——那个槽被两个
+    /// 并行测试踩到就是随机红。
     ///
     /// 三个决定各有一条理由：
     /// - **只在没定档时装**（`Unknown`）。装上之后每帧只做核对；装不上之后就停在
@@ -259,16 +270,17 @@ impl IceApp {
     /// - **结果变了才说话**（与 `apply_zoom_hook`、`apply_dblclick_hook` 同一手法）：
     ///   逐帧记会把日志刷满。macOS 上装不上要给用户一条提示条，因为那一档的关窗语义
     ///   跟着换回"收进后台"，界面得说实话（REQ-005、REQ-006）。
-    /// - **意图走 `run(action)`**，不在这外面另写一套兑现。三条意图与快捷键、设置页、
+    /// - **意图走 `run(action)`**，不在这外面另写一套兑现。四条意图与快捷键、设置页、
     ///   绿键落在同一批动作上，`Action::Quit` 必须是既有的那一条（TC-5.4-b）。
-    fn poll_tray(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame, effects: &mut Effects) {
+    fn pump_tray(
+        &mut self,
+        scale: f64,
+        outcome: Option<tray::Outcome>,
+        ctx: &egui::Context,
+        effects: &mut Effects,
+    ) {
         let next = match self.state.tray {
-            TrayState::Unknown => {
-                let scale = frame
-                    .winit_window()
-                    .map_or(1.0, |window| window.scale_factor());
-                tray::install(self.state.mode(), ctx, scale)
-            }
+            TrayState::Unknown => tray::install(self.state.mode(), ctx, scale),
             TrayState::Available => tray::sync(self.state.mode()),
             TrayState::Unavailable => TrayState::Unavailable,
         };
@@ -282,7 +294,10 @@ impl IceApp {
             }
             self.state.tray = next;
         }
-        if let Some(outcome) = tray::take_outcome() {
+        if let Some(outcome) = outcome {
+            // D-21 的取证点：这一条打出来，说明"点击→意图→logic"整条管道是通的，
+            // 问题只剩兑现那一层；打不出来，才是管道断了。真机上只有这一条能分辨两种病因。
+            tracing::info!(?outcome, "托盘交来一件事");
             self.run(tray::action_of(outcome), ctx, effects);
         }
     }
@@ -831,32 +846,44 @@ impl IceApp {
             return;
         }
 
-        let pointer = ctx.input(|i| i.pointer.hover_pos());
+        // 指针在屏幕坐标系里的位置：**先问窗口服务器**。`hover_pos()` 量的是"事件投递给我们了
+        // 没有"，应用不在前台时它会说指针不见了，而用户的鼠标还压在条上——收回计时就是这么
+        // 提前跑起来的（D-22，用户 2026-11-04："我鼠标还没有移到最左边/最右边的时候他又缩进去了"）。
+        // 问不到（非 macOS、无头测试不在主线程）退回那一份代理量，它是窗口内局部坐标，
+        // 加上外框原点搬到同一套坐标里。
+        let cursor = mouse::cursor().or_else(|| {
+            ctx.input(|i| i.pointer.hover_pos())
+                .map(|at| at + outer.min.to_vec2())
+        });
+        // 创口带判定用窗口内坐标：唤出与收回都会整条挪窗，指针在窗口里的相对位置才是热区本身
+        let local = Rect::from_min_size(Pos2::ZERO, inner.size());
+        let pointer = cursor
+            .filter(|at| window.contains(*at))
+            .map(|at| Pos2::new(at.x - outer.min.x, at.y - outer.min.y));
+        // "走开了"要走出外扩那一圈才算：正好压在边线上、鼠标还在去的路上不算走开
+        let away = mode::walked_away(window, cursor);
         if self.dock_shown {
-            match pointer {
-                Some(_) => self.dock_left_at = None,
-                None if self.state.focus_in_source || ctx.input(|i| i.pointer.any_down()) => {
-                    // 正在输入行里打字，或按住窗口拖到了边外（选译文选出了界）：
-                    // 那两种情况下"指针离开"是操作的一部分，不是"不看我了"（REQ-003 的例外）
-                    self.dock_left_at = None;
-                }
-                None => {
-                    let now = Instant::now();
-                    let since = *self.dock_left_at.get_or_insert(now);
-                    let gone = now.duration_since(since);
-                    if gone >= mode::DOCK_AUTO_HIDE {
-                        let Some(area) = area_for() else {
-                            return;
-                        };
-                        self.hide_dock(ctx, window, area, edge);
-                        // 同一帧就跑到底部的开闸判定：此刻指针还在窗口外，会被当成"已离开创口带"
-                        // 而立刻把闸门解开，而窗口刚跳到收起位——下一帧指针落在那条 3px 上就会
-                        // 马上再弹出去。闸门必须活到下一帧。
+            if !away || self.state.focus_in_source || ctx.input(|i| i.pointer.any_down()) {
+                // 指针还在附近，或正在输入行里打字、按住窗口拖到了边外（选译文选出了界）：
+                // 那几种情况下"指针离开"是操作的一部分，不是"不看我了"（REQ-003 的例外）
+                self.dock_left_at = None;
+            } else {
+                let now = Instant::now();
+                let since = *self.dock_left_at.get_or_insert(now);
+                let gone = now.duration_since(since);
+                if gone >= mode::DOCK_AUTO_HIDE {
+                    let Some(area) = area_for() else {
                         return;
-                    } else {
-                        // 一次性续期：收回计时是这里唯一需要"没人动鼠标也要醒"的东西
-                        ctx.request_repaint_after(mode::DOCK_AUTO_HIDE - gone);
-                    }
+                    };
+                    tracing::debug!(?cursor, ?window, "停靠收回：指针已走出热区一圈");
+                    self.hide_dock(ctx, window, area, edge);
+                    // 同一帧就跑到底部的开闸判定：此刻指针还在窗口外，会被当成"已离开创口带"
+                    // 而立刻把闸门解开，而窗口刚跳到收起位——下一帧指针落在那条 3px 上就会
+                    // 马上再弹出去。闸门必须活到下一帧。
+                    return;
+                } else {
+                    // 一次性续期：收回计时是这里唯一需要"没人动鼠标也要醒"的东西
+                    ctx.request_repaint_after(mode::DOCK_AUTO_HIDE - gone);
                 }
             }
         } else {
@@ -872,7 +899,6 @@ impl IceApp {
 
         // 闸门解除：指针得先离开创口带（不在窗口里也算离开），下一次进入才允许再唤出
         if self.dock_latched {
-            let local = Rect::from_min_size(Pos2::ZERO, inner.size());
             let outside_band = match pointer {
                 None => true,
                 Some(pos) => {
@@ -1361,10 +1387,21 @@ pub fn build_translator(config: &Config, key: Option<String>) -> Translator {
 }
 
 impl eframe::App for IceApp {
-    /// 窗口收起来之后 eframe 只调这一个钩子（见 `watch_visibility`）
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    /// 窗口收起来之后 eframe 只调这一个钩子（见 `watch_visibility`）；可见帧里它同样会跑
+    /// （`epi_integration.rs:357`，就在 `ui()` 之前），所以"不管窗口在不在都得盯着"的事归这里。
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.watch_visibility(ctx);
         self.poll_clipboard(ctx, clipboard::read);
+        // 托盘的泵挂在这一条钩子上，**不能挂在 `ui()`**：窗口不可见时 eframe 走的是 `!show_ui`
+        // 那一支（`glow_integration.rs:708`），`ui()` 一次都不会被调。挂在 `ui()` 里等于"只在
+        // 窗口已经看得见的时候才监听唤醒入口"——收进托盘之后那一点永远没人取，左键唤不回、
+        // 菜单四项点了也不动（D-21，用户 2026-11-04："关闭后，点击托盘还是没反应"）。
+        let scale = frame
+            .winit_window()
+            .map_or(1.0, |window| window.scale_factor());
+        let mut effects = Effects::default();
+        self.pump_tray(scale, tray::take_outcome(), ctx, &mut effects);
+        self.run_effects(ctx, effects);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -1384,7 +1421,6 @@ impl eframe::App for IceApp {
         let close_requested = ctx.input(|i| i.viewport().close_requested());
 
         let mut effects = Effects::default();
-        self.poll_tray(&ctx, frame, &mut effects);
         self.poll_titlebar_click(&mut effects);
         self.poll_dblclick(&mut effects);
         for action in actions {
@@ -1726,6 +1762,37 @@ mod tests {
             before,
             "托盘档不许有心跳：隐藏期唯一的唤醒源是回调里那一次 request_repaint"
         );
+    }
+
+    /// 收起期交来的意图必须被兑现（D-21 的另一半）。
+    ///
+    /// 挂在 `ui()` 上的写法**在测试里看不出任何异常**——测试直接调实现，永远"看得见"，
+    /// 真机上却是点了没反应：eframe 在窗口不可见时根本不调 `ui()`。所以这条钉的是
+    /// `pump_tray`（`logic()` 里唯一那一句）：给它一份意图，它必须把窗口叫回来。
+    /// 「设置」那一项多一条顺序要求：先唤回、再开设置页，两件都得发生。
+    #[test]
+    fn an_intent_handed_over_while_hidden_still_opens_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        app.state.tray = TrayState::Available;
+        let c = ctx();
+        app.run(Action::HideWindow, &c, &mut Effects::default());
+        assert!(app.state.hidden, "先要真的收起来，这条测的才是收起期那一路");
+
+        let mut effects = Effects::default();
+        app.pump_tray(2.0, Some(tray::Outcome::Settings), &c, &mut effects);
+        assert!(
+            !app.state.hidden,
+            "收起期的意图没被兑现，窗口停在看不见的那一侧"
+        );
+        assert!(effects.open_settings, "菜单「设置」没把设置页开起来");
+
+        // 左键那一支只唤回，不许顺手开设置页
+        app.run(Action::HideWindow, &c, &mut Effects::default());
+        let mut effects = Effects::default();
+        app.pump_tray(2.0, Some(tray::Outcome::Reveal), &c, &mut effects);
+        assert!(!app.state.hidden, "左键唤回没兑现");
+        assert!(!effects.open_settings, "左键不该开设置页");
     }
 
     #[test]

@@ -31,6 +31,72 @@ pub const OK: Color32 = Color32::from_rgb(76, 154, 96);
 /// 次要文字：字数统计、耗时、缓存标记
 pub const MUTED: Color32 = Color32::from_gray(128);
 
+// ---- 冷灰白基底（只管浅色那一套，深色不动）----
+//
+// 用户 2026-11-04："界面基底(包括标题栏底色)能用冷灰白色最好，不要使用暖色，看起来好过时。"
+// egui 自带的亮色是**纯灰**（gray(248)/gray(230)/gray(190)）——纯灰本身不暖，但它在暖光屏幕、
+// 壁纸反光和 macOS 那层桌面模糊一起读出来就是"泛黄、上一代软件"。这里同一档亮度、
+// 每一级都往蓝里偏 3~6，界面立刻变"冷白"。
+//
+// 只改**底与线**，不改文字色与 `ACCENT` 那一族：文字和主色是另一件事（主题包 #28 的边界）。
+
+/// 界面底：中央面板、标题栏、窗底（原 gray(248)）
+pub const COOL_BASE: Color32 = Color32::from_rgb(245, 248, 251);
+/// 正文框底：源文与译文那一格的"可书写表面"（原 gray(255)）
+pub const COOL_SURFACE: Color32 = Color32::from_rgb(251, 253, 255);
+/// 比底深一档的填充：按钮、复选框、滑块槽（原 gray(230)）
+pub const COOL_RAISED: Color32 = Color32::from_rgb(228, 233, 239);
+/// 悬停那一档（比 `COOL_RAISED` 再深）
+pub const COOL_HOVER: Color32 = Color32::from_rgb(217, 224, 233);
+/// 按下那一档（再深一档，配合 `expansion` 的内缩就是"陷下去"）
+pub const COOL_PRESSED: Color32 = Color32::from_rgb(203, 212, 224);
+/// 分隔线与控件描边（原 gray(190)）
+pub const COOL_EDGE: Color32 = Color32::from_rgb(197, 205, 214);
+
+/// 滑块那颗圆疙瘩的三层色：接触投影、背光本体、受光面。
+///
+/// 用户 2026-11-04："开关那个圆疙瘩能做立体感更好了。" egui 0.37 没有渐变图元（`Shape`
+/// 里找不到径向渐变），球感只能靠**同色系三档圆盘错位叠**：本体暗一档、受光面亮一档并往上偏，
+/// 本体在下缘露出一圈背光——那条不对称就是"凸起来"的全部来源。
+///
+/// 颜色定在这里而不是画它的地方，规矩同 [`COOL_BASE`]：各 view 不自带色值。
+pub struct KnobTones {
+    pub drop: Color32,
+    pub body: Color32,
+    pub lit: Color32,
+}
+
+pub const fn knob_tones(dark: bool) -> KnobTones {
+    if dark {
+        KnobTones {
+            drop: Color32::from_black_alpha(140),
+            body: Color32::from_gray(118),
+            lit: Color32::from_gray(182),
+        }
+    } else {
+        KnobTones {
+            drop: Color32::from_black_alpha(44),
+            body: Color32::from_rgb(222, 228, 236),
+            lit: COOL_SURFACE,
+        }
+    }
+}
+
+/// 正文框底那一圈淡阴影（用户 2026-11-04："淡淡的阴影就行，你看别人的软件立体感好强"）。
+///
+/// 用 `Frame::shadow` 而不是自己叠矩形：egui 0.37 的 `Shadow` 会走 `ShadowShape`，
+/// 那是真按 `blur` 分步铺开的软阴影，手画的偏移矩形只有硬边。偏移往下 2 档、模糊 6 档、
+/// alpha 34——再深就不是"淡"，是两条框各自浮起来一块黑板。
+pub const fn pane_shadow(dark: bool) -> egui::Shadow {
+    egui::Shadow {
+        // `Shadow` 在 0.37 用整数档（`offset: [i8; 2]`、`blur/spread: u8`），没有半像素可调
+        offset: [0, 2],
+        blur: 6,
+        spread: 0,
+        color: Color32::from_black_alpha(if dark { 90 } else { 34 }),
+    }
+}
+
 /// 两端色之间按 `t`∈[0,1] 插值（逐分量取整，短渐变用不着走线性色彩空间）
 pub fn mix(from: Color32, to: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
@@ -123,7 +189,7 @@ pub const fn edge_color(dark: bool) -> Color32 {
     if dark {
         Color32::from_gray(120) // 淡灰边框
     } else {
-        Color32::from_gray(30) // 近黑边框
+        Color32::from_rgb(28, 32, 38) // 近黑边框，跟着冷灰白基底偏一点蓝
     }
 }
 
@@ -137,6 +203,9 @@ pub const fn edge_color(dark: bool) -> Color32 {
 ///
 /// 基准一律取 egui 自带的那套 `Widgets::{light,dark}()`，不是当前样式里的值——`apply`
 /// 每帧都跑，在现有颜色上乘就等于每帧加深一次（跟上面字号缩放同一个坑）。
+///
+/// 浅色那一支不走基准了，直接取 [`COOL_HOVER`]/[`COOL_PRESSED`]：既然基底已经改成冷灰白，
+/// 悬停/按下就得在同一色系里往深走，`scale_rgb` 乘出来的还是纯灰，一冷一灰两档并排更难看。
 pub fn apply_widget_contrast(style: &mut egui::Style) {
     let dark = style.visuals.dark_mode;
     let base = if dark {
@@ -145,8 +214,16 @@ pub fn apply_widget_contrast(style: &mut egui::Style) {
         egui::style::Widgets::light()
     };
     let edge = edge_color(dark);
-    let hover_fill = scale_rgb(base.inactive.weak_bg_fill, if dark { 1.55 } else { 0.8 });
-    let pressed_fill = scale_rgb(base.inactive.weak_bg_fill, if dark { 1.9 } else { 0.62 });
+    let hover_fill = if dark {
+        scale_rgb(base.inactive.weak_bg_fill, 1.55)
+    } else {
+        COOL_HOVER
+    };
+    let pressed_fill = if dark {
+        scale_rgb(base.inactive.weak_bg_fill, 1.9)
+    } else {
+        COOL_PRESSED
+    };
     let widgets = &mut style.visuals.widgets;
     widgets.inactive.bg_stroke = Stroke::new(1.0, edge);
     widgets.hovered.bg_stroke = Stroke::new(
@@ -174,12 +251,41 @@ pub fn apply_widget_contrast(style: &mut egui::Style) {
     widgets.open.bg_stroke = Stroke::new(1.0, edge);
 }
 
+/// 冷灰白基底：把浅色那一套的**底与线**换成 [`COOL_*`] 那几档。
+///
+/// 深色一套原样不动（`dark_mode` 一判就退出）。每一处都是**赋值**，不是 in-place 调亮调暗——
+/// `apply` 每帧都跑，任何"在当前值上再动一下"都会逐帧漂移（字号、行距、控件色三个坑同一个）。
+///
+/// 标题栏那一格不用单独改：`views::window_bar` 用的就是 `visuals.panel_fill`，
+/// 这一处定了它跟着冷（用户那句"包括标题栏底色"是同一个要求，不是第二处改动）。
+pub fn apply_cool_light(style: &mut egui::Style) {
+    if style.visuals.dark_mode {
+        return;
+    }
+    let visuals = &mut style.visuals;
+    visuals.window_fill = COOL_BASE;
+    visuals.panel_fill = COOL_BASE;
+    visuals.extreme_bg_color = COOL_SURFACE;
+    visuals.faint_bg_color = COOL_RAISED;
+    visuals.window_stroke = Stroke::new(1.0, COOL_EDGE);
+    let widgets = &mut visuals.widgets;
+    widgets.noninteractive.bg_fill = COOL_BASE;
+    widgets.noninteractive.weak_bg_fill = COOL_BASE;
+    widgets.noninteractive.bg_stroke = Stroke::new(1.0, COOL_EDGE);
+    widgets.inactive.bg_fill = COOL_RAISED;
+    widgets.inactive.weak_bg_fill = COOL_RAISED;
+    widgets.open.bg_fill = COOL_RAISED;
+    widgets.open.weak_bg_fill = COOL_RAISED;
+}
+
 /// 每帧同步一次外观设置（改动即时生效，无需"应用"按钮）
 pub fn apply(ctx: &egui::Context, ui: &UiConfig) {
     ctx.set_theme(preference(ui.theme));
     apply_font_scale(ctx, ui.font_scale);
     let line_spacing = ui.line_spacing;
     ctx.all_styles_mut(move |style| {
+        // 先定基底再定控件三态：`set_theme` 每帧把样式换回 egui 自带那套，冷色必须跟着重打一遍
+        apply_cool_light(style);
         apply_widget_contrast(style);
         // 赋值不是累加：`apply` 每帧都跑，`+=` 会每帧加一遍（和字号那个坑同一个）。
         // 这一项只被 TextEdit 那条路读（`text_edit/builder.rs:563`），`Label` 不认，
@@ -513,6 +619,94 @@ mod tests {
             once,
             "每帧重跑把控件颜色越改越深了"
         );
+    }
+
+    /// 用户 2026-11-04："界面基底(包括标题栏底色)能用冷灰白色最好，不要使用暖色，看起来好过时。"
+    /// 这条量三件事：浅色那一套的**底、线、控件三态**都落在 `COOL_*` 上；深色一套一个字不动
+    /// （本轮只改浅色，深浅色共用的其余配色仍属主题包 #28）；`apply` 每帧重跑不许把底色越跑越深。
+    ///
+    /// 读的是 `style_of(Theme::Light)` / `style_of(Theme::Dark)` 而不是"当前生效那套"：
+    /// egui 0.37 把两套样式**并存**在 `Options::{light,dark}_style` 里，`set_theme` 只改
+    /// `theme_preference`（选哪套），而 `all_styles_mut` 同时改两套。所以"浅色被改了、深色没被
+    /// 顺手改"这件事必须分两套各读各的才量得出来。
+    #[test]
+    fn the_cool_base_replaces_eguis_greys_only_in_light_mode() {
+        let applied = |theme: Theme| {
+            let ctx = egui::Context::default();
+            let ui = UiConfig {
+                theme,
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                apply(&ctx, &ui);
+            }
+            ctx
+        };
+
+        let ctx = applied(Theme::Light);
+        let light = ctx.style_of(egui::Theme::Light).visuals.clone();
+        assert_eq!(light.window_fill, COOL_BASE);
+        assert_eq!(
+            light.panel_fill, COOL_BASE,
+            "标题栏那一格吃的就是 `panel_fill`，用户那句'包括标题栏底色'靠这一处"
+        );
+        assert_eq!(light.extreme_bg_color, COOL_SURFACE);
+        assert_eq!(light.widgets.inactive.bg_fill, COOL_RAISED);
+        assert_eq!(light.widgets.hovered.weak_bg_fill, COOL_HOVER);
+        assert_eq!(light.widgets.active.weak_bg_fill, COOL_PRESSED);
+        assert_eq!(light.widgets.noninteractive.bg_stroke.color, COOL_EDGE);
+        assert_eq!(light.widgets.inactive.bg_stroke.color, edge_color(false));
+        // "冷"是个可量的方向：底与线每一档的蓝分量都要压过红分量
+        for swatch in [
+            COOL_BASE,
+            COOL_SURFACE,
+            COOL_RAISED,
+            COOL_HOVER,
+            COOL_PRESSED,
+            COOL_EDGE,
+        ] {
+            assert!(swatch.b() > swatch.r(), "{swatch:?} 不冷");
+        }
+        // 三帧之后还是同一组值：`apply` 每帧都跑，任何"在当前值上再动一下"都会逐帧漂移
+        let again = applied(Theme::Light);
+        assert_eq!(
+            again.style_of(egui::Theme::Light).visuals.window_fill,
+            light.window_fill
+        );
+
+        let dark = ctx.style_of(egui::Theme::Dark).visuals.clone();
+        let stock = egui::Visuals::dark();
+        assert_eq!(dark.window_fill, stock.window_fill, "深色那一套被顺手改了");
+        assert_eq!(dark.panel_fill, stock.panel_fill);
+        assert_eq!(dark.extreme_bg_color, stock.extreme_bg_color);
+        // 深色那一支的悬停/按下仍走 2026-10-28 那条"变浅一档"的乘算，不许被冷灰白那两档顶掉
+        assert_ne!(dark.widgets.hovered.weak_bg_fill, COOL_HOVER);
+        assert_ne!(dark.widgets.active.weak_bg_fill, COOL_PRESSED);
+    }
+
+    /// 用户 2026-11-04："淡淡的阴影就行。" 这条锁四个方向：有模糊（不是硬边）、只往下沉、
+    /// 浅到不会让两个框各自浮成一块黑板、`spread` 恒 0（非 0 就是向外涨出一圈实色描边）。
+    #[test]
+    fn the_pane_shadow_is_soft_and_stays_faint() {
+        let light = pane_shadow(false);
+        assert_eq!(light.offset, [0, 2], "只许往下沉，横向偏移会读成框自己歪了");
+        assert!(
+            light.blur >= 4,
+            "blur {} 以下为硬边，不是软阴影",
+            light.blur
+        );
+        assert_eq!(light.spread, 0, "spread 非 0 会向外涨成一圈实色");
+        assert!(
+            light.color.a() <= 40,
+            "alpha {} 已经不是'淡'，两个框会各自浮起来一块黑板",
+            light.color.a()
+        );
+        let dark = pane_shadow(true);
+        assert!(
+            dark.color.a() > light.color.a(),
+            "深色底上同样浅的 alpha 根本读不出来"
+        );
+        assert_eq!(dark.offset, light.offset, "两个形态的投影方向不许分叉");
     }
 
     /// 行间距也是每帧同步的一项：`apply` 里必须是赋值。写成 `+=` 的话跑三帧就变成三倍，
