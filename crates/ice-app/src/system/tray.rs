@@ -588,7 +588,15 @@ mod mac {
             .is_some_and(|event| event.r#type() == NSEventType::RightMouseUp)
     }
 
-    /// 三项标题与当帧形态对不上才重写（全量 ↔ 简洁切换后第二项要改口）。
+    /// 接线核对：现状已经是我们的就一个字不动（与 `titlebar` 同一手法）。
+    /// 每帧那一次和菜单关掉之后那一次走的都是这里。
+    fn ensure_hook(button: &NSStatusBarButton, target: &Retained<TrayTarget>) {
+        if !is_ours(button, target) {
+            hook(button, target);
+        }
+    }
+
+    /// 四项标题与当帧形态对不上才重写（全量 ↔ 简洁切换后第二项要改口）。
     fn ensure_titles(tray: &mut Tray, mode: UiMode) {
         let labels = menu_titles(mode);
         for ((item, last_written), label) in tray.items.iter_mut().zip(&mut tray.titles).zip(labels)
@@ -643,9 +651,7 @@ mod mac {
             let Some(tray) = slot.as_mut() else {
                 return TrayState::Unknown;
             };
-            if !is_ours(&tray.button, &tray.target) {
-                hook(&tray.button, &tray.target);
-            }
+            ensure_hook(&tray.button, &tray.target);
             ensure_titles(tray, mode);
             TrayState::Available
         })
@@ -679,9 +685,7 @@ mod mac {
         #[allow(deprecated)]
         item.popUpStatusItemMenu(&menu);
         item.setMenu(None);
-        if !is_ours(&button, &target) {
-            hook(&button, &target);
-        }
+        ensure_hook(&button, &target);
     }
 
     /// 切激活策略：`false` = `.accessory`（Dock 磁贴消失），`true` = `.regular`（回来）。
