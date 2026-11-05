@@ -1,0 +1,106 @@
+{
+  "baseline": null,
+  "design": [
+    { "requirement": "REQ-001", "section": "## REQ-001 实现与验证" },
+    { "requirement": "REQ-002", "section": "## REQ-002 实现与验证" },
+    { "requirement": "REQ-003", "section": "## REQ-003 实现与验证" },
+    { "requirement": "REQ-004", "section": "## REQ-004 实现与验证" },
+    { "requirement": "REQ-005", "section": "## REQ-005 实现与验证" },
+    { "requirement": "REQ-006", "section": "## REQ-006 实现与验证" },
+    { "requirement": "REQ-007", "section": "## REQ-007 实现与验证" },
+    { "requirement": "REQ-008", "section": "## REQ-008 实现与验证" }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007", "REQ-008"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": ["cargo", "test", "--workspace"],
+      "note": "全量单测：CHG-005/006 那 619 项不许回退（识别链、回填链、三段状态机与三条序号、面板协议、剪贴板字节校验、临时文件与文案断言都在里面）；本包新增第四条通道的过期互不作废、取消与失败分岔、临时路径唯一性与即读即删、那颗入口的意图矩阵。REQ-004 不在这条能证明的范围里（只有真机判），列在这里是为了「有回归锁」而不是「有验收证据」"
+    },
+    {
+      "id": "V-002",
+      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-006", "REQ-008"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "command": ["cargo", "test", "-p", "ice-app"],
+      "note": "界面与状态层：那颗只给意图不给路径、在飞时第二次派发返回 None、回信按代丢弃、取消不清任何东西而失败只出提示条、`capture_gate` 与按钮置灰同源、快捷键与按钮落同一个字段、日志与文案不含文件名、配置结构无新增字段"
+    },
+    {
+      "id": "V-003",
+      "requirements": ["REQ-005", "REQ-008"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "command": ["bash", "-c", "! grep -Rn 'cfg(target_os' crates/ice-app/src/views"],
+      "note": "平台判定只有一处出处：视图里出现 `#[cfg(target_os)]` 就是「某平台编译不过」的温床，也是那颗按钮的置灰理由与状态行文案各写一半的开始"
+    },
+    {
+      "id": "V-004",
+      "requirements": ["REQ-005"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "command": ["bash", "-c", "grep -Rn 'screencapture' crates/ice-app/src | grep -v 'src/system/capture.rs' | grep -v '//' | grep -v '^$' ; test $(grep -Rl 'screencapture' crates/ice-app/src | wc -l) -eq 1"],
+      "note": "系统二进制的字面量只许出现在 `system/capture.rs` 一处（与 `vision_sys` 那条静态核查同族）。多一处就意味着第二个地方在拼命令，而取消判据与临时文件生命周期就会跟着分叉"
+    },
+    {
+      "id": "V-005",
+      "requirements": ["REQ-005", "REQ-007"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "command": ["cargo", "tree", "-p", "ice-app", "-e", "normal"],
+      "note": "依赖图零增量是本包的结构保证（mac 走系统二进制子进程、兜底走既有 arboard ⇒ 不新增 crate 名）。比对基线取本包开工那一笔的输出，逐行相同才算过；多出一个名字即触发停止条件 4，先回来批准再继续。**编译级另注**：本机只有 `aarch64-apple-darwin` 一个 target，故 Linux/Windows 的「编译得过」按 TC-P-7 老规矩记「未验证」，不许拿源码扫描冒充"
+    },
+    {
+      "id": "V-006",
+      "requirements": ["REQ-003", "REQ-007", "REQ-008"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "command": ["./sdd", "scan"],
+      "note": "敏感信息基线扫描：本包新引入的风险面是「截图内容可能落到仓库目录或日志」，扫描 + V-002 那条文件名断言 + V-007 的 `ls` 三件合起来才算这条边界闭合"
+    },
+    {
+      "id": "V-007",
+      "requirements": ["REQ-001", "REQ-002", "REQ-003"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "真机一次完整链：发起 → esc 取消（**证 H1**：取消判据以「文件是否出现」为准，取消时盘上不留下东西）→ 再截一块 → 自动进识别 → 按 Q-001 的裁定决定是否自动接翻译；随后 `ls <临时目录>/ice-translator` 证不残留。要用户在机器前配合按键——Agent 不能替按 esc，这条是本包唯一不能自己收口的运行时验证"
+    },
+    {
+      "id": "V-008",
+      "requirements": ["REQ-007"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "`nettop -p <pid>` 采样：截图、临时文件、识别期间零条出站长连接（带阳性对照，手法沿用 CHG-005 TC-2.2-b）。口径按本包收窄：像素与文件全程本地，文本只在「翻译」那一步（自动档下由截图触发）经 P3 通道出去，SHALL NOT 写成「整条链零外发」"
+    },
+    {
+      "id": "V-009",
+      "requirements": ["REQ-004"],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "W-5.1：截出来的图里有没有我们自己的窗口（含半透明态、以及「上一张成品正显示着」那种最尴尬的情形）。REQ-004 唯一的判据，无头与日志都替代不了；选定的处置档（Q-003）也在这条上定生死"
+    },
+    {
+      "id": "V-010",
+      "requirements": ["REQ-002", "REQ-005", "REQ-006"],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "W-5.2 取消/失败/「未发现文字」三档文案读不读得懂、失败时既有识别结果有没有被清掉；W-5.3 快捷键顺不顺手且没有抢掉系统的 `Cmd+Shift+4`；W-5.4 非 mac 那一颗禁用入口的说明是否像「这台机器不行」而不是「没做完」。按 NFR-7 的 S 档记法，本包不许把「截图能做」写成「整条链跨平台」"
+    }
+  ]
+}
