@@ -13,7 +13,7 @@ pub mod typeset;
 #[cfg(target_os = "macos")]
 pub mod vision_sys;
 
-pub use composite::{CompositeOptions, CompositeOutput, Renderer};
+pub use composite::{Composed, CompositeOptions, Renderer};
 pub use error::{VisionError, VisionResult};
 pub use import::Admitted;
 pub use layout::{BlockDraft, MergeParams, NormalizedRect, RowObservation, flip_rect, merge_rows};
