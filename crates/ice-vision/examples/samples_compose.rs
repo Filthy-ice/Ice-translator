@@ -72,20 +72,25 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
+    let candidates = collect_images(&dir);
     let mut rows = vec![CSV_HEADER.to_string()];
     let mut measured = 0usize;
+    let mut quiet = 0usize;
     let mut failures: Vec<String> = Vec::new();
     let started = std::time::Instant::now();
 
-    for path in collect_images(&dir) {
+    for path in &candidates {
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        match run_one(&path) {
-            Ok(row) => {
-                rows.push(format!("{name},{}", row.join(",")));
+        match run_one(path) {
+            Ok((columns, no_text)) => {
+                rows.push(format!("{name},{}", columns.join(",")));
                 measured += 1;
+                if no_text {
+                    quiet += 1;
+                }
             }
             // 一张图失败只记在它自己头上（与 REQ-001 那块失败隔离同一条纪律）：这一行
             // 四个计数写 0、耗时写 `-`（不假装量到过），类别另走 stderr 且只写类别不写路径
@@ -107,11 +112,16 @@ fn main() -> ExitCode {
         None => println!("{text}"),
     }
 
-    if measured == 0 {
-        // 与 `samples_run.rs` 同一条处理：目录空就不产出任何看起来像结论的数字
+    // 失败原因先说，**再**判"样本不足"：上一版在这里直接早退，目录里明明有一张图、
+    // 却因为把"没有文字"当失败而报成"样本不足"，把真话盖住了（2026-11-05 用户第一次放真图就撞上）
+    for failure in &failures {
+        eprintln!("  失败：{failure}");
+    }
+
+    if candidates.is_empty() {
         println!();
         println!(
-            "样本不足：`{}` 里没有可解码的 png/jpg/jpeg。",
+            "样本不足：`{}` 里没有 png/jpg/jpeg 候选文件。",
             dir.display()
         );
         println!(
@@ -120,15 +130,21 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if measured == 0 {
+        println!();
+        println!(
+            "有 {} 张候选图但一张都没跑通（失败类别见上面 stderr）。这**不是**样本不足，是取数失败——按未闭环记，别当成没有图。",
+            candidates.len()
+        );
+        return ExitCode::from(1);
+    }
+
     println!();
     println!(
-        "实测 {measured} 张（失败 {} 张），总耗时 {} ms。",
+        "实测 {measured} 张（其中 {quiet} 张整张没识别出文字——照片背景那类样张本来就可能没字，那是覆盖层兜底要用的对象，不是失败），失败 {} 张，总耗时 {} ms。",
         failures.len(),
         started.elapsed().as_millis()
     );
-    for failure in &failures {
-        eprintln!("  失败：{failure}");
-    }
     println!(
         "这些是**计数**，不是评分。四项人工评分（4.0 / 3.5 / 3.0 / 0.9）由人给，见 `docs/04` §5 与 `docs/evidence/p7-scoring.md`。"
     );
@@ -153,13 +169,34 @@ fn collect_images(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     found
 }
 
-/// 一张真图走完整链，返回 CSV 的那几个数。**只读**这张图，不写任何副作用
-fn run_one(path: &std::path::Path) -> Result<Vec<String>, &'static str> {
+/// 一张真图走完整链，返回 CSV 的那几个数与"这张图整张没字"的那个旗标。
+/// **只读**这张图，不写任何副作用。
+///
+/// `NoTextFound` **不是失败**：照片背景、海报、艺术字那几类样张本来就可能一个字都认不出来，
+/// 界面上它走的是既有的"未发现文字"那一档（CHG-005 的 `RecognitionStage::NoText`）。
+/// 上一版把它当失败，于是"目录里第一张真图"被报成取数失败——照片类样张恰恰是覆盖层兜底
+/// 要考察的对象，把它排除掉等于把最想看的那一类扔了。
+fn run_one(path: &std::path::Path) -> Result<(Vec<String>, bool), &'static str> {
     let started = std::time::Instant::now();
     // 入场：解码 + 超上限缩放（`admit_path` 自己就这条路）
     let admitted = admit_path(path).map_err(failure_kind)?;
     // 识别：本地 Vision，整段在这条线程上（行观测只用来看块数，不进 CSV）
-    let (_, mut document, _) = recognize_with_rows(&admitted.image).map_err(failure_kind)?;
+    let mut document = match recognize_with_rows(&admitted.image) {
+        Ok((_, document, _)) => document,
+        Err(VisionError::NoTextFound) => {
+            return Ok((
+                vec![
+                    "0".to_string(),
+                    "0".to_string(),
+                    "0".to_string(),
+                    "0".to_string(),
+                    started.elapsed().as_millis().to_string(),
+                ],
+                true,
+            ));
+        }
+        Err(error) => return Err(failure_kind(error)),
+    };
     // 译文=原文：不联网那一条理由写在文件头
     for block in &mut document.blocks {
         block.translation = Some(block.text.clone());
@@ -168,13 +205,16 @@ fn run_one(path: &std::path::Path) -> Result<Vec<String>, &'static str> {
         .compose(&admitted.image, &document, CompositeMode::Auto)
         .map_err(|_| "compose")?;
 
-    Ok(vec![
-        document.enabled_blocks().count().to_string(),
-        composed.replaced.to_string(),
-        composed.overlaid.to_string(),
-        composed.degraded().to_string(),
-        started.elapsed().as_millis().to_string(),
-    ])
+    Ok((
+        vec![
+            document.enabled_blocks().count().to_string(),
+            composed.replaced.to_string(),
+            composed.overlaid.to_string(),
+            composed.degraded().to_string(),
+            started.elapsed().as_millis().to_string(),
+        ],
+        false,
+    ))
 }
 
 /// 失败只写**类别**：`VisionError` 的 Display 里带着 OS 给的原文或图片尺寸，

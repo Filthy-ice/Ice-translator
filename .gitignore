@@ -39,3 +39,17 @@ secrets/
 repos/
 __pycache__/
 *.pyc
+
+# JetBrains / RustRover 的工程目录：本机 IDE 状态，不入库（用户 2026-11-05 裁定）。
+# 这条不只是整洁问题——SDD 的树指纹把"未跟踪且未忽略"的文件也算进去（tools/sdd.py 的
+# `git ls-files --cached --others --exclude-standard`），所以 .idea/ 里每次 IDE 改索引
+# 都会悄悄让已记录的真机证据过期。上面那段 JetBrains 模板建议"别整目录忽略"，本仓反着来：
+# 我们要的是**指纹稳定**，不是把 IDE 设置纳入版本控制。
+.idea/
+
+# 用户的真实截图样张：图片内容属用户数据（NFR-3），只在本地跑批用，永不入库。
+# 这条在 2026-11-05 变成硬需求——目录里第一次出现了真图（用户放进来的背景图），
+# 而本仓是 GitHub 公开仓库；`assets/samples/` 一旦跟踪，push 就等于把他的截图发布出去。
+# 取证产物（CSV）同理只落 /tmp，不进仓库。
+/assets/samples/
+
