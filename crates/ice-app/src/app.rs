@@ -137,6 +137,9 @@ pub struct IceApp {
     /// 上一帧下到原生层的整窗底色（含标题栏那条带子，见 `apply_native_background`）；
     /// `None` 的语义同 `native_alpha`。
     native_background: Option<egui::Color32>,
+    /// 上一帧读回来的"标题栏有没有被压平"（D-26，见 `system::background::sync_titlebar`）。
+    /// `None` = 还没读到过（非 macOS / 还没句柄 / 第一帧）。
+    native_flat_titlebar: Option<bool>,
     /// 上一帧标题栏绿键的改道结果（见 `apply_zoom_hook`）。`None` = 还没下过。
     zoom_outcome: Option<titlebar::Outcome>,
     /// 上一帧标题栏双击监视器的装载结果（见 `apply_dblclick_hook`）。`None` = 还没下过。
@@ -198,6 +201,7 @@ impl IceApp {
             geometry_seen: None,
             native_alpha: None,
             native_background: None,
+            native_flat_titlebar: None,
             zoom_outcome: None,
             dblclick_outcome: None,
         }
@@ -677,6 +681,20 @@ impl IceApp {
     /// 缓存与重试沿用 `apply_native_alpha` 那一套；差别是这条没有回退路径——下不去就是
     /// 标题栏跟着系统底色，界面里没有第二处可改口，所以也不发警告。
     fn apply_native_background(&mut self, frame: &eframe::Frame, dark: bool) {
+        // 压平标题栏排在底色之前，而且**每帧读回来核对**：`titlebarAppearsTransparent` 为假时
+        // 那 32pt 由 `NSThemeFrame` 按系统 chrome 画（真机量下来是 `#FFFFFF`，正文是 `#F7_F9_FC`
+        // 的基底），底色下发得再准也只改到内容区——D-23 那一版就是这么"半改完"的（D-26）。
+        let flat = background::sync_titlebar(frame);
+        if flat != self.native_flat_titlebar {
+            tracing::debug!(flat = ?flat, "标题栏平铺核对");
+            self.native_flat_titlebar = flat;
+        }
+        if flat == Some(false) {
+            // 刚被换回来的那扇窗（换形态时 winit 换窗口，属性回到系统默认）或这一次没压成：
+            // 底色那份缓存不作数，逼下一句重发一次。否则新窗口上是"平铺了、但底色还是默认"
+            self.native_background = None;
+        }
+
         let want = theme::window_base(dark);
         if !needs_native_update(self.native_background, want) {
             return;
