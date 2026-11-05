@@ -1181,9 +1181,12 @@ impl IceApp {
                     .toast(Tone::Warn, "剪贴板里没有图片；请先 Cmd+C 复制一张"),
             }
         }
-        if effects.ignore_image && self.state.ignore_image_result() {
-            // Q-008：底层那次调用撤不回来，所以这句只说"结果我不收了"，不说"已取消识别"
-            self.state.toast(Tone::Info, "已忽略这次识别的结果");
+        if effects.stop_image {
+            // 那一句由状态层给（REQ-009）：只有翻译段说"已停止"，识别段与合成段说的是
+            // "已忽略这次结果"——那两次计算还在跑，说撤回了是撒谎。三段都不在飞时什么都不说。
+            if let Some(text) = self.state.stop_image_stage().label() {
+                self.state.toast(Tone::Info, text);
+            }
         }
         if let Some(text) = effects.copy {
             match clipboard::write(&text) {

@@ -7,18 +7,26 @@
 //! 图片识别走另一条线程池入口：`runtime.spawn_blocking`。整段（读盘解码 → 缩放 → Vision
 //! 调用 → 行合并）都待在同一条工作线程里，`Retained` 出不了 `ice-vision` 的 `vision_sys`
 //! （ADR-002 的硬边界，docs/05 那条"objc 类 `!Send` ⇒ 一次调用整段待在同一线程"）。
+//!
+//! P7 补上图片链的另两段，各按自己的性质选入口：逐块翻译还是 async、还是 `await` 网络，但
+//! **一批 N 块串行**（I-04"行间不并发"）；合成与识别同族，是一次占住一条工作线程的同步计算。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use egui::Context;
+use ice_core::document::OcrDocument;
 use ice_core::glossary::Glossary;
 use ice_core::history::HistoryStore;
 use ice_core::language::EngineKind;
 use ice_providers::dispatcher::Translator;
 use ice_providers::error::ProviderError;
 use ice_providers::request::TranslationRequest;
+use ice_vision::composite::Renderer;
 use ice_vision::error::VisionError;
 use ice_vision::import::{Admitted, admit_path, admit_rgba};
+use ice_vision::typeset::CompositeMode;
 use image::RgbaImage;
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, mpsc};
@@ -72,9 +80,9 @@ impl JobRunner {
 
     /// 派发一个任务。`ctx` 只用来在结果到达时请求重绘。
     ///
-    /// 两条分支用同一个 `tx`、同一个"结果到达就重绘一次"的收尾，但线程入口不同：
-    /// 翻译是 async（要 `await` 网络），识别是 blocking（整段占住一条工作线程，
-    /// 且objc对象一个都不许离开那段，ADR-002）。
+    /// 四条分支用同一个 `tx`、同一个"结果到达就重绘一次"的收尾，但线程入口不同：
+    /// 翻译与逐块翻译是 async（要 `await` 网络），识别与合成是 blocking（识别整段占住一条
+    /// 工作线程且 objc 对象一个都不许离开那段，ADR-002；合成是一次同步的 CPU 活）。
     pub fn submit(&mut self, runtime: &Runtime, job: Job, ctx: &Context) {
         match job {
             Job::Translation {
@@ -83,6 +91,18 @@ impl JobRunner {
                 request,
             } => self.submit_translation(runtime, id, engine, request, ctx),
             Job::ImageOcr { id, input } => self.submit_image(runtime, id, input, ctx),
+            Job::ImageTranslate {
+                id,
+                engine,
+                blocks,
+                cancel,
+            } => self.submit_image_translate(runtime, id, engine, blocks, cancel, ctx),
+            Job::ImageCompose {
+                id,
+                source,
+                document,
+                mode,
+            } => self.submit_image_compose(runtime, id, source, document, mode, ctx),
         }
     }
 
@@ -148,6 +168,118 @@ impl JobRunner {
             }
         });
     }
+
+    /// 逐块翻译段：N 块 = N 次请求，**串行**，一块落地才发下一块（docs/03 I-04 原文"行间不并发"，
+    /// Q-002 裁定沿用；机翻端点的免费额度按请求数算）。
+    ///
+    /// 三条不显然的：
+    /// 1. **整批持同一把锁**。中途换引擎或改术语会让同一批的前半与后半走两套参数，那时候
+    ///    "H 区这 N 行出自同一个引擎、同一份术语表"就不再成立。挂起的改动留到下一次派发补
+    ///    （与单条翻译同一条纪律），代价是这段时间界面上的术语改动不落进正在跑的这批。
+    /// 2. **一块的 `Err` 只记在它自己头上**：不回滚前面已落地的 `Ok`，也不静默改走另一个引擎
+    ///    （D-20 那条：换通道是业务决定，交回用户）。
+    /// 3. **停止只在块边界生效**。在飞的那一次请求撤不回，所以点停止最少还要等一块的时间——
+    ///    界面因此不许说"已撤回"，只许说"已停止这次处理，译文还在"。
+    fn submit_image_translate(
+        &mut self,
+        runtime: &Runtime,
+        id: RequestId,
+        engine: EngineKind,
+        blocks: Vec<(u32, TranslationRequest)>,
+        cancel: Arc<AtomicBool>,
+        ctx: &Context,
+    ) {
+        let shared = Arc::clone(&self.shared);
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        let glossary = self.pending_glossary.take();
+        let replacement = self.pending_translator.take();
+        let total = blocks.len();
+
+        runtime.spawn(async move {
+            let started = Instant::now();
+            let mut guard = shared.lock().await;
+            if let Some(translator) = replacement {
+                *guard = translator;
+            }
+            if let Some(glossary) = glossary {
+                guard.set_glossary(glossary);
+            }
+
+            let mut results = Vec::with_capacity(total);
+            let mut cancelled = false;
+            for (block_id, request) in blocks {
+                if cancel.load(Ordering::Relaxed) {
+                    cancelled = true;
+                    break;
+                }
+                let result = guard.translate(engine, request).await;
+                results.push((block_id, result.map(|translated| translated.text)));
+                // 每块报一次进度：20 个块要等十几秒，"翻译中 7/20"是这段唯一能自证还在走的东西。
+                // 发不出去就跳过这一次——通道满意味着界面已经不回收结果了，要紧的是最后那条。
+                if tx
+                    .try_send(Outcome::ImageTranslateProgress {
+                        id,
+                        done: results.len(),
+                        total,
+                    })
+                    .is_ok()
+                {
+                    ctx.request_repaint();
+                }
+            }
+            // 先放锁再发送：界面收到结果后可能立刻改术语，不该被自己堵住
+            drop(guard);
+
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            let sent = tx
+                .try_send(Outcome::ImageTranslated {
+                    id,
+                    results,
+                    cancelled,
+                    elapsed_ms,
+                })
+                .is_ok();
+            if sent {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    /// 合成段：一次同步计算，整段待在同一条 `spawn_blocking` 线程上（字形光栅化是 CPU 活）。
+    ///
+    ///  Renderer 用的选项一律是默认值：那四个数（下限比例、留白、采样比例、是否允许改判）是
+    /// 判据的一部分，不是用户偏好，`config.toml` 里没有它们（docs/04 §3）。
+    /// 成品只有一个结局：整张图画完（`Ok`）或者什么都没有（`Err`）。中间态不往外发，
+    /// 所以界面上永远不会出现画了一半的那张图（REQ-009 第四条）。
+    fn submit_image_compose(
+        &mut self,
+        runtime: &Runtime,
+        id: RequestId,
+        source: RgbaImage,
+        document: OcrDocument,
+        mode: CompositeMode,
+        ctx: &Context,
+    ) {
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+
+        runtime.spawn_blocking(move || {
+            let started = Instant::now();
+            let result = Renderer::default().compose(&source, &document, mode);
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            let sent = tx
+                .try_send(Outcome::ImageComposed {
+                    id,
+                    result,
+                    elapsed_ms,
+                })
+                .is_ok();
+            if sent {
+                ctx.request_repaint();
+            }
+        });
+    }
 }
 
 /// 把任务原料变成入场后的图。剪贴板那一支的字节长度已由 `system::clipboard::read_image` 校验，
@@ -182,7 +314,8 @@ pub fn apply(state: &mut AppState, history: &HistoryStore, outcome: Outcome) -> 
         return false;
     }
     // 缓存命中不重复写历史：那条记录在第一次翻译时已经写过了。
-    // 图片识别不进历史（历史表那一行的语义是"源文 → 译文"，P6 只做识别，没有译文）。
+    // 图片链的逐块译文也不写历史：历史表那一行的语义是"用户在文本页打下的源文 → 它的译文"，
+    // 而图片的块号只跟这一次导入有关系，把 N 行记进去下次既查不回也认不出是哪张图。
     let fresh = state
         .translation
         .as_ref()
@@ -230,6 +363,49 @@ fn log_outcome(outcome: &Outcome) {
                 request_id = id,
                 error = vision_variant_name(err),
                 "本地识别失败"
+            ),
+        },
+        // 进度不记日志：每块一条会把真正那条结局淹掉，而它能说的只有"还在走"
+        Outcome::ImageTranslateProgress { .. } => {}
+        Outcome::ImageTranslated {
+            id,
+            results,
+            cancelled,
+            elapsed_ms,
+        } => {
+            // 只有块号、计数、耗时与变体名：识别出的文字与译文一律不进日志（NFR-3）
+            tracing::info!(
+                request_id = id,
+                blocks = results.len(),
+                failed = results.iter().filter(|(_, result)| result.is_err()).count(),
+                cancelled,
+                elapsed_ms,
+                "逐块翻译结束"
+            );
+        }
+        Outcome::ImageComposed {
+            id,
+            result,
+            elapsed_ms,
+        } => match result {
+            Ok(composed) => tracing::info!(
+                request_id = id,
+                replaced = composed.replaced,
+                overlaid = composed.overlaid,
+                skipped = composed.skipped,
+                degraded = composed.degraded(),
+                missing_glyphs = composed
+                    .missing_glyphs
+                    .iter()
+                    .map(|(_, count)| count)
+                    .sum::<usize>(),
+                elapsed_ms,
+                "本地合成完成"
+            ),
+            Err(err) => tracing::warn!(
+                request_id = id,
+                error = vision_variant_name(err),
+                "本地合成失败"
             ),
         },
     }
@@ -300,8 +476,10 @@ mod tests {
     use ice_core::language::EngineKind;
 
     use super::*;
-    use crate::state::KeyState;
+    use crate::state::{ComposeStage, KeyState, RecognitionStage, TranslateStage};
     use crate::stub::{StubBehavior, StubEngine, StubError};
+    use ice_core::document::{PixelRect, TextBlock};
+    use ice_vision::composite::Composed;
 
     struct Harness {
         runtime: Runtime,
@@ -530,5 +708,258 @@ mod tests {
             .block_on(async { harness.rx.recv().await.unwrap() });
         assert!(apply(&mut harness.state, &harness.history, outcome));
         assert_eq!(stub.calls(), 1);
+    }
+
+    // ---- 逐块翻译那一段（CHG-006 T-007）----
+
+    impl Harness {
+        /// 一份"识别完了"的状态：入场图 + 每块一行原文，逐块翻译的前置条件就此成立。
+        fn with_blocks(&mut self, texts: &[&str]) {
+            self.state.image = Some(Admitted {
+                image: RgbaImage::from_pixel(600, 400, image::Rgba([255, 255, 255, 255])),
+                scaled: false,
+                width: 600,
+                height: 400,
+                label: "sample.png".to_string(),
+            });
+            let mut document = OcrDocument::empty(600, 400);
+            document.blocks = texts
+                .iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    TextBlock::new(
+                        index as u32,
+                        *text,
+                        PixelRect::new(10.0, index as f32 * 30.0, 300.0, 24.0),
+                        0.9,
+                    )
+                })
+                .collect();
+            self.state.ocr = Some(document);
+            self.state.image_stage = RecognitionStage::Done {
+                blocks: texts.len(),
+            };
+        }
+
+        /// 派发一批逐块翻译，把中间每条进度留下、最后那条终结结果单独给出来。
+        fn drain_translate(&mut self) -> (Vec<(usize, usize)>, Outcome) {
+            let mut progress = Vec::new();
+            loop {
+                let outcome = self
+                    .runtime
+                    .block_on(async { self.rx.recv().await.expect("结果应当回来") });
+                match outcome {
+                    Outcome::ImageTranslateProgress { done, total, .. } => {
+                        progress.push((done, total));
+                    }
+                    other => return (progress, other),
+                }
+            }
+        }
+    }
+
+    /// REQ-001 第一条 + 第二条：一块一次请求，中间那块失败只记在它自己头上，
+    /// 前面已落地的译文不回滚，后面那块照旧翻出来。
+    #[test]
+    fn one_request_per_block_and_one_failure_taints_only_that_block() {
+        let stub =
+            StubEngine::replying_per_text(vec![("第二块".to_string(), Err(StubError::Timeout))]);
+        let mut harness = Harness::new(vec![Arc::new(stub.clone())]);
+        harness.with_blocks(&["第一块", "第二块", "第三块"]);
+        let ctx = Context::default();
+        let job = harness
+            .state
+            .submit_image_translate(&[])
+            .expect("三块该派发得出");
+        harness.runner.submit(&harness.runtime, job, &ctx);
+        let (progress, outcome) = harness.drain_translate();
+        assert!(apply(&mut harness.state, &harness.history, outcome));
+
+        assert_eq!(stub.calls(), 3, "三块就是三次请求，不多也不少");
+        assert_eq!(
+            progress,
+            vec![(1, 3), (2, 3), (3, 3)],
+            "进度要一块一跳且带上总数"
+        );
+
+        let blocks = &harness.state.ocr.as_ref().expect("文档还在").blocks;
+        assert_eq!(blocks[0].translation.as_deref(), Some("译文·第一块"));
+        assert_eq!(blocks[1].translation, None, "失败的那块不该有一条假译文");
+        assert_eq!(blocks[2].translation.as_deref(), Some("译文·第三块"));
+        assert_eq!(
+            harness.state.failed_blocks,
+            vec![1],
+            "失败台账只记那一块，重试才只重发它"
+        );
+        assert!(matches!(
+            harness.state.translate_stage,
+            TranslateStage::Done { .. }
+        ));
+    }
+
+    /// REQ-001 第三条：一批在飞时不派发第二批——第二次派发给不出任务，
+    /// 而不是"把第一批顶掉"（顶掉意味着用户看到的译文来自两次请求）。
+    #[test]
+    fn a_second_batch_does_not_dispatch_while_the_first_is_in_flight() {
+        let stub = StubEngine::replying_per_text(Vec::new()).with_delay(Duration::from_millis(60));
+        let mut harness = Harness::new(vec![Arc::new(stub.clone())]);
+        harness.with_blocks(&["第一块", "第二块"]);
+        let ctx = Context::default();
+        let job = harness.state.submit_image_translate(&[]).unwrap();
+        harness.runner.submit(&harness.runtime, job, &ctx);
+        assert!(
+            harness.state.submit_image_translate(&[]).is_none(),
+            "第一批还在飞就派出了第二批"
+        );
+        // 收尾：把在飞的这批读完，免得状态留在"翻译中"影响下一次派发
+        let (_, outcome) = harness.drain_translate();
+        apply(&mut harness.state, &harness.history, outcome);
+    }
+
+    /// 停止只在块边界生效（REQ-009）：已请求的那一块会跑完，之后的块一次都不发；
+    /// 已翻好的译文留在原处。
+    ///
+    /// 为什么是"两块"而不是"一块"：进度是在一块翻完那一刻发出来的，而工作循环发完就接着
+    /// 请求下一块——主线程看到那条进度时，第二次的请求已经在飞了。那一次撤不回（REQ-009 的
+    /// 原话），所以块边界停下来的代价最多是一块，一条都不许多。
+    #[test]
+    fn a_stop_at_the_block_boundary_keeps_what_was_already_translated() {
+        let stub = StubEngine::replying_per_text(Vec::new()).with_delay(Duration::from_millis(200));
+        let mut harness = Harness::new(vec![Arc::new(stub.clone())]);
+        harness.with_blocks(&["第一块", "第二块", "第三块"]);
+        let ctx = Context::default();
+        let job = harness.state.submit_image_translate(&[]).unwrap();
+        let cancel = match &job {
+            Job::ImageTranslate { cancel, .. } => Arc::clone(cancel),
+            other => panic!("这条测试要的是逐块翻译那一支，实际是 {other:?}"),
+        };
+        harness.runner.submit(&harness.runtime, job, &ctx);
+
+        // 第一块的进度回来时按下停止
+        let first = harness
+            .runtime
+            .block_on(async { harness.rx.recv().await.expect("进度应当回来") });
+        assert!(matches!(
+            first,
+            Outcome::ImageTranslateProgress { done: 1, .. }
+        ));
+        cancel.store(true, Ordering::Relaxed);
+
+        let (rest, outcome) = harness.drain_translate();
+        assert_eq!(
+            rest,
+            vec![(2, 3)],
+            "块边界之后只该剩那一次在飞的请求，第三块一次都不发"
+        );
+        assert_eq!(stub.calls(), 2, "停下之后还多打了接口");
+        let results = match &outcome {
+            Outcome::ImageTranslated {
+                results, cancelled, ..
+            } => {
+                assert!(*cancelled, "带停止标记的那一批要如实标出来");
+                results
+            }
+            other => panic!("最后一条该是逐块翻译的结果，实际是 {other:?}"),
+        };
+        assert_eq!(results.len(), 2, "只有真发过请求的那两块有结果");
+        assert!(apply(&mut harness.state, &harness.history, outcome));
+        assert_eq!(
+            harness.state.translate_stage,
+            TranslateStage::Stopped { ok: 2, failed: 0 },
+            "停在块边界要说'已停止'，并带着已经落地的块数"
+        );
+        let blocks = &harness.state.ocr.as_ref().unwrap().blocks;
+        assert_eq!(
+            blocks[0].translation.as_deref(),
+            Some("译文·第一块"),
+            "已翻好的那块不许因为停止而消失"
+        );
+        assert_eq!(
+            blocks[1].translation.as_deref(),
+            Some("译文·第二块"),
+            "在飞那一次的译文照样落地"
+        );
+        assert_eq!(blocks[2].translation, None, "没发过请求的块不该有条假译文");
+    }
+
+    // ---- 合成那一段（CHG-006 T-008）----
+
+    /// 合成只有一个结局：整张图画完（`Ok`）或者什么都没有。中间态不往外发，
+    /// 所以界面上永远不会出现画了一半的那张图（REQ-009 第四条）。
+    #[test]
+    fn a_compose_job_returns_one_whole_picture_and_no_intermediate_frames() {
+        let mut harness = Harness::new(vec![Arc::new(StubEngine::replying(
+            EngineKind::Machine,
+            "你好",
+        ))]);
+        harness.with_blocks(&["第一块", "第二块"]);
+        for block in &mut harness.state.ocr.as_mut().unwrap().blocks {
+            block.translation = Some("回填文字".to_string());
+        }
+        let ctx = Context::default();
+        let job = harness
+            .state
+            .submit_image_compose()
+            .expect("有译文就该派发得出合成");
+        harness.runner.submit(&harness.runtime, job, &ctx);
+
+        let outcome = harness
+            .runtime
+            .block_on(async { harness.rx.recv().await.expect("成品应当回来") });
+        assert!(
+            matches!(outcome, Outcome::ImageComposed { .. }),
+            "合成段中间不发东西：{outcome:?}"
+        );
+        assert!(harness.rx.try_recv().is_err(), "一次合成只给一条结果");
+        assert!(apply(&mut harness.state, &harness.history, outcome));
+        assert!(
+            matches!(harness.state.compose_stage, ComposeStage::Done),
+            "成品落地后合成段该说完成，实际是 {:?}",
+            harness.state.compose_stage
+        );
+        let composed = harness.state.composed.expect("成品要落地");
+        assert_eq!(
+            (composed.image.width(), composed.image.height()),
+            (600, 400)
+        );
+        assert_eq!(
+            composed.replaced + composed.overlaid + composed.skipped,
+            2,
+            "计数要和块数对上：{:?}",
+            composed.per_block
+        );
+    }
+
+    /// 换图之后，上一张图的成品与在飞的合成都不该再落回界面（三个序号各自过期）。
+    #[test]
+    fn a_stale_compose_result_does_not_replace_the_new_picture() {
+        let mut harness = Harness::new(vec![Arc::new(StubEngine::replying(
+            EngineKind::Machine,
+            "你好",
+        ))]);
+        harness.with_blocks(&["第一块"]);
+        harness.state.ocr.as_mut().unwrap().blocks[0].translation = Some("你好".to_string());
+        let stale = Outcome::ImageComposed {
+            id: harness.state.compose_request_id + 99,
+            result: Ok(Composed {
+                image: RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 0, 255])),
+                per_block: Vec::new(),
+                replaced: 1,
+                overlaid: 0,
+                skipped: 0,
+                degraded_blocks: Vec::new(),
+                missing_glyphs: Vec::new(),
+            }),
+            elapsed_ms: 5,
+        };
+        assert!(
+            !apply(&mut harness.state, &harness.history, stale),
+            "对不上号的成品落进了界面"
+        );
+        assert!(harness.state.composed.is_none());
+        assert!(matches!(
+            harness.state.compose_stage,
+            ComposeStage::Idle | ComposeStage::Done
+        ));
     }
 }

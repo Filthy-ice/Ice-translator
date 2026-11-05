@@ -53,7 +53,7 @@ impl Default for CompositeOptions {
 ///
 /// `per_block` 是记录的本体，四个计数里有三个只是从它数出来的（同一次遍历），所以界面读到的
 /// 数字与实际画法不可能各说各话（REQ-006 那条"计数 SHALL 与实际画的块数一致"）。`degraded` 是
-/// 唯一例外：降级说的是"放不下"，不是"怎么画"，那一列装不下它。
+/// 唯一例外：降级说的是"放不下"，不是"怎么画"，那一列装不下它，因此单开一列块号。
 #[derive(Debug, Clone)]
 pub struct Composed {
     pub image: RgbaImage,
@@ -65,13 +65,23 @@ pub struct Composed {
     pub overlaid: usize,
     /// 没译文、那块区域原样保留的块数
     pub skipped: usize,
-    /// 缩到字号下限仍放不下的块数（FR-2.7，G 区要给它橙描边）
-    pub degraded: usize,
+    /// 缩到字号下限仍放不下的**块号**，升序（FR-2.7）。
+    ///
+    /// 单开一列而不是塞进 `per_block`：降级说的是"放不下"，不是"怎么画"。G 区要按 spec
+    /// REQ-004 末句与 REQ-007 那句"橙色描边"画出**是哪几块**，只给一个数画不出来。
+    pub degraded_blocks: Vec<u32>,
     /// 块 id → 两支本机字体都画不出的字符**数**。是哪个字不进任何出口（NFR-3）
     pub missing_glyphs: Vec<(u32, usize)>,
 }
 
 impl Composed {
+    /// 降级块数。从那一列数出来，与 G 区的橙描边同源，不另记一份。
+    ///
+    /// 不是 `const fn`：`Vec::len` 到 1.87 才在常量上下文里稳定，本仓库的 MSRV 是 1.85。
+    pub fn degraded(&self) -> usize {
+        self.degraded_blocks.len()
+    }
+
     /// 界面 I 区那句"这一张是怎么画的"。
     ///
     /// 词还是 FR-2.5 与 docs/03 I-02 那两个词，界面不再抄第三个字面量；退场的是"整图只能有一种
@@ -134,8 +144,12 @@ impl Renderer {
             replaced: count_kind(&per_block, PlanKind::InPlace),
             overlaid: count_kind(&per_block, PlanKind::Overlay),
             skipped: count_kind(&per_block, PlanKind::Skip),
-            // 降级不是画法，`per_block` 那一列装不下它，只能回到计划里数
-            degraded: jobs.iter().filter(|job| job.plan.degraded).count(),
+            // 降级不是画法，`per_block` 那一列装不下它，只能回到计划里逐块收块号
+            degraded_blocks: jobs
+                .iter()
+                .filter(|job| job.plan.degraded)
+                .map(|job| job.id)
+                .collect(),
             per_block,
             missing_glyphs,
         })
@@ -547,7 +561,7 @@ mod tests {
             replaced,
             overlaid,
             skipped: 0,
-            degraded: 0,
+            degraded_blocks: Vec::new(),
             missing_glyphs: Vec::new(),
         };
         assert_eq!(composed(3, 0).mode_label(), "回填");

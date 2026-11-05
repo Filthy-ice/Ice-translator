@@ -3,18 +3,23 @@
 //! 这里只放纯逻辑，不碰 egui 绘制，因此 REQ-001~REQ-004、REQ-007 的行为都能无头断言。
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui::Rect;
 use ice_core::config::{Config, UiMode};
 use ice_core::document::{OcrDocument, PixelRect, TextBlock};
 use ice_core::glossary::{Glossary, Term};
 use ice_core::history::{HISTORY_CAPACITY, HistoryRecord, HistoryStore};
-use ice_core::language::{EngineKind, Language};
+use ice_core::language::{EngineKind, LangPair, Language};
 use ice_providers::error::ProviderError;
 use ice_providers::request::{TranslationRequest, TranslationResult};
+use ice_vision::composite::Composed;
 use ice_vision::error::VisionError;
 use ice_vision::import::Admitted;
 use ice_vision::layout::{RowObservation, flip_rect};
+use ice_vision::typeset::CompositeMode;
+use image::RgbaImage;
 
 pub type RequestId = u64;
 
@@ -90,6 +95,23 @@ pub enum Tone {
 /// 采信检测结果的置信度门槛，与机翻引擎内部同源（`machine.rs:62`）。
 /// 低于它的属于"猜的"，拿它去改用户的语言设置比重试一次更糟。
 const DETECT_CONFIDENCE: f32 = 0.3;
+
+/// 图片那一批定不出方向时给的那句话（REQ-001 第四条：`auto` 不许原样交给机翻端点）。
+///
+/// 说清缺的是哪一个选择，而不是笼统一句"翻译失败"：这一条不重试也不换引擎就能解决。
+const NO_DIRECTION_TEXT: &str = "认不出图上的文字是什么语言，请在语言对里指定源语言";
+
+/// 那颗「停止」对着识别段时的 hover（Q-008）。
+///
+/// 三条文案分开写是这条入口唯一容易讲错的地方：只有翻译段是**真停**（后面的块不再发请求），
+/// 另两段的计算已经在跑，按下去只是"这次结果我不收了"。写成一句"已停止"就撒了两次谎。
+const RECOGNIZE_STOP_HINT: &str = "底层那次识别撤不回来；这一颗只是说结果回来时不要填进列表";
+
+/// 对着翻译段：块边界真停，已翻好的留下（Q-006）
+const TRANSLATE_STOP_HINT: &str = "停在块边界：已翻好的块留下，后面的块不再请求";
+
+/// 对着合成段：整张图画完才换代，按下去丢的是这一次的结果
+const COMPOSE_STOP_HINT: &str = "这一张撤不回来；这一颗只是说画完的结果不要换上来";
 
 /// REQ-006：检出的语言与当前目标语言相同（等于"自己译自己"）时，给出该换成哪个目标语言。
 ///
@@ -211,11 +233,14 @@ pub enum ImageInput {
     },
 }
 
-/// 一次待派发的任务：文本翻译，或图片识别（P6 的 S0~S3 一整段）。
+/// 一次待派发的任务：文本翻译，或图片链上的三段之一（识别 / 逐块翻译 / 合成）。
 ///
-/// 序号在两支里都显式放着：派发方（`AppState::submit*`）写它，接活的一方按支取出——
+/// 序号在每一支里都显式放着：派发方（`AppState::submit*`）写它，接活的一方按支取出——
 /// 不给它加 `fn id()`，因为除了测试没有第二个调用点，一个只有测试在用的访问器只是装饰。
-#[derive(Debug, Clone, PartialEq)]
+///
+/// 只派生 `Debug`/`Clone`：`ImageTranslate` 带的是停止哨兵，`AtomicBool` 没有 `PartialEq`，
+/// 而手写一个"忽略哨兵"的相等只会埋雷——两条哨兵不同、其余全同的任务本来就相等。
+#[derive(Debug, Clone)]
 pub enum Job {
     Translation {
         id: RequestId,
@@ -225,6 +250,27 @@ pub enum Job {
     ImageOcr {
         id: RequestId,
         input: ImageInput,
+    },
+    /// 逐块翻译（REQ-001）。每一块带的就是**将要发给引擎的那一份请求**——定方向是派发方
+    /// （[`AppState::submit_image_translate`]）的事，机翻端点从不认识 `auto`，而工作循环
+    /// 拿到的是已经填好具体语言对的请求，它没有第二次改方向的机会。
+    ///
+    /// `blocks` 是 `(块 id, 该块请求)`，已按块 id 升序：同一份文档必须每次派发出同一个次序，
+    /// 否则"重试这一块"的块号会和界面上那行对不上。
+    ImageTranslate {
+        id: RequestId,
+        engine: EngineKind,
+        blocks: Vec<(u32, TranslationRequest)>,
+        /// 块边界停止的哨兵：界面置真，工作循环在**下一块请求之前**看到它就收手。
+        /// 在飞的那一次请求不撤回（撤不回），所以停止最少要等一块的时间。
+        cancel: Arc<AtomicBool>,
+    },
+    /// 合成一张成品（REQ-003~REQ-006）。整段是一次同步的 CPU 活，走 `spawn_blocking`。
+    ImageCompose {
+        id: RequestId,
+        source: RgbaImage,
+        document: OcrDocument,
+        mode: CompositeMode,
     },
 }
 
@@ -253,6 +299,26 @@ pub enum Outcome {
         id: RequestId,
         result: Result<ImageRecognition, VisionError>,
     },
+    /// 逐块翻译的一段推进（REQ-009 的"N/M 块"）：20 个块要等十几秒，用户得看见它在走。
+    ImageTranslateProgress {
+        id: RequestId,
+        done: usize,
+        total: usize,
+    },
+    /// 逐块翻译收工。`results` 是 `(块 id, 该块结果)`：一块 `Err` 只作废它自己，
+    /// 其余块的 `Ok` 照样落地（REQ-001 第二条）。`cancelled` 表示这是在块边界停下来的，
+    /// 已翻好的那些照样有效、不是半成品（Q-006 裁定"留"）。
+    ImageTranslated {
+        id: RequestId,
+        results: Vec<(u32, Result<String, ProviderError>)>,
+        cancelled: bool,
+        elapsed_ms: u64,
+    },
+    ImageComposed {
+        id: RequestId,
+        result: Result<Composed, VisionError>,
+        elapsed_ms: u64,
+    },
 }
 
 /// 提示条最多同时显示这么多条，避免把界面挤没
@@ -260,8 +326,9 @@ const MAX_TOASTS: usize = 3;
 
 /// 图片页识别段的五态（CHG-005 REQ-006）。
 ///
-/// 这是**识别那一段**的状态：P7 的翻译段与合成段各自还要一条（FR-2.9 的完整语义），
-/// 本包只做到这里，所以叫 Stage 而不是 Progress——它不承诺百分比。
+/// 只覆盖**识别那一段**。翻译段与合成段各有一条并列的（[`TranslateStage`]、[`ComposeStage`]）：
+/// 三段各有各的过期序号，晚到的识别结果不许作废翻译段，把它们挤进一个枚举那条界线就没了。
+/// 叫 Stage 而不是 Progress——它不承诺百分比。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RecognitionStage {
     #[default]
@@ -288,9 +355,147 @@ impl RecognitionStage {
         }
     }
 
-    /// 识别中才允许点「忽略」；其余状态这颗按钮该是灰的或不出现
-    pub const fn cancellable(&self) -> bool {
-        matches!(self, RecognitionStage::Recognizing)
+    /// 界面着色用那一档。"能不能停"不由这里判——那颗「停止」按钮三段共用，
+    /// 看的是各自的在飞标记（[`AppState::stop_hint`]）。
+    pub const fn phase(&self) -> Phase {
+        match self {
+            RecognitionStage::Recognizing => Phase::Busy,
+            RecognitionStage::Done { .. } => Phase::Done,
+            RecognitionStage::Failed(_) => Phase::Bad,
+            // 「这张图没字」既不是坏也没结果，只是这一次什么也没认出来
+            RecognitionStage::Idle | RecognitionStage::NoText => Phase::Idle,
+        }
+    }
+}
+
+/// 图片页翻译段的五态（CHG-006 REQ-009）。与 [`RecognitionStage`] 并列，两边文案互不挪用。
+///
+/// 没有"整批失败"这一态：一块失败只作废它自己（REQ-001 第二条），所以段的结局只有
+/// "翻完"和"停下"，失败块数作为附注挂在结局上。`Failed` 装的是**发不出去**那一类
+/// （定不出方向），不是发出去之后回来的错。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum TranslateStage {
+    #[default]
+    Idle,
+    /// 逐块串行进行中：`done` 是已落地的块数，`total` 是这批的块数
+    Running {
+        done: usize,
+        total: usize,
+    },
+    Done {
+        ok: usize,
+        failed: usize,
+    },
+    /// 用户在块边界按了停止。已翻好的块不撤销（Q-006 裁定"留"），所以它不叫 Failed
+    Stopped {
+        ok: usize,
+        failed: usize,
+    },
+    Failed(String),
+}
+
+impl TranslateStage {
+    /// I 区那一行的主文案（耗时由界面按 `translate_elapsed_ms` 另拼，与识别段同一拼法）
+    pub fn label(&self) -> String {
+        match self {
+            TranslateStage::Idle => "空闲".to_string(),
+            TranslateStage::Running { done, total } => format!("翻译中 {done}/{total} 块"),
+            TranslateStage::Done { ok, failed } => tail("完成", *ok, *failed),
+            TranslateStage::Stopped { ok, failed } => tail("已停止", *ok, *failed),
+            TranslateStage::Failed(reason) => format!("翻译失败：{reason}"),
+        }
+    }
+
+    pub const fn phase(&self) -> Phase {
+        match self {
+            TranslateStage::Running { .. } => Phase::Busy,
+            // 停在块边界也算"有结果"：已翻好的那些块还在文档里（Q-006 裁定"留"）
+            TranslateStage::Done { .. } | TranslateStage::Stopped { .. } => Phase::Done,
+            TranslateStage::Failed(_) => Phase::Bad,
+            TranslateStage::Idle => Phase::Idle,
+        }
+    }
+}
+
+/// "完成 N 块"与"已停止 N 块"共用的一句：有失败块就附在后面，一条都没有就不啰嗦
+fn tail(head: &str, ok: usize, failed: usize) -> String {
+    if failed == 0 {
+        format!("{head} {ok} 块")
+    } else {
+        format!("{head} {ok} 块，失败 {failed} 块")
+    }
+}
+
+/// 图片页合成段的四态（CHG-006 REQ-009）。
+///
+/// `Done` 不带任何计数：那四个数（回填/覆盖层/跳过/降级）与缺字形都在 [`Composed`] 里，
+/// 抄一份进状态枚举就出现了"数字与成品各说各话"的可能。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ComposeStage {
+    #[default]
+    Idle,
+    /// 一次同步计算，撤不回
+    Composing,
+    Done,
+    Failed(String),
+}
+
+impl ComposeStage {
+    pub fn label(&self) -> String {
+        match self {
+            ComposeStage::Idle => "空闲".to_string(),
+            ComposeStage::Composing => "合成中…".to_string(),
+            // 具体怎么画的（几块回填、几块覆盖层）由界面从 `composed` 上读，这里不重复
+            ComposeStage::Done => "完成".to_string(),
+            ComposeStage::Failed(reason) => format!("合成失败：{reason}"),
+        }
+    }
+
+    pub const fn phase(&self) -> Phase {
+        match self {
+            ComposeStage::Composing => Phase::Busy,
+            ComposeStage::Done => Phase::Done,
+            ComposeStage::Failed(_) => Phase::Bad,
+            ComposeStage::Idle => Phase::Idle,
+        }
+    }
+}
+
+/// 三段共用的"现在处在哪一档"（CHG-006 REQ-009）。
+///
+/// 三套状态枚举的变体名各说各话，界面要的颜色却只有四种：没开始、进行中、有结果、坏了。
+/// 映射写在状态侧而不是界面侧，为的是加一态时不会只改一半——`TranslateStage::Stopped`
+/// 是"有结果"（译文还在），把它当"坏了"红给用户看是假话。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Idle,
+    Busy,
+    Done,
+    Bad,
+}
+
+/// 那条共用「停止」入口按当前段给出的结论（REQ-009 的边界：一条入口，两种含义）。
+///
+/// 文案由这里给出而不是让界面自己拼，为的是"真停"和"丢弃结果"不许被写成同一句话——
+/// 后者那次计算还在跑，说"已停止"是撒谎。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stop {
+    /// 停在翻译段：块边界真停，后面的块不再发请求
+    Translate,
+    /// 停在识别段或合成段：只丢弃这一次的结果
+    Ignore,
+    /// 三段都不在飞，什么都没停
+    Nothing,
+}
+
+impl Stop {
+    /// 给用户的那句话；`Nothing` 时是 `None`——没有可报的停止就别报
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            Stop::Translate => Some("已停止这次处理，译文还在"),
+            Stop::Ignore => Some("已忽略这次结果，那次计算撤不回"),
+            Stop::Nothing => None,
+        }
     }
 }
 
@@ -413,6 +618,31 @@ pub struct AppState {
     pub image_elapsed_ms: u64,
     /// 手输路径那条入口的输入缓冲
     pub image_path_input: String,
+    /// F 区刚被点中的那一块：H 区把那一行描一圈并滚进视野（REQ-007 的"点框定位到那一块"）。
+    /// **运行态**，换一张图就清——块号只对当前这份文档有意义，留着会把不相干的一行描上圈
+    pub selected_block: Option<u32>,
+    // ---- 图片工作区：翻译段与合成段（CHG-006 REQ-001 / REQ-006 / REQ-009） ----
+    /// 翻译段状态，与识别段并列不合并
+    pub translate_stage: TranslateStage,
+    /// 翻译段与合成段各自的序号与在飞标记，与识别段那对完全独立（REQ-009 边界那条）
+    pub translate_request_id: RequestId,
+    pub translate_in_flight: Option<RequestId>,
+    /// 上一批逐块翻译的耗时，I 区显示用
+    pub translate_elapsed_ms: u64,
+    /// 这一批失败的块号。**运行态**：一次尝试里失败过不是那份文档的性质，
+    /// 所以既不写进 `OcrDocument` 也不进配置，换一批就重来
+    pub failed_blocks: Vec<u32>,
+    /// 翻译段的块边界停止哨兵，随 [`Job::ImageTranslate`] 一起交给工作循环
+    pub image_cancel: Arc<AtomicBool>,
+    pub compose_stage: ComposeStage,
+    pub compose_request_id: RequestId,
+    pub compose_in_flight: Option<RequestId>,
+    pub compose_elapsed_ms: u64,
+    /// 上一次合成的成品。只在整张图画完之后一次性换代，界面上因此永远不会出现半张图（REQ-009）
+    pub composed: Option<Composed>,
+    /// 下一张成品用什么画法（REQ-006 的三档单选）。运行态、默认"自动"、不进配置：
+    /// 它是对**这一张图**的一次性决定，不是用户对整个软件的偏好
+    pub compose_mode: CompositeMode,
 }
 
 impl AppState {
@@ -461,6 +691,19 @@ impl AppState {
             image_in_flight: None,
             image_elapsed_ms: 0,
             image_path_input: String::new(),
+            selected_block: None,
+            translate_stage: TranslateStage::Idle,
+            translate_request_id: 0,
+            translate_in_flight: None,
+            translate_elapsed_ms: 0,
+            failed_blocks: Vec::new(),
+            image_cancel: Arc::new(AtomicBool::new(false)),
+            compose_stage: ComposeStage::Idle,
+            compose_request_id: 0,
+            compose_in_flight: None,
+            compose_elapsed_ms: 0,
+            composed: None,
+            compose_mode: CompositeMode::default(),
         }
     }
 
@@ -544,6 +787,15 @@ impl AppState {
         let Some(new_target) = auto_reverse_target(detection.language, previous) else {
             return;
         };
+        self.reverse_target(detection.language, new_target);
+    }
+
+    /// 检出语言正好是当前目标语言后改目标：设置、最近使用、脏标记、提示四件事一起做。
+    ///
+    /// 语义页（[`AppState::reverse_target_when_it_collides`]）与图片那一批
+    /// （[`AppState::image_direction`]）共用这一条：同一个规则在两处各写一遍，
+    /// 迟早会有一处忘了记脏标记或忘了告诉用户。
+    fn reverse_target(&mut self, detected: Language, new_target: Language) {
         self.config.translation.target = new_target;
         self.config.translation.remember_target(new_target);
         self.config_dirty = true;
@@ -551,8 +803,8 @@ impl AppState {
             Tone::Info,
             format!(
                 "检测到{}，已自动改为 {} → {}",
-                detection.language.display_name(),
-                detection.language.display_name(),
+                detected.display_name(),
+                detected.display_name(),
                 new_target.display_name()
             ),
         );
@@ -565,6 +817,20 @@ impl AppState {
                 self.apply_translation(id, engine, result)
             }
             Outcome::Image { id, result } => self.apply_image(id, result),
+            Outcome::ImageTranslateProgress { id, done, total } => {
+                self.apply_translate_progress(id, done, total)
+            }
+            Outcome::ImageTranslated {
+                id,
+                results,
+                cancelled,
+                elapsed_ms,
+            } => self.apply_image_translated(id, results, cancelled, elapsed_ms),
+            Outcome::ImageComposed {
+                id,
+                result,
+                elapsed_ms,
+            } => self.apply_image_composed(id, result, elapsed_ms),
         }
     }
 
@@ -610,6 +876,12 @@ impl AppState {
         self.image_rows.clear();
         self.ocr = None;
         self.image_elapsed_ms = 0;
+        self.selected_block = None;
+        // 下游两段跟着一起作废。它们的结果都是**这张**文档的译文与成品；在飞的那一批
+        // 只把在飞标记摘掉，晚到的结果因此按序号丢弃（那批请求撤不回，但落不到新图上）。
+        self.expire_translate();
+        self.expire_compose();
+        self.composed = None;
         Some(Job::ImageOcr { id, input })
     }
 
@@ -657,6 +929,320 @@ impl AppState {
                 self.image_rows.clear();
                 self.ocr = None;
             }
+        }
+        true
+    }
+
+    // ---- 图片工作区：翻译段与合成段（CHG-006 REQ-001 / REQ-006 / REQ-009） ----
+
+    /// 派发一批逐块翻译（REQ-001）。`ids` 为空 = 所有 `enabled` 块，也就是「翻译全部」；
+    /// 给了块号 = 只翻这些块，「重试这一块」（单个）与「重试失败块」（一批）都走这一条。
+    ///
+    /// 三道前置门：这一批没在飞、有可翻的块、定得出具体方向。前两道不过就什么都不动
+    /// （界面那两颗按钮本来就该是灰的）；第三道不过要在段上留一句话，因为用户从界面上
+    /// 看不出"自动检测"为什么翻不动。
+    ///
+    /// 同一时刻只允许一批在飞（REQ-001 第三条）。再次派发等于换一批译文，上一张成品当场
+    /// 作废——留着它就是"旧图配新译文"，比空着一格更坏。
+    pub fn submit_image_translate(&mut self, ids: &[u32]) -> Option<Job> {
+        if self.translate_in_flight.is_some() {
+            return None;
+        }
+        let whole_batch = ids.is_empty();
+        let pending: Vec<(u32, String)> = self
+            .ocr
+            .as_ref()?
+            .enabled_blocks()
+            .filter(|block| whole_batch || ids.contains(&block.id))
+            .map(|block| (block.id, block.text.clone()))
+            .collect();
+        if pending.is_empty() {
+            return None;
+        }
+        let sample = pending
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let Some(pair) = self.image_direction(&sample) else {
+            self.translate_stage = TranslateStage::Failed(NO_DIRECTION_TEXT.to_string());
+            return None;
+        };
+        // 方向定下来之后才把每块拼成请求：交给工作循环的已经是"能直接发出去的那一份"
+        let blocks = pending
+            .into_iter()
+            .map(|(id, text)| (id, TranslationRequest::new(text, pair)))
+            .collect::<Vec<_>>();
+        self.translate_request_id += 1;
+        let id = self.translate_request_id;
+        self.translate_in_flight = Some(id);
+        self.translate_stage = TranslateStage::Running {
+            done: 0,
+            total: blocks.len(),
+        };
+        self.translate_elapsed_ms = 0;
+        // 整批重翻时失败台账清零；只翻几块时留着不动——那些块这次没被试过，
+        // 说它"已经翻出来了"是假话（台账按块号在 `apply_image_translated` 里逐块销账）
+        if whole_batch {
+            self.failed_blocks.clear();
+        }
+        // 哨兵先落回"没停"：上一批的停止不该让这一批在第一块就收手
+        self.image_cancel.store(false, Ordering::Relaxed);
+        self.expire_compose();
+        self.composed = None;
+        Some(Job::ImageTranslate {
+            id,
+            engine: self.engine,
+            blocks,
+            cancel: Arc::clone(&self.image_cancel),
+        })
+    }
+
+    /// 重试这一批里所有失败的块（一颗按钮的给法：逐块一颗太密，H 区用的是这一条 + 单块那条）。
+    /// 派发不出去就把台账还回去——失败块列表不该因为"点了但没发出去"而变短。
+    ///
+    /// 台账为空时**必须**直接返回：空块号列表在 [`AppState::submit_image_translate`] 里的意思是
+    /// "整批重翻"，少了这道门这颗按钮就变成"再翻一遍全部"。
+    pub fn submit_image_retry_failed(&mut self) -> Option<Job> {
+        if self.failed_blocks.is_empty() {
+            return None;
+        }
+        let ids = std::mem::take(&mut self.failed_blocks);
+        let job = self.submit_image_translate(&ids);
+        if job.is_none() {
+            self.failed_blocks = ids;
+        }
+        job
+    }
+
+    /// 派发一次合成（REQ-003~REQ-006）。要有入场图、有文档、没有在飞的合成，
+    /// 还要**至少一块有译文**：一条译文都没有就擦字重画，出来的是一张被擦花的原图。
+    ///
+    /// 已有的成品此刻不动（REQ-009 第四条）：新成品要等整张图画完才一次性换代，
+    /// 所以界面上从不会出现画了一半的那一帧。
+    pub fn submit_image_compose(&mut self) -> Option<Job> {
+        if self.compose_in_flight.is_some() {
+            return None;
+        }
+        let image = self.image.as_ref()?;
+        let document = self.ocr.as_ref()?;
+        let anything_translated = document
+            .enabled_blocks()
+            .any(|block| block.translated_text().is_some());
+        if !anything_translated {
+            return None;
+        }
+        self.compose_request_id += 1;
+        let id = self.compose_request_id;
+        self.compose_in_flight = Some(id);
+        self.compose_stage = ComposeStage::Composing;
+        self.compose_elapsed_ms = 0;
+        Some(Job::ImageCompose {
+            id,
+            source: image.image.clone(),
+            document: document.clone(),
+            mode: self.compose_mode,
+        })
+    }
+
+    /// 那条共用的「停止」（REQ-009 的边界：一条入口，两种含义）。
+    ///
+    /// 返回的是"这次停的是哪一段"，界面据此给文案：翻译段是真停（译文留在原处），
+    /// 识别段与合成段只是丢弃结果——那两次计算还在跑，说"已停止"是撒谎。
+    /// 三段各自都在飞时才走到前面的那一支，而换图会把翻译段记过期，所以实际不会同时有两支在飞。
+    pub fn stop_image_stage(&mut self) -> Stop {
+        if self.image_in_flight.is_some() {
+            self.ignore_image_result();
+            return Stop::Ignore;
+        }
+        if self.translate_in_flight.is_some() {
+            // 只立哨兵，不改段的状态：在飞的那一次请求撤不回，停下与结局由回来的那条结果判定
+            self.image_cancel.store(true, Ordering::Relaxed);
+            return Stop::Translate;
+        }
+        if self.compose_in_flight.is_some() {
+            self.expire_compose();
+            return Stop::Ignore;
+        }
+        Stop::Nothing
+    }
+
+    /// E 区「翻译全部」缺的那一步（REQ-006 后半句：缺哪一步就在状态行说哪一步）。
+    ///
+    /// 返回的是**给用户看的那句话**，`None` = 这一颗该是能点的。置灰和状态行读同一个来源，
+    /// 不允许出现"按钮灰着、状态行却说一切正常"。定不出方向那一类只有真去派发才知道，
+    /// 它落在 [`TranslateStage::Failed`] 上，不在这里预支。
+    pub fn translate_gate(&self) -> Option<&'static str> {
+        if self.translate_in_flight.is_some() {
+            Some("这一批还在翻，稍等")
+        } else if self.enabled_block_count() == 0 {
+            Some("先识别出至少一块文字")
+        } else {
+            None
+        }
+    }
+
+    /// E 区「生成图片」缺的那一步，三道门与 [`AppState::submit_image_compose`] 一一对应。
+    pub fn compose_gate(&self) -> Option<&'static str> {
+        if self.compose_in_flight.is_some() {
+            Some("这一张还在画，稍等")
+        } else if self.image.is_none() {
+            Some("先导入一张图")
+        } else if self.translated_block_count() == 0 {
+            Some("先翻出至少一块译文")
+        } else {
+            None
+        }
+    }
+
+    /// 那颗「停止」此刻对着哪一段，以及该给它哪句 hover（三段共用一颗按钮，含义不同）。
+    ///
+    /// `None` = 三段都不在飞，这颗按钮本来就不该画出来。判定顺序与
+    /// [`AppState::stop_image_stage`] 必须一致，所以两边共用这一条：界面上说"停的是谁"
+    /// 和按下去真停的是谁不能各说各话。
+    pub fn stop_hint(&self) -> Option<&'static str> {
+        if self.image_in_flight.is_some() {
+            Some(RECOGNIZE_STOP_HINT)
+        } else if self.translate_in_flight.is_some() {
+            Some(TRANSLATE_STOP_HINT)
+        } else if self.compose_in_flight.is_some() {
+            Some(COMPOSE_STOP_HINT)
+        } else {
+            None
+        }
+    }
+
+    /// 当前这份文档里参与翻译的块数：勾掉的不算，空文也不算（`enabled_blocks` 那一口径）
+    pub fn enabled_block_count(&self) -> usize {
+        self.ocr
+            .as_ref()
+            .map(|document| document.enabled_blocks().count())
+            .unwrap_or(0)
+    }
+
+    /// 其中已经有**可画**译文的块数
+    pub fn translated_block_count(&self) -> usize {
+        self.ocr
+            .as_ref()
+            .map(|document| {
+                document
+                    .enabled_blocks()
+                    .filter(|block| block.translated_text().is_some())
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// 翻译段记为过期并回空闲：晚到的结果落不到当前文档上，失败块号也不再有意义
+    fn expire_translate(&mut self) {
+        self.translate_in_flight = None;
+        self.translate_stage = TranslateStage::Idle;
+        self.failed_blocks.clear();
+    }
+
+    /// 合成段记为过期并回空闲。成品动不动由调用方决定：停止不动（用户手上那张还是他要的），
+    /// 换图与换一批译文要动（它对应的是上一张图）。
+    fn expire_compose(&mut self) {
+        self.compose_in_flight = None;
+        self.compose_stage = ComposeStage::Idle;
+    }
+
+    /// 派发前把语言对落成具体方向（REQ-001 第四条：SHALL NOT 把 `auto` 交给机翻端点）。
+    ///
+    /// 采样用整批文本拼起来的那一段，而不是第一块：图片里的块常常只有两三个字，
+    /// 拿"AI"这一块去判语言会判出一个假的确定性。检出的语言正好撞上当前的目标语言时，
+    /// 与语义页同一条规则、同一个处置（[`AppState::reverse_target`]）。
+    ///
+    /// 返回 `None` = 定不出来（检不出或置信度不够）。这时不发请求：宁可让用户在语言对里
+    /// 指定源语言，也不替他猜一个方向然后把二十个块按猜的方向翻完。
+    fn image_direction(&mut self, sample: &str) -> Option<LangPair> {
+        let pair = self.config.translation.lang_pair();
+        if pair.source.is_some() {
+            return Some(pair);
+        }
+        let detected = ice_core::detect(sample)
+            .filter(|detection| detection.confidence >= DETECT_CONFIDENCE)?;
+        let target = match auto_reverse_target(detected.language, pair.target) {
+            Some(new_target) => {
+                self.reverse_target(detected.language, new_target);
+                new_target
+            }
+            None => pair.target,
+        };
+        Some(LangPair::explicit(detected.language, target))
+    }
+
+    /// 逐块翻译的一段推进。序号对不上就直接忽略：晚到的进度不该把已经停下或已经完成的段
+    /// 重新写成"进行中"。
+    fn apply_translate_progress(&mut self, id: RequestId, done: usize, total: usize) -> bool {
+        if self.translate_in_flight != Some(id) {
+            return false;
+        }
+        self.translate_stage = TranslateStage::Running { done, total };
+        true
+    }
+
+    /// 落地一批逐块翻译的结果。`false` = 序号对不上（已过期或被更新的一批顶掉）。
+    ///
+    /// `Ok` 的写进对应块的 `translation`，`Err` 的只进 [`AppState::failed_blocks`]：
+    /// "这一块这次没翻出来"是这次尝试的性质，不是那份文档的性质。失败台账按块号销账而不是
+    /// 整表清空——只重试两块时，另外三块的失败记录还得上着，它们这次没被试过。
+    fn apply_image_translated(
+        &mut self,
+        id: RequestId,
+        results: Vec<(u32, Result<String, ProviderError>)>,
+        cancelled: bool,
+        elapsed_ms: u64,
+    ) -> bool {
+        if self.translate_in_flight != Some(id) {
+            return false;
+        }
+        self.translate_in_flight = None;
+        self.translate_elapsed_ms = elapsed_ms;
+        let mut ok = 0;
+        if let Some(document) = self.ocr.as_mut() {
+            for (block_id, result) in results {
+                self.failed_blocks.retain(|failed| *failed != block_id);
+                match result {
+                    // 块不在了 = 用户在这一批还在网上跑的时候把它删了，结果无处落，丢掉
+                    Ok(text) => {
+                        if let Some(block) = document.blocks.iter_mut().find(|b| b.id == block_id) {
+                            block.translation = Some(text);
+                            ok += 1;
+                        }
+                    }
+                    Err(_) => self.failed_blocks.push(block_id),
+                }
+            }
+        }
+        let failed = self.failed_blocks.len();
+        self.translate_stage = if cancelled {
+            TranslateStage::Stopped { ok, failed }
+        } else {
+            TranslateStage::Done { ok, failed }
+        };
+        true
+    }
+
+    /// 落地一次合成的结果。`false` = 序号对不上，界面零变化。
+    fn apply_image_composed(
+        &mut self,
+        id: RequestId,
+        result: Result<Composed, VisionError>,
+        elapsed_ms: u64,
+    ) -> bool {
+        if self.compose_in_flight != Some(id) {
+            return false;
+        }
+        self.compose_in_flight = None;
+        self.compose_elapsed_ms = elapsed_ms;
+        match result {
+            Ok(composed) => {
+                self.composed = Some(composed);
+                self.compose_stage = ComposeStage::Done;
+            }
+            // 失败不动上一张成品：用户没要求销毁他手上已经有的那张（REQ-009 第四条）
+            Err(err) => self.compose_stage = ComposeStage::Failed(image_failure_text(&err)),
         }
         true
     }
@@ -1085,26 +1671,33 @@ mod tests {
         state
     }
 
-    /// P6 之后 `Job` 有两种，这几条测试断的全是文本那一支——取不出来就说明用错了分支。
+    /// 四支里只有文本那一支带请求，这几条测试断的全是它——取不出来就说明用错了分支。
     fn request_of(job: &Job) -> &TranslationRequest {
         match job {
             Job::Translation { request, .. } => request,
-            Job::ImageOcr { .. } => panic!("这条断言只适用于文本任务"),
+            Job::ImageOcr { .. } | Job::ImageTranslate { .. } | Job::ImageCompose { .. } => {
+                panic!("这条断言只适用于文本任务")
+            }
         }
     }
 
     fn engine_of(job: &Job) -> EngineKind {
         match job {
             Job::Translation { engine, .. } => *engine,
-            Job::ImageOcr { .. } => panic!("这条断言只适用于文本任务"),
+            Job::ImageOcr { .. } | Job::ImageTranslate { .. } | Job::ImageCompose { .. } => {
+                panic!("这条断言只适用于文本任务")
+            }
         }
     }
 
-    /// 两支都带 `id`，测试里取它就在这儿展开一次。
+    /// 四支都带 `id`，测试里取它就在这儿展开一次。
     /// 不给 `Job` 加 `fn id()`：派发方本来就是按支 match 的，那个访问器只有测试在用。
     fn job_id(job: &Job) -> RequestId {
         match job {
-            Job::Translation { id, .. } | Job::ImageOcr { id, .. } => *id,
+            Job::Translation { id, .. }
+            | Job::ImageOcr { id, .. }
+            | Job::ImageTranslate { id, .. }
+            | Job::ImageCompose { id, .. } => *id,
         }
     }
 
@@ -1508,8 +2101,8 @@ mod tests {
                 stage.label()
             );
             assert!(
-                !stage.cancellable(),
-                "结果已经落地，没有在飞的识别，不该给「忽略这次识别」"
+                stage.phase() != Phase::Busy,
+                "结果已经落地，没有在飞的识别，那颗共用的「停止」不该出现"
             );
             assert!(
                 !reason.contains("code=") && !reason.contains("desc_len"),
@@ -1649,6 +2242,315 @@ mod tests {
         assert!(state.apply_outcome(fresh));
         assert_eq!(state.image_merged_text(), "新结果\n第二块");
         assert_eq!(state.image_stage, RecognitionStage::Done { blocks: 2 });
+    }
+
+    /// REQ-001 第四条：`auto` 永远不许原样交给机翻端点。定得出方向时给的是**具体那一对**，
+    /// 定不出时不派发，并且把话说到"该去改哪一个设置"。
+    #[test]
+    fn the_translate_batch_always_carries_a_concrete_language_pair() {
+        // 图上的文字是英文：检出 En，目标照默认走简中
+        let mut state = idle_state();
+        let first = job_id(
+            &state
+                .submit_image(ImageInput::Path(PathBuf::from("/tmp/一张.png")))
+                .unwrap(),
+        );
+        state.apply_outcome(Outcome::Image {
+            id: first,
+            result: Ok(recognition(&["hello world"])),
+        });
+        let job = state.submit_image_translate(&[]).expect("英文该定得出方向");
+        let Job::ImageTranslate { blocks, .. } = &job else {
+            panic!("要的是逐块翻译那一支");
+        };
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].1.text, "hello world");
+        assert_eq!(
+            blocks[0].1.pair.source,
+            Some(Language::En),
+            "自动检测的结论必须落成具体源语言，端点不认识 auto"
+        );
+
+        // 图上的文字就是目标语言：换的是**目标**（回到英语），源语言照检出的那个
+        let mut same = idle_state();
+        let id = job_id(
+            &same
+                .submit_image(ImageInput::Path(PathBuf::from("/tmp/一张.png")))
+                .unwrap(),
+        );
+        same.apply_outcome(Outcome::Image {
+            id,
+            result: Ok(recognition(&["你好，今天怎么样"])),
+        });
+        let flipped = same
+            .submit_image_translate(&[])
+            .expect("中文撞中文目标该换成英语而不是失败");
+        let Job::ImageTranslate { blocks, .. } = &flipped else {
+            panic!("要的是逐块翻译那一支");
+        };
+        assert_eq!(blocks[0].1.pair.source, Some(Language::ZhHans));
+        assert_eq!(
+            blocks[0].1.pair.target,
+            Language::En,
+            "自己译自己的那条改判"
+        );
+
+        // 定不出方向（图上只有标点和数字）：不派发，且那句话指得懂下一步
+        let mut blank = idle_state();
+        let id = job_id(
+            &blank
+                .submit_image(ImageInput::Path(PathBuf::from("/tmp/一张.png")))
+                .unwrap(),
+        );
+        blank.apply_outcome(Outcome::Image {
+            id,
+            result: Ok(recognition(&["—— 2026 ——"])),
+        });
+        assert!(
+            blank.submit_image_translate(&[]).is_none(),
+            "认不出语言时不该把 auto 交出去"
+        );
+        assert_eq!(
+            blank.translate_stage.label(),
+            format!("翻译失败：{NO_DIRECTION_TEXT}"),
+            "那句话要说清缺的是源语言"
+        );
+        assert!(
+            blank.translate_in_flight.is_none(),
+            "定不出方向时不能留下一个在飞的批次"
+        );
+    }
+
+    /// 三个序号各自过期（REQ-009 第三条）。三段各有自己的计数器，但**都从 0 起计**，
+    /// 所以翻译段与合成段同时在飞时号子会撞成同一个数——正因如此过期判定只能分通道看：
+    /// 这一条把"同一次派发落在两段上"写死，谁也不许顺手清掉另一段的在飞标记。
+    #[test]
+    fn the_three_image_segments_expire_independently() {
+        let mut state = translated_state(&["第一块"]);
+        // 先派翻译（它把合成段记过期），此刻文档上还留着上一批的译文，于是合成也能派出去
+        let translate_id = job_id(&state.submit_image_translate(&[]).unwrap());
+        let compose_id = job_id(&state.submit_image_compose().unwrap());
+        assert_eq!(
+            translate_id, compose_id,
+            "两条通道各自从 0 起计，号子本来就会撞成同一个数"
+        );
+        assert_eq!(state.translate_in_flight, Some(translate_id));
+        assert_eq!(state.compose_in_flight, Some(compose_id));
+
+        // 成品先回来：只摘合成段那一个标记，翻译段照旧在飞
+        assert!(state.apply_outcome(Outcome::ImageComposed {
+            id: compose_id,
+            result: Ok(a_composed(2)),
+            elapsed_ms: 5,
+        }));
+        assert!(state.composed.is_some());
+        assert_eq!(
+            state.translate_in_flight,
+            Some(translate_id),
+            "合成落地顺手把翻译段也叫停了"
+        );
+        assert!(matches!(
+            state.translate_stage,
+            TranslateStage::Running { .. }
+        ));
+
+        // 译文再回来：只销翻译段那一个标记，已经换上的成品一张都不许动
+        assert!(state.apply_outcome(Outcome::ImageTranslated {
+            id: translate_id,
+            results: vec![(0, Ok("新一批译文".to_string()))],
+            cancelled: false,
+            elapsed_ms: 10,
+        }));
+        assert_eq!(
+            state.ocr.as_ref().unwrap().blocks[0].translation.as_deref(),
+            Some("新一批译文")
+        );
+        assert_eq!(state.compose_in_flight, None);
+        assert!(state.composed.is_some(), "翻译落地把成品顶掉了");
+
+        // 两段都落地之后，同一次派发的两条迟到结果都该丢掉（号子已经作废旧了）
+        assert!(
+            !state.apply_outcome(Outcome::ImageTranslated {
+                id: translate_id,
+                results: vec![(0, Ok("更晚的译文".to_string()))],
+                cancelled: false,
+                elapsed_ms: 10,
+            }),
+            "对不上号的翻译结果落了地"
+        );
+        assert!(
+            !state.apply_outcome(Outcome::ImageComposed {
+                id: compose_id,
+                result: Ok(a_composed(9)),
+                elapsed_ms: 5,
+            }),
+            "对不上号的成品落了地"
+        );
+        assert_eq!(
+            state.ocr.as_ref().unwrap().blocks[0].translation.as_deref(),
+            Some("新一批译文"),
+            "过期结果写进了文档"
+        );
+        assert_eq!(state.composed.expect("成品还在").replaced, 2);
+
+        // 识别段的号与这两段也撞，晚到的识别结果同样只认自己那条通道
+        let mut fresh = idle_state();
+        let ocr_id = job_id(
+            &fresh
+                .submit_image(ImageInput::Path(PathBuf::from("/tmp/一张.png")))
+                .unwrap(),
+        );
+        fresh.ignore_image_result();
+        assert!(
+            !fresh.apply_outcome(Outcome::Image {
+                id: ocr_id,
+                result: Ok(recognition(&["晚到的一行"])),
+            }),
+            "已忽略的识别结果回写进了界面"
+        );
+        assert!(fresh.ocr.is_none());
+    }
+
+    /// REQ-009 第四条：合成失败**不动**上一张成品。用户没要求销毁他手上已经有的那张。
+    #[test]
+    fn a_failed_compose_keeps_the_previous_product() {
+        let mut state = translated_state(&["第一块"]);
+        let first = job_id(&state.submit_image_compose().unwrap());
+        assert!(state.apply_outcome(Outcome::ImageComposed {
+            id: first,
+            result: Ok(a_composed(3)),
+            elapsed_ms: 20,
+        }));
+        assert!(state.composed.is_some());
+
+        // 换一批译文再合成，这一次失败
+        state.ocr.as_mut().unwrap().blocks[0].translation = Some("第二版".to_string());
+        let second = job_id(&state.submit_image_compose().unwrap());
+        assert!(state.apply_outcome(Outcome::ImageComposed {
+            id: second,
+            result: Err(ice_vision::VisionError::Composite("画不出来".to_string())),
+            elapsed_ms: 8,
+        }));
+        assert!(matches!(state.compose_stage, ComposeStage::Failed(_)));
+        let kept = state.composed.expect("失败不该把上一张成品一起清掉");
+        assert_eq!(kept.replaced, 3, "留下的必须还是上一张那一个");
+    }
+
+    /// 按「停止」那一刻只立哨兵：段的状态要等结果回来才改，界面不许提前说"已停止"。
+    #[test]
+    fn stopping_the_translate_segment_only_arms_the_sentinel() {
+        let mut state = translated_state(&["第一块", "第二块"]);
+        let job = state.submit_image_translate(&[]).unwrap();
+        let Job::ImageTranslate { cancel, .. } = &job else {
+            unreachable!()
+        };
+        assert!(!cancel.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(
+            state.stop_image_stage(),
+            Stop::Translate,
+            "翻译段在飞时那颗停的是翻译"
+        );
+        assert!(
+            cancel.load(std::sync::atomic::Ordering::Relaxed),
+            "停止要把块边界哨兵立起来"
+        );
+        assert!(
+            matches!(state.translate_stage, TranslateStage::Running { .. }),
+            "结果还没回来，段不能说停"
+        );
+        assert!(state.translate_in_flight.is_some());
+
+        // 哨兵立起来之后结果回来了：落地成 Stopped 而不是 Done
+        assert!(state.apply_outcome(Outcome::ImageTranslated {
+            id: job_id(&job),
+            results: vec![(0, Ok("你好".to_string()))],
+            cancelled: true,
+            elapsed_ms: 30,
+        }));
+        assert_eq!(
+            state.translate_stage,
+            TranslateStage::Stopped { ok: 1, failed: 0 }
+        );
+        assert!(
+            state
+                .image_cancel
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+    }
+
+    /// 换图把下游两段一起作废：在飞的批次只摘掉标记，晚到的结果因此落不到新图上，
+    /// 而上一张图的成品当场消失（留着就是"旧图配新译文"）。
+    #[test]
+    fn a_new_image_voids_the_translation_batch_and_the_product() {
+        let mut state = translated_state(&["第一块"]);
+        let translate = state.submit_image_translate(&[]).unwrap();
+        state.ocr.as_mut().unwrap().blocks[0].translation = Some("你好".to_string());
+        let compose = state.submit_image_compose().unwrap();
+
+        let next = state
+            .submit_image(ImageInput::Path(PathBuf::from("/tmp/第二张.png")))
+            .unwrap();
+        assert!(state.translate_in_flight.is_none());
+        assert!(state.compose_in_flight.is_none());
+        assert!(state.composed.is_none(), "上一张图的成品还挂在界面上");
+        assert!(matches!(state.translate_stage, TranslateStage::Idle));
+        assert!(matches!(state.compose_stage, ComposeStage::Idle));
+        assert!(state.failed_blocks.is_empty());
+        assert_ne!(job_id(&next), job_id(&translate));
+
+        // 两次在飞的晚到结果都该丢掉
+        assert!(!state.apply_outcome(Outcome::ImageTranslated {
+            id: job_id(&translate),
+            results: vec![(0, Ok("旧批次".to_string()))],
+            cancelled: false,
+            elapsed_ms: 10,
+        }));
+        assert!(!state.apply_outcome(Outcome::ImageComposed {
+            id: job_id(&compose),
+            result: Ok(a_composed(9)),
+            elapsed_ms: 5,
+        }));
+        assert!(state.composed.is_none());
+    }
+
+    /// 一张成品，块数由 `replaced` 决定。测试只要形状，不要像素。
+    fn a_composed(blocks: usize) -> Composed {
+        Composed {
+            image: image::RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 0, 255])),
+            per_block: (0..blocks as u32)
+                .map(|id| (id, ice_vision::typeset::PlanKind::InPlace))
+                .collect(),
+            replaced: blocks,
+            overlaid: 0,
+            skipped: 0,
+            degraded_blocks: Vec::new(),
+            missing_glyphs: Vec::new(),
+        }
+    }
+
+    /// 一份"翻好了"的状态：入场图 + 每块一条译文，合成段的前置条件就此成立。
+    fn translated_state(texts: &[&str]) -> AppState {
+        let mut state = idle_state();
+        let id = job_id(
+            &state
+                .submit_image(ImageInput::Path(PathBuf::from("/tmp/一张.png")))
+                .unwrap(),
+        );
+        state.apply_outcome(Outcome::Image {
+            id,
+            result: Ok(recognition(texts)),
+        });
+        for block in &mut state.ocr.as_mut().unwrap().blocks {
+            block.translation = Some("译文".to_string());
+        }
+        state.image = Some(Admitted {
+            image: image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 255, 255, 255])),
+            scaled: false,
+            width: 4,
+            height: 4,
+            label: "一张图.png".to_string(),
+        });
+        state
     }
 
     /// REQ-006 第四条：文本侧与图片侧各走各的序号，谁也不许让对方的在飞结果作废。

@@ -129,6 +129,17 @@ impl TextBlock {
     pub fn estimated_font_size(&self) -> f32 {
         (self.bbox.h * 0.75).max(8.0)
     }
+
+    /// 这块有没有**可画的**译文：没翻、翻失败（`None`）与翻出来是空白都不算。
+    ///
+    /// 「能不能生成成品」的前置条件与版式计划里的 `Skip` 判据是同一条，所以收在这里一处：
+    /// 两处各写各的，就会出现"界面认为可以画，画出来那块却是空的"。
+    pub fn translated_text(&self) -> Option<&str> {
+        self.translation
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    }
 }
 
 /// 一张图的 OCR 结果集合。
