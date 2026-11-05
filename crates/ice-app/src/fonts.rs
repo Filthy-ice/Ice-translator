@@ -16,9 +16,9 @@
 //!
 //! 三处不显然的约束：
 //!
-//! 1. **`STHeiti Medium.ttc` 里有两面，第 0 面是黑体-繁（`STHeitiTC-Medium`），第 1 面才是
-//!    黑体-简（`STHeitiSC-Medium`）**。两面都覆盖常用简体字，所以选错不会崩、也不会缺字，
-//!    只会悄悄用上半繁体字形——这类错只有肉眼看得到，因此这里把索引写死并留了 `#[test]` 核对。
+//! 1. **文件与面号不在这里**：路径 `HEITI_PATH` 和 face 1 归 `ice_core::font`（2026-11-05 起，
+//!    CHG-006 Q-003），因为自绘度量那条路用的是同一支字体的同一面，两处各写一份就会漂移且无人发现。
+//!    选错面既不崩也不缺字，只有肉眼看得出差别——理由和锁都在那个模块里。
 //! 2. **Monospace 族里黑体排在 Hack 之后而不是之前**：对照页等宽列靠 Hack 的等宽拉丁，
 //!    把黑体插到第 0 位会让拉丁也变成比例宽度、列对不齐。中文照旧命中黑体（Hack 没有汉字字形，
 //!    同一族里往后找第一个有的）。
@@ -30,11 +30,8 @@
 //! 所以进程多常驻约 55MB。这是"固定用某个系统的某一款字体"的必要开销。
 
 use egui::{Context, FontData, FontDefinitions, FontFamily};
+use ice_core::font::{HEITI_PATH, HEITI_SC_FACE_INDEX};
 
-/// macOS 上 黑体-简 的文件位置（`系统偏好设置 → 字体册`里显示为"黑体-简 中等"）
-pub const HEITI_PATH: &str = "/System/Library/Fonts/STHeiti Medium.ttc";
-/// 同一文件里的第 1 面 = `STHeitiSC-Medium`（第 0 面是繁体，见模块注释）
-pub const HEITI_SC_FACE_INDEX: u32 = 1;
 /// 装进 `FontDefinitions` 时用的族名，只在内部用，不上界面
 pub const HEITI_FAMILY: &str = "heiti-sc";
 

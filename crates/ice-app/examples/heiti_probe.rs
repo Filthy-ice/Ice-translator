@@ -1,8 +1,9 @@
-//! 取证：`/System/Library/Fonts/STHeiti *.ttc` 里第几面能覆盖界面用到的简体字。
+//! 取证：`ice_core::font::HEITI_PROBE_CANDIDATES` 那几支字体里第几面能覆盖界面用到的简体字。
 //!
 //! 走的是要发布的那条路径本身（`FontData::from_blob(bytes, index)` + `has_glyph`），
 //! 所以这里通了就说明实现通了。用法：`cargo run -p ice-app --example heiti_probe`。
 use egui::{FontData, FontDefinitions, FontFamily, FontId};
+use ice_core::font::HEITI_PROBE_CANDIDATES;
 
 /// 界面与正文里真会出现的字，含常见标点与拉丁（拉丁也换成黑体是用户要的"全部"）
 const SAMPLE: &str =
@@ -41,11 +42,7 @@ fn probe(path: &str, idx: u32) {
 }
 
 fn main() {
-    for path in [
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-    ] {
+    for &path in HEITI_PROBE_CANDIDATES {
         for idx in 0..2 {
             probe(path, idx);
         }

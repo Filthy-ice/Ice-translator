@@ -6,6 +6,7 @@ pub mod config;
 pub mod detect;
 pub mod document;
 pub mod error;
+pub mod font;
 pub mod glossary;
 pub mod history;
 pub mod language;
