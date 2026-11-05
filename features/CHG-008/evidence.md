@@ -1,6 +1,6 @@
 Change: CHG-008
 Version: v0.2
-Spec-Hash: UNAPPROVED
+Spec-Hash: 17c07165a63289435f85c7454210b5bb5d2733263c4690a7b4e32c9e7d5e9012
 
 # Evidence（由 evidence.json 生成，勿直接修改）
 

@@ -1,6 +1,6 @@
 Change: CHG-008
 Version: v0.2
-Spec-Hash: UNAPPROVED
+Spec-Hash: 17c07165a63289435f85c7454210b5bb5d2733263c4690a7b4e32c9e7d5e9012
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [x] T-001 打开 ice-app 的 macOS 依赖增量并逐条给编译面证据：给 objc2-app-kit 开 NSStatusItem/NSStatusBar/NSStatusBarButton/NSResponder/NSMenu/NSMenuItem/NSImage/NSRunningApplication 八个开关、给 objc2-foundation 开 NSData（NSImage::initWithData 的参数类型）；NSRunningApplication 是最容易漏的一个——setActivationPolicy: 整个方法与三个策略常量都在它门后（NSApplication.rs:746-755、NSRunningApplication.rs:47-56），不开就没有『关掉 Dock 磁贴』这件事；NSResponder 是 NSStatusBarButton 那条 cfg 的父类链一环。每个开关在 Cargo.toml 那段注释里写清它买到的那个符号（变更 K 立下的纪律：不开 default 换最小面，新增必须给证据）。完成后 cargo tree -p ice-app -e normal 的输出里 SHALL NOT 出现 objc2-cloud-kit/objc2-core-video/objc2-core-text/objc2-metal/objc2-core-media/objc2-image-io 这些 default 才会拖进来的 crate，SHALL NOT 出现任何新增 crate 名（不引 tray-icon 一类第三方） | ice-translator | REQ-001, REQ-004
