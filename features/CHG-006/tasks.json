@@ -105,11 +105,11 @@
         "REQ-009"
       ],
       "repo": "ice-translator",
-      "status": "todo",
+      "status": "done",
       "code_refs": [
         "crates/ice-app/src/jobs.rs",
-        "crates/ice-app/src/state.rs",
-        "crates/ice-providers/src/request.rs"
+        "crates/ice-app/src/stub.rs",
+        "crates/ice-app/src/state.rs"
       ]
     },
     {
@@ -120,10 +120,11 @@
         "REQ-009"
       ],
       "repo": "ice-translator",
-      "status": "todo",
+      "status": "done",
       "code_refs": [
         "crates/ice-app/src/state.rs",
-        "crates/ice-core/src/document.rs"
+        "crates/ice-core/src/document.rs",
+        "crates/ice-vision/src/typeset.rs"
       ]
     },
     {
@@ -135,11 +136,14 @@
         "REQ-009"
       ],
       "repo": "ice-translator",
-      "status": "todo",
+      "status": "done",
       "code_refs": [
         "crates/ice-app/src/views/image.rs",
         "crates/ice-app/src/views/mod.rs",
-        "crates/ice-app/src/state.rs"
+        "crates/ice-app/src/app.rs",
+        "crates/ice-vision/src/composite.rs",
+        "docs/03-ui-design.md",
+        "docs/06-test-cases.md"
       ]
     },
     {

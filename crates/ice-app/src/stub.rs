@@ -69,6 +69,9 @@ impl StubError {
 pub enum StubBehavior {
     Ok(String),
     Err(StubError),
+    /// 按**请求原文**给结果，逐块翻译那一条路要用：表里查得到的用它（`Err` 就只那一块失败），
+    /// 查不到的返回 `译文·<原文>`——每块拿到的是自己那句，测试才分得清谁是谁（REQ-001 第二条）。
+    PerText(Vec<(String, Result<String, StubError>)>),
 }
 
 /// 可克隆：注册进 `Translator` 的是 `Arc<dyn TranslationEngine>`，
@@ -99,6 +102,10 @@ impl StubEngine {
 
     pub fn failing(kind: EngineKind, error: StubError) -> Self {
         Self::new(kind, StubBehavior::Err(error))
+    }
+
+    pub fn replying_per_text(pairs: Vec<(String, Result<String, StubError>)>) -> Self {
+        Self::new(EngineKind::Machine, StubBehavior::PerText(pairs))
     }
 
     pub fn with_delay(mut self, delay: Duration) -> Self {
@@ -141,6 +148,22 @@ impl TranslationEngine for StubEngine {
                 segments: 1,
             }),
             StubBehavior::Err(error) => Err(error.build()),
+            StubBehavior::PerText(table) => match table
+                .iter()
+                .find(|(source, _)| *source == req.text)
+                .map(|(_, reply)| reply.clone())
+                .unwrap_or_else(|| Ok(format!("译文·{}", req.text)))
+            {
+                Ok(text) => Ok(TranslationResult {
+                    text,
+                    engine: self.kind,
+                    detected: req.pair.source.is_none().then_some(Language::En),
+                    elapsed_ms: 12,
+                    cache_hit: false,
+                    segments: 1,
+                }),
+                Err(error) => Err(error.build()),
+            },
         }
     }
 }

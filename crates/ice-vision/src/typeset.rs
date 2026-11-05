@@ -161,7 +161,7 @@ pub fn plan(
         plate: None,
         area: block.bbox,
     };
-    let Some(text) = translatable(block) else {
+    let Some(text) = block.translated_text() else {
         return base;
     };
 
@@ -205,15 +205,6 @@ pub fn plan(
         plate: overlay.then(|| plate_color(estimate.bg, estimate.fg)),
         area: area_of(block.bbox, overlay),
     }
-}
-
-/// 有得画才算数：没翻、翻失败（`None`）与翻出来是空的都归 `Skip`（那块区域原样保留，原文还在）
-fn translatable(block: &TextBlock) -> Option<&str> {
-    block
-        .translation
-        .as_deref()
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
 }
 
 /// 文字可用区：覆盖层内缩，回填用整块框。内缩不许把区域缩成负数，所以先夹到边长的一半
