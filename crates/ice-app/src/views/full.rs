@@ -233,12 +233,13 @@ fn source_pane(ui: &mut egui::Ui, state: &mut AppState) {
     } else {
         pane.visuals().widgets.noninteractive.bg_stroke
     };
+    // 底色 + 阴影走 `theme::pane_frame` 那一处（与精简窗两条带同源），这里只加自己的几何与焦点描边。
+    // 同一个 `surface_fill` 再取一次只为把颜色登记进 `record_pane_frame` 给无头测试读回——
+    // 两处调的是同一个函数，不会各持一份色值
     let fill = theme::surface_fill(pane.visuals());
-    egui::Frame::group(pane.style())
+    theme::pane_frame(pane.style())
         .inner_margin(GROUP_INNER_PAD)
-        .fill(fill)
         .stroke(stroke)
-        .shadow(theme::pane_shadow(pane.visuals().dark_mode))
         .show(&mut pane, |ui| {
             ui.allocate_ui(
                 egui::vec2(ui.available_width(), body - 2.0 * GROUP_INNER_PAD),
@@ -337,10 +338,8 @@ fn translation_pane(ui: &mut egui::Ui, state: &mut AppState) {
             .layout(Layout::top_down(Align::Min)),
     );
     let fill = theme::surface_fill(boxed.visuals());
-    egui::Frame::group(boxed.style())
+    theme::pane_frame(boxed.style())
         .inner_margin(GROUP_INNER_PAD)
-        .fill(fill)
-        .shadow(theme::pane_shadow(boxed.visuals().dark_mode))
         .show(&mut boxed, |ui| {
             // ScrollArea 的 auto_shrink(false) 会吃光"可用高度"而不是 set_min_height，
             // 不关进一个定高子 Ui，译文框就会比源文框高出一截
