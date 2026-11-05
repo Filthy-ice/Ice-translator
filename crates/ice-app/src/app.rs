@@ -775,8 +775,8 @@ impl IceApp {
     ///
     /// 每帧核对现状，**只在结果变了才记日志**（与 `apply_zoom_hook` 同一手法）：
     /// 装没装上是真机上唯一能区分"双击没被拦"和"拦了但铺满命令没发出去"的现场证据。
-    fn apply_dblclick_hook(&mut self, frame: &eframe::Frame, want: bool) {
-        let outcome = dblclick::sync(frame, want);
+    fn apply_dblclick_hook(&mut self, frame: &eframe::Frame, ctx: &egui::Context, want: bool) {
+        let outcome = dblclick::sync(frame, ctx, want);
         if self.dblclick_outcome == Some(outcome) {
             return;
         }
@@ -1483,7 +1483,7 @@ impl eframe::App for IceApp {
 
         let ai_available = self.ai_available();
         // 双击标题栏的改道只属于全量窗：形态在这里，判定也只在这一句
-        self.apply_dblclick_hook(frame, self.state.mode() == UiMode::Full);
+        self.apply_dblclick_hook(frame, &ctx, self.state.mode() == UiMode::Full);
         match self.state.mode() {
             UiMode::Full => {
                 // 全量窗永不半透明（REQ-007 第四条），但这一档要在这里显式写回 100%：

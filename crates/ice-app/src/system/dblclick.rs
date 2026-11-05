@@ -27,6 +27,12 @@
 //! 不是它该做的事。取不到原生窗口时返回 [`Outcome::Unavailable`]，界面行为退回系统默认，
 //! 不假装有效。与 `super::titlebar` 同一纪律：每帧核对现状，只在结果变化时
 //! 由调用方记日志。
+//!
+//! **命中之后必须自己叫醒帧循环**（用户 2026-11-05："双击标题栏放大还是很慢，大概有 2-3s 才最大化"）。
+//! 落点在标题栏，而那两条事件被我们吞掉了：winit 的内容视图一次都收不到，egui 因此一帧都不会画，
+//! [`DOUBLED`] 只能躺在原子上，等下一次由别的理由促成的帧（鼠标移进内容区、某个计时器续期）才有人读。
+//! 铺满命令本身不慢——日志实测从下发到几何落位 4ms，慢的全在这段等待里。所以 [`hand_over`] 是两件事：
+//! 记一笔 + `request_repaint()`，与 `super::panel` 那条面板回调末尾同一纪律（"没有这条就没人来读"）。
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -86,9 +92,17 @@ static DOUBLED: AtomicBool = AtomicBool::new(false);
 /// 只在主线程读写；用原子量是为了让那个 block 不必捕获任何 Rust 引用。
 static WATCHED: AtomicUsize = AtomicUsize::new(0);
 
-/// 记一次合格双击。ObjC 侧的 block 调它，测试也从这里模拟。
+/// 记一次合格双击。ObjC 侧的 block 调 [`hand_over`]，测试从这里模拟。
 pub fn note_double_click() {
     DOUBLED.store(true, Ordering::SeqCst);
+}
+
+/// 一次合格双击落地后要做的两件事：把事实交给帧循环 + 把睡着的事件循环叫醒。
+///
+/// 抽成函数是因为这两条必须**一起**发生——只测第一条的锁会放过真机上那条缺陷。
+pub fn hand_over(repaint: &egui::Context) {
+    note_double_click();
+    repaint.request_repaint();
 }
 
 /// 取走"标题栏被双击了"这个事实。一帧内多次只算一次：第二下的时候铺满请求已经在路上了。
@@ -125,7 +139,7 @@ mod macos {
     use objc2::runtime::AnyObject;
     use objc2_app_kit::{NSEvent, NSEventMask, NSView, NSWindow, NSWindowButton};
 
-    use super::{Band, Outcome, WATCHED, in_band, is_watched, note_double_click, title_band};
+    use super::{Band, Outcome, WATCHED, hand_over, in_band, is_watched, title_band};
 
     /// 红绿灯是三颗独立的按钮，禁区取它们的最右边缘
     const TRAFFIC: [NSWindowButton; 3] = [
@@ -198,7 +212,7 @@ mod macos {
         band_of(&window).is_some_and(|band| in_band(location.x, location.y, band))
     }
 
-    pub fn sync(frame: &eframe::Frame, want: bool) -> Outcome {
+    pub fn sync(frame: &eframe::Frame, ctx: &egui::Context, want: bool) -> Outcome {
         let Some(window) = crate::system::window::ns_window(frame) else {
             return Outcome::Unavailable;
         };
@@ -218,15 +232,18 @@ mod macos {
             // 窗口换了（不该发生，但按现状而不是按记忆判定才有这一支）：先撤再装
             uninstall();
         }
-        install(ptr)
+        install(ptr, ctx)
     }
 
-    fn install(ptr: usize) -> Outcome {
+    fn install(ptr: usize, ctx: &egui::Context) -> Outcome {
         let mask = NSEventMask::LeftMouseDown | NSEventMask::LeftMouseUp;
+        // block 要求 `'static`，所以搬进去的是一份 `Context`（内部就是 `Arc`，clone 不复制状态）。
+        // 没有它，命中之后没人被叫醒：见文件头"命中之后必须自己叫醒帧循环"那一节。
+        let repaint = ctx.clone();
         let handler: RcBlock<dyn Fn(NonNull<NSEvent>) -> *mut NSEvent> =
-            RcBlock::new(|raw: NonNull<NSEvent>| -> *mut NSEvent {
+            RcBlock::new(move |raw: NonNull<NSEvent>| -> *mut NSEvent {
                 if qualifies(raw) {
-                    note_double_click();
+                    hand_over(&repaint);
                     // 返回 null = 这次派发取消：系统的"双击标题栏"动作不会再演一遍
                     return null_mut();
                 }
@@ -268,7 +285,7 @@ pub use macos::sync;
 
 /// 非 macOS 没有可拦的标题栏双击（本应用 macOS 优先，NFR-7 只保证那一侧能编译）。
 #[cfg(not(target_os = "macos"))]
-pub const fn sync(_frame: &eframe::Frame, _want: bool) -> Outcome {
+pub fn sync(_frame: &eframe::Frame, _ctx: &egui::Context, _want: bool) -> Outcome {
     Outcome::Unavailable
 }
 
@@ -345,6 +362,30 @@ mod tests {
         note_double_click();
         assert!(take_double_click());
         assert!(!take_double_click());
+    }
+
+    /// 命中之后两件事必须一起发生：把事实交给帧循环 + 把睡着的事件循环叫醒。
+    /// 只记账不叫醒，`DOUBLED` 就躺在原子上等别人来读——那两下是我们自己从 AppKit 手里吞掉的，
+    /// winit 的内容视图一个事件都收不到，于是"双击后要 2-3s 才最大化"（用户 2026-11-05）。
+    #[test]
+    fn a_hit_hands_the_fact_over_and_wakes_the_loop() {
+        let ctx = egui::Context::default();
+        let wakes = std::sync::Arc::new(AtomicUsize::new(0));
+        let sink = std::sync::Arc::clone(&wakes);
+        ctx.set_repaint_observer(move |_| {
+            sink.fetch_add(1, Ordering::SeqCst);
+        });
+
+        take_double_click();
+        hand_over(&ctx);
+
+        assert!(take_double_click(), "事实没交给帧循环：这一刀谁都不知道");
+        assert_eq!(
+            wakes.load(Ordering::SeqCst),
+            1,
+            "记了账却没叫醒事件循环，铺满要等下一帧别的理由"
+        );
+        assert!(!take_double_click(), "叫醒不许顺带把同一次双击再兑一遍");
     }
 
     /// 监视器只认装它那一刻那颗窗口：别的窗口的事件不判
