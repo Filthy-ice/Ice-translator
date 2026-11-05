@@ -197,6 +197,32 @@ impl Default for LangPair {
     }
 }
 
+/// 汉字区（简繁同一区，扩展 A 另算）：`detect` 数 cjk 用的是它，断行判"逐字成行"也用它。
+pub fn is_han(code: u32) -> bool {
+    (0x4E00..=0x9FFF).contains(&code) || (0x3400..=0x4DBF).contains(&code)
+}
+
+/// 假名区（平假名/片假名 + 半角片假名）。
+pub fn is_kana(code: u32) -> bool {
+    (0x3040..=0x30FF).contains(&code) || (0x31F0..=0x31FF).contains(&code)
+}
+
+/// 谚文区（音节块 + 初声终声字母）。
+pub fn is_hangul(code: u32) -> bool {
+    (0xAC00..=0xD7AF).contains(&code) || (0x1100..=0x11FF).contains(&code)
+}
+
+/// 这个字符能不能在任意位置换行——`Language::breaks_by_char` 的**字符级孪生**。
+///
+/// 为什么需要孪生而不是直接用它：译文回填那条链（`ice-vision::typeset`）里没有任何
+/// `Language` 可问——`compose` 不收语言参数，用户选的语向也推不出块内文字的真实书写系统
+/// （中英混排的块常见）。断行只能逐字符判，而判据必须与"中日按字符"那条口径一致，
+/// 所以两处共用这一条：汉字、假名逐字，谚文按词（谚文文本以空格分词，与拉丁同一条路）。
+pub fn breaks_lines_per_char(ch: char) -> bool {
+    let code = ch as u32;
+    is_han(code) || is_kana(code)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
