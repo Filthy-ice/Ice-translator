@@ -1,95 +1,207 @@
 {
   "baseline": null,
   "design": [
-    { "requirement": "REQ-001", "section": "## REQ-001 实现与验证" },
-    { "requirement": "REQ-002", "section": "## REQ-002 实现与验证" },
-    { "requirement": "REQ-003", "section": "## REQ-003 实现与验证" },
-    { "requirement": "REQ-004", "section": "## REQ-004 实现与验证" },
-    { "requirement": "REQ-005", "section": "## REQ-005 实现与验证" },
-    { "requirement": "REQ-006", "section": "## REQ-006 实现与验证" },
-    { "requirement": "REQ-007", "section": "## REQ-007 实现与验证" },
-    { "requirement": "REQ-008", "section": "## REQ-008 实现与验证" },
-    { "requirement": "REQ-009", "section": "## REQ-009 实现与验证" },
-    { "requirement": "REQ-010", "section": "## REQ-010 实现与验证" },
-    { "requirement": "REQ-011", "section": "## REQ-011 实现与验证" }
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    },
+    {
+      "requirement": "REQ-007",
+      "section": "## REQ-007 实现与验证"
+    },
+    {
+      "requirement": "REQ-008",
+      "section": "## REQ-008 实现与验证"
+    },
+    {
+      "requirement": "REQ-009",
+      "section": "## REQ-009 实现与验证"
+    },
+    {
+      "requirement": "REQ-010",
+      "section": "## REQ-010 实现与验证"
+    },
+    {
+      "requirement": "REQ-011",
+      "section": "## REQ-011 实现与验证"
+    }
   ],
   "verifications": [
     {
       "id": "V-001",
-      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007", "REQ-008", "REQ-009", "REQ-010", "REQ-011"],
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009",
+        "REQ-010",
+        "REQ-011"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "required": true,
-      "command": ["cargo", "test", "--workspace"],
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
       "note": "全量单测：CHG-005/006 那 620 项不许回退（识别链、回填链、三段状态机与三条序号、面板协议、剪贴板字节校验、导出接缝与配置夹取都在里面）；本包新增第四条通道的过期互不作废、取消与失败分岔、历史路径唯一性与老化双上限、`pin_layout` 三档几何、带子里恰四颗、意图矩阵、`[hotkey]` 解析与回默认。REQ-010 与 H6 不在这条能证明的范围里（只有真机判），列在这里是为了「有回归锁」而不是「有验收证据」"
     },
     {
       "id": "V-002",
-      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007", "REQ-008"],
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
-      "command": ["cargo", "test", "-p", "ice-app"],
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
       "note": "界面与状态层：那颗只给意图不给路径、在飞时第二次派发返回 None、回信按代丢弃、**回信那一支一条翻译任务都不派发**（写成「不发 `Job::Translate*`」而不是「翻译是 None」）、取消不建窗也不清图片页内容而失败只出提示条、`capture_gate` 与按钮置灰同源、带子收起时那几颗不进命中区、esc 只关有焦点那张、选中集合与识别块一致、`C` 的字/图分派、日志与文案不含文件名与 OCR 文本"
     },
     {
       "id": "V-003",
-      "requirements": ["REQ-008", "REQ-009"],
+      "requirements": [
+        "REQ-008",
+        "REQ-009"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
-      "command": ["cargo", "test", "-p", "ice-core", "hotkey"],
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-core",
+        "hotkey"
+      ],
       "note": "配置面：`[hotkey]` 三条的解析（`\"f1\"`、`\"cmd+shift+4\"` 两种形态）、无法解析回默认、`sanitized()` 那套夹取继续成立、默认值就是用户报的 F1/F3/F2（他 2026-11-05 的原话是这条的出处）。**这一格是本包唯一新增的配置面**，除它以外出现新字段即触发停止条件 5"
     },
     {
       "id": "V-004",
-      "requirements": ["REQ-009"],
+      "requirements": [
+        "REQ-009"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
-      "command": ["bash", "-c", "! grep -Rn 'cfg(target_os' crates/ice-app/src/views"],
+      "command": [
+        "bash",
+        "-c",
+        "! grep -Rn 'cfg(target_os' crates/ice-app/src/views"
+      ],
       "note": "平台判定只有一处出处：视图里出现 `#[cfg(target_os)]` 就是「某平台编译不过」的温床，也是那颗按钮的置灰理由与状态行文案各写一半的开始"
     },
     {
       "id": "V-005",
-      "requirements": ["REQ-001", "REQ-009"],
+      "requirements": [
+        "REQ-001",
+        "REQ-009"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
-      "command": ["bash", "-c", "test $(grep -Rl 'screencapture' crates/ice-app/src | wc -l) -eq 1"],
+      "command": [
+        "bash",
+        "-c",
+        "test $(grep -Rl 'screencapture' crates/ice-app/src | wc -l) -eq 1"
+      ],
       "note": "系统二进制的字面量只许出现在 `system/capture.rs` 一处（与 `vision_sys` 那条静态核查同族）。多一处就意味着第二个地方在拼命令，而取消判据与历史路径生命周期就会跟着分叉"
     },
     {
       "id": "V-006",
-      "requirements": ["REQ-006", "REQ-009", "REQ-011"],
+      "requirements": [
+        "REQ-006",
+        "REQ-009",
+        "REQ-011"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
-      "command": ["cargo", "tree", "-p", "ice-app", "-e", "normal"],
+      "command": [
+        "cargo",
+        "tree",
+        "-p",
+        "ice-app",
+        "-e",
+        "normal"
+      ],
       "note": "依赖图零增量是本包的结构保证：取图走系统二进制子进程、**全局热键走手声明 Carbon FFI（2026-11-05 本机探针实测注册面 noErr，零 crate 名）**、贴图走 egui 既有 viewport API。比对基线取本包开工那一笔的输出，逐行相同才算过；多出一个名字即触发停止条件 4，先回来批准再继续。**编译级另注**：本机只有 `aarch64-apple-darwin` 一个 target，故 Linux/Windows 的「编译得过」按 TC-P-7 老规矩记「未验证」，不许拿源码扫描冒充"
     },
     {
       "id": "V-007",
-      "requirements": ["REQ-007", "REQ-008", "REQ-011"],
+      "requirements": [
+        "REQ-007",
+        "REQ-008",
+        "REQ-011"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
-      "command": ["./sdd", "scan"],
+      "command": [
+        "./sdd",
+        "scan"
+      ],
       "note": "敏感信息基线扫描：本包新引入的风险面是「截图内容合法地留在盘上 7 天」，扫描 + V-002 那条文件名断言 + V-008 的 `ls` + 「清除所有历史」与第一颗截图入口同批（T-003 明写这条顺序）四件合起来才算这条边界闭合"
     },
     {
       "id": "V-008",
-      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-007", "REQ-008", "REQ-010"],
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-007",
+        "REQ-008",
+        "REQ-010"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_RUNTIME",
       "environment": "sandbox",
       "required": true,
-      "note": "真机一次完整链：发起 → esc 取消（**证 H1**：判据以「文件是否出现」为准，取消时不建窗也不留文件）→ 再截一块 → 钉住 → 带子里点「翻译」→ 成品原地替换 → 再按一次入口截第二块（**证 H5**：上一张贴图和主窗都没进这张图）；随后 `ls` 历史目录证内容只有图片文件、等过期那条只验排序不真等 7 天。要用户在机器前配合按 esc——Agent 不能替按，这条与 V-009 是本包两条不能自己收口的运行时验证"
+      "note": "真机一次完整链：发起 → esc 取消（**H1 已于 2026-11-05 当晚证毕，见事实 14**：esc 取消与成功选区两条路退出码都是 0，能分开它们的只有「文件是否出现」；当晚两条分支是自动化驱动的——System Events 送的 esc 生效、仓外一个 CoreGraphics 拖拽探针完成选区，**所以取消那一条不需要他在机器前也能复验**）→ 再截一块 → 钉住 → 带子里点「翻译」→ 成品原地替换 → 再按一次入口截第二块（**证 H5**：上一张贴图和主窗都没进这张图）；随后 `ls` 历史目录证内容只有图片文件、等过期那条只验排序不真等 7 天。要用户在机器前配合按 esc——Agent 不能替按，这条与 V-009 是本包两条不能自己收口的运行时验证"
     },
     {
       "id": "V-009",
-      "requirements": ["REQ-006"],
+      "requirements": [
+        "REQ-006"
+      ],
       "repo": "ice-translator",
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
@@ -98,7 +210,10 @@
     },
     {
       "id": "V-010",
-      "requirements": ["REQ-003", "REQ-004"],
+      "requirements": [
+        "REQ-003",
+        "REQ-004"
+      ],
       "repo": "ice-translator",
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
@@ -107,7 +222,9 @@
     },
     {
       "id": "V-011",
-      "requirements": ["REQ-005"],
+      "requirements": [
+        "REQ-005"
+      ],
       "repo": "ice-translator",
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
@@ -116,7 +233,11 @@
     },
     {
       "id": "V-012",
-      "requirements": ["REQ-002", "REQ-008", "REQ-009"],
+      "requirements": [
+        "REQ-002",
+        "REQ-008",
+        "REQ-009"
+      ],
       "repo": "ice-translator",
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
@@ -125,7 +246,9 @@
     },
     {
       "id": "V-013",
-      "requirements": ["REQ-011"],
+      "requirements": [
+        "REQ-011"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_RUNTIME",
       "environment": "sandbox",
@@ -134,12 +257,25 @@
     },
     {
       "id": "V-014",
-      "requirements": ["REQ-010"],
+      "requirements": [
+        "REQ-010"
+      ],
       "repo": "ice-translator",
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
       "required": true,
-      "note": "W-5.5 的后半：`prepare()`/`restore()` 选定的那一档（Q-003）在真机上是不是可接受——「闪一下」能否忍、主窗与 N 张贴图回来的位置与焦点对不对、恢复失败时那张截好的图还在不在（REQ-010 末句）。REQ-010 唯一判据，无头与日志都替代不了"
+      "note": "W-5.8：`prepare()`/`restore()` 选定的那一档（Q-003）在真机上是不是可接受——「闪一下」能否忍、主窗与 N 张贴图回来的位置与焦点对不对、恢复失败时那张截好的图还在不在（REQ-010 末句）。REQ-010 唯一判据，无头与日志都替代不了"
+    },
+    {
+      "id": "V-015",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "W-5.7：接上内置 Retina 屏（或任何 pixels_per_point ≠ 1.0 的屏）截一块已知尺寸的区，量贴图窗的边长与带子位置是不是和框的那块一致——**H9 的唯一判据**。今晚只能证到 ppp = 1.0 那一档（拖 280 点落 281 像素，事实 22），那块屏上的「1 点 = 1 像素」不代表内置屏也这样；不除那个比例就是贴图大一倍、文字层整体错位。无头那条 `pin_layout` 的 scale = 2.0 用例只锁「换算只用一处」，不冒充真机结论"
     }
   ]
 }

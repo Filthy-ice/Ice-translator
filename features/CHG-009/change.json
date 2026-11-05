@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "CHG-009",
   "title": "区域截图与钉屏贴图（FR-2.10 扩体）：框选 → 钉住 → 点一下才译",
-  "version": "v0.2",
+  "version": "v0.3",
   "status": "SPEC_REVIEW",
   "kind": "feature",
   "repos": [

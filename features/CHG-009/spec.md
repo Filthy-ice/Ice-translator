@@ -54,14 +54,14 @@
 | 4 | FACT | **无边框子窗口照样收得到键盘**：winit 0.30.13 自己的 `WinitWindow` 子类把 `canBecomeKeyWindow` 覆写成**恒 true**（`winit-0.30.13/src/platform_impl/macos/window.rs:114-118`，`canBecomeMainWindow` 同）。所以 `with_decorations(false)` 的贴图窗不需要我们再 subclass 一次——**上一版设计里"必须自己实现 `canBecomeKey`"那句是多余担心，已撤回** | 本机 2026-11-05 读源码 |
 | 5 | FACT | 贴图窗要的窗口属性 0.37 全有对应项：`with_decorations`（viewport.rs:372）、`with_transparent`（:430）、`with_always_on_top`（:669）、`with_mouse_passthrough`（:678）、`with_has_shadow`（:518）、`with_movable_by_background`（:484）、`with_position`（:623）、`with_window_level`（:660）；运行时命令侧有 `ViewportCommand::StartDrag`（:1104-1108，注释明写"不保证有效，除非紧接在左键按下之后调用"）、`OuterPosition`、`WindowLevel`、`Close`、`Visible` | `egui-0.37.0/src/viewport.rs`，本机 2026-11-05 读源码 |
 | 6 | FACT | **全局热键不需要任何新 crate**：手声明 Carbon FFI 就能注册。本机 2026-11-05 用一个**仓库外**的独立文件（`/tmp/hotkey_probe.rs`，`rustc -l framework=Carbon -l framework=CoreFoundation`，零依赖）实测 `InstallEventHandler` 与 `RegisterEventHotKey` **双双返回 0（noErr）**并拿到非空 `EventHotKeyRef`。裸二进制、无 `.app`、无 Info.plist、无辅助功能授权的情况下**注册面成立** | 本机 2026-11-05 实测（探针不进仓，结论与判据写在这里） |
-| 7 | FACT | **但"注册得上"不等于"按得响"**：同一个探针在 8 秒监听期内没命中回调，而它收到的两次合成按键来自 `osascript … key code 122 using {control down, option down}`（退出码 0）。System Events 的合成事件走 session 层，**推不出它能不能喂给 Carbon 的热键派发**。所以"物理按键是否命中"仍是待证（H6），SHALL NOT 写成"已验证可用" | 本机 2026-11-05 实测（同一探针） |
+| 7 | FACT | **但"注册得上"不等于"按得响"**：同一个探针在 8 秒监听期内没命中回调，而它收到的两次合成按键来自 `osascript … key code 122 using {control down, option down}`（退出码 0）。System Events 的合成事件走 session 层，**推不出它能不能喂给 Carbon 的热键派发**。所以"物理按键是否命中"仍是待证（H6），SHALL NOT 写成"已验证可用"。**当晚后面那条交叉对照把这条钉得更硬**：同一个 System Events 通道送的 esc **确实**让 `screencapture -i` 取消了（见事实 14），说明合成键进得了系统交互层、却没触发我们的 Carbon 热键回调——差的可能是 `Control+Option+F1` 这个组合本身不被合成事件路径派发，也可能是探针的事件循环写法。**两种都没排除**，所以物理键那一次必须他在机器前按 | 本机 2026-11-05 实测（同一探针 + 事实 14 的 esc 分支对照） |
 | 8 | FACT | **他那三个默认键有媒体键风险**：`defaults read com.apple.keyboard fnState` 与 `defaults read -g AppleFnUsageType` 在本机都是 "The domain/default pair … does not exist"（2026-11-05 跑）⇒"将 F1、F2 等键用作标准功能键"从未打开过，默认档下裸按 F1/F2/F3 是亮度/调度键，标准功能键要配 Fn。这不阻止我们把默认设成他指定的三个（**他的习惯优先**），但界面必须说出这一句，且必须**可设置**（他第 5 句） | 本机 `defaults` 实测 + 用户原话第 5 条 |
 | 9 | FACT | 出图侧的接缝是现成的：CHG-006 T-010 已交付 `panel::request_save(...)`（原生保存面板，异步回信，`SAVE_TYPES` 是 png/jpg/jpeg）与 `clipboard::write_image(&RgbaImage)`（裸 RGBA 进剪贴板）；入场侧 `ImageInput::Path` → `admit_path` → 识别链、`ImageInput::Clipboard` → `clipboard::read_image()` 都通着。**贴图带子里那三颗动作直接复用，不新造** | `crates/ice-app/src/system/panel.rs`、`system/clipboard.rs`、`state.rs`、CHG-006 T-010 |
 | 10 | FACT | arboard 3.7 macOS 后端读图给**裸 RGBA**（`osx.rs:224-247`），`set_image` 前会 `clipboard.clear()`（`osx.rs:347`，CHG-006 已按 Q-004 接受这条）；Linux 侧要 `wl-clipboard` 之类外部件在 PATH 上、缺了就是写失败；Windows 走 `OpenClipboard`。含义：「复制图像」mac 已通，Linux/Windows 是"可能要外部件"的另一格 | `arboard-3.7.0/src/platform/osx.rs`、`docs/05` §8 |
 | 11 | FACT | **非 macOS 没有本地 OCR**：`ice_vision::native_ocr_supported()` 非 mac 恒 false，门控由 `ice-vision/src/lib.rs` 那条静态核查测试钉住（`vision_sys` 引用不许漏在 cfg 外）。Linux/Windows 上"文字层"与那颗「翻译」都没有后端可跑——**这条把上一版的天花板扩大到贴图那三格** | CHG-005 L-6、`crates/ice-vision/src/lib.rs` |
 | 12 | FACT | 帧循环里禁止阻塞式系统调用，本仓已立两条先例：面板 SHALL NOT 用 `runModal`（CHG-005 REQ-001 明写），外部进程/长任务走 `spawn_blocking` 或异步回信 + `request_repaint`。**交互式框选一定会阻塞到用户画完为止**，所以它必须在独立任务里跑，回调只在主线程立意图 | `docs/05` §6、`system/panel.rs` 模块注释、`jobs.rs` |
 | 13 | FACT | 简洁窗默认置顶（`WindowLevel::AlwaysOnTop`，`mode::apply_topmost`），全量窗也可点图钉置顶；整窗失焦会降到 `unfocused_alpha`（默认 0.85，实测量过 0.75 那一档），`setAlphaValue` 作用于整个窗口表面。**置顶窗在屏幕上就是可见的** | `mode.rs`、`views/mod.rs::pin_toggle`、`system/alpha.rs`、`docs/03` 置顶那一行 |
-| 14 | HYPOTHESIS | **H1 取消的判据未实测**：`screencapture -i` 被 esc 取消时到底"不写文件 + 退出码 0"还是"非零退出"，本机没验过（我没法替用户按 esc）。实现时判"取消"要靠**文件是否出现**而不是退出码，并在真机验一次 | 待真机取证（T-001） |
+| 14 | FACT（原 H1，**2026-11-05 真机证毕，两条分支都跑了**） | **取消不写文件，而且退出码分不开这两条路**：本机 20:00 各跑一次 `screencapture -i -x -o <路径>`——① 起交互层后用 System Events 送 esc，进程**自己退出、退出码 0、目标路径没有文件**；② 同一个命令用一个 CoreGraphics 合成的小鼠拖拽（仓外 52 KB 探针，`CGEventPost(.cghidEventTap)`）走完选区，进程**退出码同样 0，但写出 281×251 的 PNG**。**⇒ 退出码 0 既可能是"截到了"也可能是"取消了"，判"取消"只能靠「指定路径是否出现文件」。**这一条从"我们猜的"升格成"量出来的"，REQ-002 的判据据此定死；`docs/05` 也记一句"取消判据不许写退出码" | 本机 2026-11-05 实测两条分支（esc 分支 + 拖拽分支各一次，退出码与文件都在同一轮打印）；探针不进仓 |
 | 15 | HYPOTHESIS | **H6 物理按键是否命中**：事实 6 证了注册面，事实 7 证不了派发。实现第一条任务就是请他在机器前按一次默认组合；命中不了有两条退路（改配置里的键 / 退成"应用内生效 + 那颗按钮为主入口"），**不许偷偷换默认值当没事发生** | 待真机取证（T-001） |
 | 16 | HYPOTHESIS | **H7 多张贴图的代价**：每张 Deferred viewport 是独立 OS 窗口 + 独立帧循环；一块 4K 区域的 RGBA ≈ 33 MB。同时钉几张没实测过（Q-007 给默认上限），"贴图多了主窗卡不卡"只能真机看 | 待真机取证（T-005 之后） |
 | 17 | HYPOTHESIS | **H8 子 viewport 里的纹理归属**：`Context::load_texture` 在 Deferred viewport 下能不能被那个窗口的渲染器拿到、切图时旧纹理会不会留在图集里——源码没读完，POC 先证。证不过就退化成"只用一张贴图，新的顶掉旧的"（那是语义变化，属停止条件 2） | 待 POC（T-005 第一条） |
@@ -69,6 +69,9 @@
 | 19 | HYPOTHESIS | **H3 Linux 的可行入口未知**：X11 下 `import`(ImageMagick)/`gnome-screenshot -a`/`spectacle -r`，Wayland 下 `grim`+`slurp` 或 XDG 桌面门户的 Screenshot/ScreenCapture 接口——哪条在用户那台 Ubuntu 上装得到、要不要外部二进制、门户会不会弹系统级授权框，本机无法证。**已知那堵墙**：Wayland 下 winit 的 `set_outer_position`/`set_window_level` 是空函数（早先跨平台核查实测）⇒ Linux 的"钉屏 + 置顶"比"取图"更难落地，全局热键在 Wayland 下也没有门户级方案 | 用户机器（Ubuntu，`echo $XDG_SESSION_TYPE` 待报） |
 | 20 | HYPOTHESIS | **H4 Windows 的产物落点未知**：`ms-screenclip:` / SnippingTool 走的是"进剪贴板"而不是"给我们一个文件路径"，因此 Windows 那格很可能只能用兜底形态（读剪贴板）；全局热键要用 `RegisterHotKey`（Win32，理论上同样无需第三方 crate）。未在任何 Windows 机器上验过 | 待取证；本机无 Windows |
 | 21 | HYPOTHESIS | **H5 框选期间自家窗会不会进图**：主窗（置顶 + 失焦半透明）与**已钉着的贴图窗**在第二次框选时以什么状态进图，只有真机看得出来；处置方案的代价是"回来时位置与焦点怎么恢复"，与 CHG-008 的托盘/唤回语义纠缠 | 待真机取证（T-001/T-006） |
+| 22 | FACT | **今晚这次实测是在 `pixels_per_point = 1.0` 的外接屏上做的，点与像素恰好 1:1**：拖了 280×250 **点**，落出 281×251 **像素**；同一条命令全屏抓是 1920×1080。`system_profiler SPDisplaysDataType` 当场只列一块在线屏（`2281W`，1920×1080 @60Hz，Main Display: Yes，"UI Looks like" 与分辨率同数），内置那块没接。⇒ **"1 点 = 1 像素"是这块屏的属性，不是 macOS 的属性** | 本机 2026-11-05 20:00 实测（拖拽分支那份产物的 `sips` 读数）+ `system_profiler` 原文 |
+| 23 | HYPOTHESIS | **H9 接上内置 Retina 屏后换算会变**：`screencapture` 落的是**物理像素**，而贴图窗的宽高是按**逻辑点**定的——ppp = 2.0 时若不除比例，贴出来的图会比用户框的那块**大一倍**，文字层坐标也会整体错位。今晚证不了（内置屏没在线，改他的显示缩放去模拟属于动他的环境，不做）。实现按 `边长 = 像素 ÷ 那张屏的 pixels_per_point` 写，并把这条列进真机走查 **W-5.7**（接上内置屏截一次，量贴图尺寸与框的是不是同一块） | 推论自事实 22 + macOS HiDPI 公开行为；待真机取证 |
+| 24 | FACT | **交互层不比落盘路径：目录不存在它照样把框选界面弹出来，等人画完才失败**：本机把 `-o` 后的路径指向一个不存在的目录（`/tmp/definitely-missing-dir/z.png`），`screencapture -i` **没有立刻退出**，而是进入等待选区的状态（探针观察 30 秒无返回，随后由我们终止；那个目录始终没被创建）。⇒ REQ-002 的"失败"这一档**不能等子进程自己报错**：要么发起前先确保临时目录存在且可写（做法就选这条，`create_dir_all` 一句），要么接受"用户画完了才告失败"（那是最坏的时机）。**顺带一条边界**：既然取消/失败都可能表现为"退出码 0 + 没文件"，判据只能到"文件是否出现 + 里面是不是有效图像"这一层，解码失败要归到 `Failed` 而不是 `Cancelled` | 本机 2026-11-05 20:02 实测（该次实验只起了一个我们自己启动的子进程，取证后已终止，屏上没有留下产物） |
 
 ## 行为与验收
 
@@ -84,7 +87,8 @@ AND 图片页既有的"打开图片 / 粘贴 / 拖进来"四条入口 SHALL 原�
 ### REQ-002: 取消、失败、空图三态分得开，且不许假装成功
 
 WHEN 用户 esc 取消
-THEN 系统 SHALL 什么都不做——**不钉贴图、不改图片页现有内容、不弹提示条骚扰**（与面板 `Reply::Cancelled` 同一档）；判据按 H1 用"指定路径是否出现文件"而不是退出码；
+THEN 系统 SHALL 什么都不做——**不钉贴图、不改图片页现有内容、不弹提示条骚扰**（与面板 `Reply::Cancelled` 同一档）；判据是**「指定路径是否出现文件」**——这条 2026-11-05 已真机证毕（事实 14）：**esc 取消与成功选区两条路的退出码都是 0**，所以退出码在这条链上没有区分能力，SHALL NOT 拿它当判据；再叠一层"文件存在但解不出图像"归 `Failed`（事实 24 的边界，空文件/坏 PNG 不许被当成取消或被当成成功）；
+AND 发起前 SHALL 确保临时目录存在且可写（`create_dir_all`），因为交互层**不会**提前校验路径（事实 24：目录不存在它也照样弹框选界面，等人画完才失败——那是最坏的报错时机）；
 WHEN 系统工具不可用（被权限拦、命令不存在、被别的进程占屏）
 THEN SHALL 给一句能行动的话（哪一条路走不通、下一步怎么办——例如"改用「粘贴」"），SHALL NOT 静默退回"没有任何反应"；
 WHEN 框到的区域是空的或纯色（识别不出文字）
@@ -94,6 +98,7 @@ THEN 走既有那一档"未发现文字"，**SHALL NOT 新造一档**（CHG-005 
 ### REQ-003: 贴图窗的样子——图片本体加一条带子，那颗「翻译」在带子里
 
 THEN 贴图 SHALL 是一个**独立窗口**（Deferred viewport，事实 3）画那张图，尺寸 = 图片尺寸 + 一条动作带，SHALL NOT 依赖"窗口透明 + 按钮浮在透明区"那种形态：**带子是窗口的一部分**，图上不压任何控件（这才满足"漂浮在图片外侧"的字面意思：按钮不在图片上）；
+AND 图片尺寸 SHALL 按**那张屏的 `pixels_per_point` 折算**成窗口点尺寸（`边长点 = 像素 ÷ ppp`）：今晚实测那块外接屏是 ppp = 1.0、点与像素恰好 1:1（事实 22），**那是那块屏的属性不是 macOS 的**；接上内置 Retina 屏若不除这个比例，贴出来的图会比用户框的那块**大一倍**、文字层坐标整体错位（H9，走查 **W-5.7** 专测这一条）。SHALL NOT 在任何一处写死"1 像素 = 1 点"；
 AND 带子里 SHALL 有「翻译」与「复制」「保存」「关」，SHALL 由空格收放（REQ-004）；**第一次钉上时带子必须是展开的**（否则他会以为截出来的图不会翻译）；
 AND 窗口 SHALL 无边框、置顶，SHALL NOT 有原生标题栏（那是"钉住的图"，不是"又一个应用窗口"）；
 AND 「翻译」按下后 SHALL 走既有链（识别 → 翻译 → 回填 → 成品），进度写在带子里，成品 SHALL **原地替换**进同一张贴图并重算带子尺寸；失败 SHALL 保留原图 + 一句原因，SHALL NOT 把图变没；
@@ -166,7 +171,7 @@ THEN 发起框选前 SHALL 把自家窗口（主窗 + 所有贴图）移出屏�
 AND 若实测"闪一下"不可接受，SHALL 退回**登记为已知限制 + 界面一句说明**，而不是留一个看不见的坑（Q-003 默认与上一版同）；
 AND 无论选哪档，恢复路径 SHALL NOT 与 CHG-008 的托盘/唤回语义冲突，SHALL NOT 新增第三种唤回方式（那套"叫得回来"的判定在 D-21「泵挂错钩子」与 D-25「叫了班没人读」上各踩过一次，第三次就是第三个坑）；
 AND 恢复失败 SHALL NOT 把已经截好的图丢掉：窗口留在收起态 + 一句提示，比"图没了"轻。
-验证层次：只有真机（W-5.5）。无头不假装有判据——本包有两条完全交给眼睛的 REQ（这条与 REQ-006 的物理按键），写在这里是为了批准时看清这一点。
+验证层次：只有真机（W-5.8）。无头不假装有判据——本包有两条完全交给眼睛的 REQ（这条与 REQ-006 的物理按键），写在这里是为了批准时看清这一点。
 
 ### REQ-011: 隐私与网络口径不许漂
 
@@ -208,6 +213,6 @@ AND 全局热键的注册 SHALL NOT 采集按键以外的信息，SHALL NOT 记�
 ## 时间估算
 
 - 开发：取图 + 贴图窗 + 带子那颗「翻译」约 **6~9 小时**（Deferred viewport 是本仓第一次用，含 POC 试错）；全局热键（Carbon FFI + 设置页那三条 + 抢不到的文案）约 **3~4 小时**；历史目录与老化约 **2 小时**；文字层拖选约 **4~6 小时**（最不确定的一块，见停止条件 6）。
-- 验证：无头（意图矩阵、带子几何、老化边界、路径唯一性、配置夹取、文案不含文件名）约 **2.5 小时**；真机取证（H1/H5/H6/H7 + W-5.x 全部）约 **1.5 小时**，且**依赖用户在机器前按键**。
+- 验证：无头（意图矩阵、带子几何、老化边界、路径唯一性、配置夹取、文案不含文件名）约 **2.5 小时**；真机取证（**H1 已于 2026-11-05 当晚证毕，见事实 14/22/24，不再占取证工时**；剩下 H5/H6/H7/H8 + H9 那条 Retina 换算 + W-5.x 全部）约 **1.5 小时**，且**依赖用户在机器前按键**。
 - 外部等待：Linux 取证依赖那台 Ubuntu 的一次可用性（另计 **2~3 小时**含不确定性）；Windows 同理，本机无机器。
 - 依据：CHG-006（10 REQ）估 16 小时，实测落在估内偏紧；本包同样 11 REQ，但**两块是仓里没用过的机制**（Deferred viewport、Carbon FFI），比 P7 更吃试错，估时按"含 POC"给。
