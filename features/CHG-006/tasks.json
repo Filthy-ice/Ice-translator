@@ -176,11 +176,14 @@
         "REQ-010"
       ],
       "repo": "ice-translator",
-      "status": "todo",
+      "status": "done",
       "code_refs": [
-        "crates/ice-vision/examples",
+        "crates/ice-vision/examples/compose_metric.rs",
+        "crates/ice-vision/examples/samples_compose.rs",
+        "docs/04-image-pipeline.md",
         "docs/06-test-cases.md",
-        "docs/04-tech-design.md"
+        "docs/07-acceptance.md",
+        "docs/evidence/p7-scoring.md"
       ]
     }
   ]
