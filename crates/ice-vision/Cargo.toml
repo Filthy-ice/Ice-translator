@@ -12,6 +12,19 @@ thiserror.workspace = true
 tracing.workspace = true
 image.workspace = true
 
+# CHG-006 T-001：译文回填要自己把字画进像素——egui 的字形只在 GPU 管线里成形，拿不到位图。
+#
+# 这两个 crate 不是新增依赖名：它们早已在 `Cargo.lock` 里（Linux 那条 `sctk-adwaita` → `ab_glyph`
+# 路径带进来的），`image` 的 feature 一个都不加（PNG/JPEG 编码本来就在收窄集合里）。
+#
+# 但**提升确实会改正常依赖树**，这句话得写在这而不是想当然：提升前实测
+# `cargo tree -p ice-vision -e normal` 里 `ttf-parser`/`ab_glyph` 两个关键字零命中，提升后新增的
+# 应当**只有** `ab_glyph_rasterizer`、`owned_ttf_parser`、`ttf-parser`（`owned_ttf_parser` 自带的，
+# 依赖表为空）这三行。V-007 的判据按"新增的就是这三行、且仍无一个带网络能力的 crate"写，
+# 多出一行别的就停下来查是谁带进来的。
+ab_glyph_rasterizer = "0.1.10"
+owned_ttf_parser = "0.25.1"
+
 # P6（CHG-005 REQ-002）：识别只走 macOS Vision，零外发。
 #
 # `objc2-vision` 的 feature 不是一个类一个开关那么直白：`initWithCGImage_options` 整个方法
@@ -64,10 +77,3 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 
 [dev-dependencies]
 tempfile = "3"
-# REQ-008 第一层的自动度量要"把已知文本画成图"，而 egui 的字形只在 GPU 管线里成形、拿不到位图。
-#
-# 这两个 crate 不是新增依赖名：它们早已在 `Cargo.lock` 里（Linux 那条 `sctk-adwaita` → `ab_glyph`
-# 路径带进来的），真实变化只有一件——第一次在 macOS 上被**编译**，而且只在 examples 面。
-# `cargo tree -p ice-vision -e normal` 那条零外发取证因此不受影响（它明确排除 dev 依赖）。
-ab_glyph_rasterizer = "0.1.10"
-owned_ttf_parser = "0.25.1"

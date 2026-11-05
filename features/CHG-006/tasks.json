@@ -13,12 +13,13 @@
         "REQ-005"
       ],
       "repo": "ice-translator",
-      "status": "todo",
+      "status": "done",
       "code_refs": [
         "crates/ice-vision/Cargo.toml",
         "crates/ice-core/src/font.rs",
         "crates/ice-app/src/fonts.rs",
-        "crates/ice-vision/examples/self_metric.rs"
+        "crates/ice-vision/examples/self_metric.rs",
+        "crates/ice-app/examples/heiti_probe.rs"
       ]
     },
     {

@@ -17,23 +17,14 @@
 use std::process::ExitCode;
 
 use ab_glyph_rasterizer::{Rasterizer, point};
+use ice_core::font::{GOTHIC_PATH, HEITI_PATH, HEITI_SC_FACE_INDEX};
 use ice_vision::import::admit_rgba;
 use ice_vision::ocr::recognize_with_rows;
 use image::{DynamicImage, Rgba, RgbaImage};
 use owned_ttf_parser::{Face, OutlineBuilder};
 
-/// 与界面用的是同一支字体（`ice-app::fonts`），这样"画字的路径"和用户屏幕上看到的是同一条。
-const FONT_PATH: &str = "/System/Library/Fonts/STHeiti Medium.ttc";
-/// 第 1 面 = `STHeitiSC-Medium`（黑体-简），第 0 面是繁体。
-///
-/// P5 踩过的坑：选错面既不崩也不缺字，只有肉眼看得出差别——所以这里显式给索引，不写 0 碰运气。
-const HEITI_SC_FACE: u32 = 1;
-/// 白名单外那两类用例换这一支。
-///
-/// 换两支字体是因为**黑体里没有谚文字形也没有西里尔字形**，用同一张 `Face` 画韩文只会得到
-/// 一片空白，量出来的 0.0000 说不清是"没认出来"还是"没画出来"。这一支是单面字体（不必猜
-/// `.ttc` 的第几面），cmap 里谚文、西里尔、假名、拉丁都在。
-const GOTHIC_PATH: &str = "/System/Library/Fonts/Supplemental/AppleGothic.ttf";
+// 字体路径与面号取自 `ice_core::font`（唯一出处）：画字的路径必须和屏幕上那支是同一面，
+// 否则"量出来的数"和"用户看到的"是两件事。为什么是第 1 面、为什么还要一支后备，都写在那个模块里。
 /// 字号固定 28px：度量要的是"同一台机器、同一档字号"的可比数字，字号不该是变量。
 const PIXEL_SIZE: f32 = 28.0;
 /// 画布四周留白：Vision 对贴边的字会掉置信度，留白是给识别留的，不是给好看留的。
@@ -86,17 +77,17 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
-    let font_bytes = match std::fs::read(FONT_PATH) {
+    let font_bytes = match std::fs::read(HEITI_PATH) {
         Ok(bytes) => bytes,
         Err(err) => {
-            eprintln!("读不到度量用字体 {FONT_PATH}：{err}");
+            eprintln!("读不到度量用字体 {HEITI_PATH}：{err}");
             return ExitCode::from(2);
         }
     };
-    let face = match Face::parse(&font_bytes, HEITI_SC_FACE) {
+    let face = match Face::parse(&font_bytes, HEITI_SC_FACE_INDEX) {
         Ok(face) => face,
         Err(err) => {
-            eprintln!("字体第 {HEITI_SC_FACE} 面解析失败：{err}");
+            eprintln!("字体第 {HEITI_SC_FACE_INDEX} 面解析失败：{err}");
             return ExitCode::from(2);
         }
     };
@@ -257,7 +248,7 @@ fn samples<'f>(heiti: &'f Face<'f>, gothic: Option<&'f Face<'f>>) -> Vec<Sample<
             name: "en_plain",
             purpose: "纯英文行",
             face: heiti,
-            font_path: FONT_PATH,
+            font_path: HEITI_PATH,
             runs: lines(
                 heiti,
                 &[
@@ -272,7 +263,7 @@ fn samples<'f>(heiti: &'f Face<'f>, gothic: Option<&'f Face<'f>>) -> Vec<Sample<
             name: "zh_plain",
             purpose: "纯中文行",
             face: heiti,
-            font_path: FONT_PATH,
+            font_path: HEITI_PATH,
             runs: lines(
                 heiti,
                 &[
@@ -287,7 +278,7 @@ fn samples<'f>(heiti: &'f Face<'f>, gothic: Option<&'f Face<'f>>) -> Vec<Sample<
             name: "mixed",
             purpose: "中英混排",
             face: heiti,
-            font_path: FONT_PATH,
+            font_path: HEITI_PATH,
             runs: lines(
                 heiti,
                 &[
@@ -302,7 +293,7 @@ fn samples<'f>(heiti: &'f Face<'f>, gothic: Option<&'f Face<'f>>) -> Vec<Sample<
             name: "paragraph",
             purpose: "多行同段落，考 REQ-004 的合并",
             face: heiti,
-            font_path: FONT_PATH,
+            font_path: HEITI_PATH,
             runs: lines(
                 heiti,
                 &[
@@ -318,7 +309,7 @@ fn samples<'f>(heiti: &'f Face<'f>, gothic: Option<&'f Face<'f>>) -> Vec<Sample<
             name: "table",
             purpose: "两列表格，考表格防护（同行不同列不许并成一块）",
             face: heiti,
-            font_path: FONT_PATH,
+            font_path: HEITI_PATH,
             runs: table(
                 heiti,
                 &[
