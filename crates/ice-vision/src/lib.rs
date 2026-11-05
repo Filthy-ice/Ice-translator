@@ -8,6 +8,7 @@ pub mod error;
 pub mod import;
 pub mod layout;
 pub mod ocr;
+pub mod paint;
 pub mod typeset;
 #[cfg(target_os = "macos")]
 pub mod vision_sys;

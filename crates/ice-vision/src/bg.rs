@@ -324,8 +324,10 @@ fn corners_of(image: &RgbaImage, outer: Span) -> [Rgba<u8>; 4] {
     ]
 }
 
-/// 以 `(cx, cy)` 为中心、半径 [`CORNER_RADIUS`] 的方块均值（贴边时自己收缩）
-fn corner_mean(image: &RgbaImage, cx: i64, cy: i64) -> Rgba<u8> {
+/// 以 `(cx, cy)` 为中心、半径 [`CORNER_RADIUS`] 的方块均值（贴边时自己收缩）。
+///
+/// `paint` 羽化擦除接缝那一圈用的也是它——全仓只许有一种"邻域 3×3 均值"。
+pub(crate) fn corner_mean(image: &RgbaImage, cx: i64, cy: i64) -> Rgba<u8> {
     let (w, h) = (image.width() as i64, image.height() as i64);
     if w == 0 || h == 0 {
         return Rgba([0, 0, 0, 255]);
