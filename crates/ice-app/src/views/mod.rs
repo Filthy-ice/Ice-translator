@@ -143,6 +143,13 @@ pub struct Effects {
     /// 帧末交给 `AppState::stop_image_stage` 判定并落状态，视图自己不看也不改那三个在飞标记；
     /// 只有翻译段是真停（块边界收手），识别段与合成段是丢弃这一次的结果（Q-008）。
     pub stop_image: bool,
+    /// 「保存」：帧末交出原生保存面板（CHG-006 REQ-008）。与 `open_panel` 同一条形状——
+    /// 记的是**意图**，路径要等面板回调回来才有，视图碰不到 AppKit 也碰不到磁盘。
+    pub save_image: bool,
+    /// 「复制图片」：帧末把成品那张 RGBA 写进剪贴板（REQ-008 的第二条出路）。
+    /// 与 `copy`（写文本）分开两个字段，是因为写图会**抹掉剪贴板里的文本**（Q-004），
+    /// 那一句提示只该在图片这一路上出现。
+    pub copy_image: bool,
 }
 
 impl Effects {

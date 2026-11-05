@@ -153,11 +153,18 @@
         "REQ-008"
       ],
       "repo": "ice-translator",
-      "status": "todo",
+      "status": "done",
       "code_refs": [
         "crates/ice-app/src/system/panel.rs",
         "crates/ice-app/src/system/clipboard.rs",
-        "crates/ice-app/src/views/image.rs"
+        "crates/ice-app/src/app.rs",
+        "crates/ice-app/src/views/image.rs",
+        "crates/ice-app/src/views/mod.rs",
+        "crates/ice-app/src/state.rs",
+        "crates/ice-vision/src/export.rs",
+        "docs/02-architecture.md",
+        "docs/03-ui-design.md",
+        "docs/05-dev-guide.md"
       ]
     },
     {
