@@ -207,6 +207,11 @@ fn input_row(ui: &mut egui::Ui, state: &mut AppState, band: f32) {
 /// `BAND_OUTER_PAD` 扣过 4 份）。
 ///
 /// `Margin` 在 egui 0.37 是整数，`BAND_V_PAD` 那 4.0 就是这里的 `4`，两处要一起改。
+///
+/// 阴影与全量窗那两个正文框**同一份** `theme::pane_shadow`（用户 2026-11-05："精简界面现在
+/// 仅外框有阴影，内部的框没有，感觉精简下这个窗口的立体感没有全量的强"）：整窗那层阴影是
+/// 窗口管理器给的，窗内的两带原来只有描边，于是同一套配色下精简窗读起来是"平的一张纸"。
+/// 走同一个函数而不是在这里另调一组偏移/模糊——那正是"两个形态的观感各自漂走"的起点。
 fn band_frame<R>(
     ui: &mut egui::Ui,
     add: impl FnOnce(&mut egui::Ui) -> R,
@@ -215,6 +220,7 @@ fn band_frame<R>(
         .inner_margin(egui::Margin::symmetric(8, BAND_V_PAD as i8))
         .corner_radius(egui::CornerRadius::same(6))
         .outer_margin(egui::Margin::symmetric(4, 0))
+        .shadow(theme::pane_shadow(ui.visuals().dark_mode))
         .show(ui, add)
 }
 
@@ -916,6 +922,69 @@ mod tests {
             input.min.y >= win.min.y - 0.5 && actions.max.y <= win.max.y + 0.5,
             "带子越出窗口：输入 {input:?} 动作行 {actions:?}（窗口 {win:?}）"
         );
+    }
+
+    /// 两条带自己也要挂淡阴影（用户 2026-11-05："精简界面现在仅外框有阴影，内部的框没有，
+    /// 感觉精简下这个窗口的立体感没有全量的强"）。
+    ///
+    /// 判据取的是阴影在 epaint 0.37 里**唯一的形状事实**：一条 `blur_width > 0` 的矩形，
+    /// 填的是半透明色，且整体比带子自己**往下沉**（`pane_shadow` 的 offset 是 `[0, 2]`）。
+    /// 阴影不是独立的 `Shape` 变体，而是被塞进 `Shape::Vec` 与框体画在一起，所以这里先把那层
+    /// 摊平——只匹配顶层 `Shape::Rect` 的写法会一条都找不到，这正是"判据看着对、其实恒假"
+    /// 的那一类（与 D-25 那条"只数交接不看唤醒"同一个教训）。
+    #[test]
+    fn both_bands_carry_a_shadow_sinking_below_their_frames() {
+        /// 把 `Shape::Vec` 摊平（egui 0.37 的 `Frame` 把阴影和框体打包成一条 `Vec` 交出来）
+        fn flatten<'a>(shape: &'a egui::Shape, out: &mut Vec<&'a egui::epaint::RectShape>) {
+            match shape {
+                egui::Shape::Rect(rect) => out.push(rect),
+                egui::Shape::Vec(nested) => {
+                    for inner in nested {
+                        flatten(inner, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut h = Harness::new(window().size());
+        let mut state = state();
+        state.source = "hello world".into();
+        let mut effects = Effects::default();
+        h.warm(&mut state, &mut effects, false);
+        let input = rect(&h.ctx, "input_band");
+        let body = rect(&h.ctx, "translation_band");
+        let shapes = h.step(&mut state, &mut effects, false, vec![]);
+
+        let mut rects = Vec::new();
+        for clipped in &shapes {
+            flatten(&clipped.shape, &mut rects);
+        }
+
+        for (name, band) in [("输入带", input), ("译文带", body)] {
+            let sunk: Vec<_> = rects
+                .iter()
+                .filter(|rect| {
+                    rect.blur_width > 0.0
+                        && rect.fill.a() > 0
+                        && rect.fill.a() < 255
+                        // 往下沉：阴影矩形整体比带子下缘还低，横向不许歪出去
+                        && rect.rect.center().y > band.center().y
+                        && rect.rect.max.y > band.max.y + 1.0
+                        && (rect.rect.width() - band.width()).abs() < 12.0
+                })
+                .collect();
+            assert!(
+                !sunk.is_empty(),
+                "{name} 下缘外头没有往下沉的模糊矩形——阴影没挂上（带子 {band:?}，\
+                 模糊矩形 {:?}）",
+                rects
+                    .iter()
+                    .filter(|rect| rect.blur_width > 0.0)
+                    .map(|rect| (rect.rect, rect.fill))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     /// 两块看不见的把手各自都要能触发原生拖拽，其余地方一个都不能

@@ -716,9 +716,14 @@ mod mac {
             NSApplicationActivationPolicy::Accessory
         };
         let ok = app.setActivationPolicy(policy);
-        if regular && ok {
+        if crate::system::dock::wants_reinstall(regular, ok) {
             #[allow(deprecated)]
             app.activateIgnoringOtherApps(true);
+            // 磁贴是这一刻由 AppKit **重建**的，它取本进程的 bundle 图标——我们跑的是没打包的
+            // 裸二进制，那一层没有图标，于是用户看到系统那张 "exec" 黑底绿字占位图（缺陷 D-27）。
+            // 把同一枚图标再交一次，出处仍是 `crate::app_icon`，这里不另造一份。
+            let icon = crate::system::dock::apply();
+            tracing::debug!(icon, "唤回：Dock 图标重下一次");
         }
         ok
     }
