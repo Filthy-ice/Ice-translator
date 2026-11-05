@@ -5,6 +5,7 @@
 pub mod bg;
 pub mod composite;
 pub mod error;
+pub mod export;
 pub mod import;
 pub mod layout;
 pub mod ocr;
