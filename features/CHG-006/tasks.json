@@ -29,11 +29,10 @@
         "REQ-002"
       ],
       "repo": "ice-translator",
-      "status": "todo",
+      "status": "done",
       "code_refs": [
         "crates/ice-vision/src/bg.rs",
-        "crates/ice-vision/src/lib.rs",
-        "crates/ice-core/src/document.rs"
+        "crates/ice-vision/src/lib.rs"
       ]
     },
     {
