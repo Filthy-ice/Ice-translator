@@ -45,6 +45,10 @@
       "repo": "ice-translator",
       "status": "done",
       "code_refs": [
+        "crates/ice-vision/src/typeset.rs",
+        "crates/ice-vision/src/lib.rs",
+        "crates/ice-vision/src/bg.rs",
+        "crates/ice-core/src/language.rs",
         "crates/ice-core/src/detect.rs"
       ]
     },
@@ -57,11 +61,11 @@
         "REQ-006"
       ],
       "repo": "ice-translator",
-      "status": "todo",
+      "status": "done",
       "code_refs": [
         "crates/ice-vision/src/paint.rs",
-        "crates/ice-vision/src/lib.rs",
-        "crates/ice-core/src/font.rs"
+        "crates/ice-vision/src/bg.rs",
+        "crates/ice-vision/src/lib.rs"
       ]
     },
     {
