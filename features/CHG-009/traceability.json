@@ -8,31 +8,43 @@
     { "requirement": "REQ-005", "section": "## REQ-005 实现与验证" },
     { "requirement": "REQ-006", "section": "## REQ-006 实现与验证" },
     { "requirement": "REQ-007", "section": "## REQ-007 实现与验证" },
-    { "requirement": "REQ-008", "section": "## REQ-008 实现与验证" }
+    { "requirement": "REQ-008", "section": "## REQ-008 实现与验证" },
+    { "requirement": "REQ-009", "section": "## REQ-009 实现与验证" },
+    { "requirement": "REQ-010", "section": "## REQ-010 实现与验证" },
+    { "requirement": "REQ-011", "section": "## REQ-011 实现与验证" }
   ],
   "verifications": [
     {
       "id": "V-001",
-      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007", "REQ-008"],
+      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007", "REQ-008", "REQ-009", "REQ-010", "REQ-011"],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "required": true,
       "command": ["cargo", "test", "--workspace"],
-      "note": "全量单测：CHG-005/006 那 619 项不许回退（识别链、回填链、三段状态机与三条序号、面板协议、剪贴板字节校验、临时文件与文案断言都在里面）；本包新增第四条通道的过期互不作废、取消与失败分岔、临时路径唯一性与即读即删、那颗入口的意图矩阵。REQ-004 不在这条能证明的范围里（只有真机判），列在这里是为了「有回归锁」而不是「有验收证据」"
+      "note": "全量单测：CHG-005/006 那 620 项不许回退（识别链、回填链、三段状态机与三条序号、面板协议、剪贴板字节校验、导出接缝与配置夹取都在里面）；本包新增第四条通道的过期互不作废、取消与失败分岔、历史路径唯一性与老化双上限、`pin_layout` 三档几何、带子里恰四颗、意图矩阵、`[hotkey]` 解析与回默认。REQ-010 与 H6 不在这条能证明的范围里（只有真机判），列在这里是为了「有回归锁」而不是「有验收证据」"
     },
     {
       "id": "V-002",
-      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-006", "REQ-008"],
+      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007", "REQ-008"],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "command": ["cargo", "test", "-p", "ice-app"],
-      "note": "界面与状态层：那颗只给意图不给路径、在飞时第二次派发返回 None、回信按代丢弃、取消不清任何东西而失败只出提示条、`capture_gate` 与按钮置灰同源、快捷键与按钮落同一个字段、日志与文案不含文件名、配置结构无新增字段"
+      "note": "界面与状态层：那颗只给意图不给路径、在飞时第二次派发返回 None、回信按代丢弃、**回信那一支一条翻译任务都不派发**（写成「不发 `Job::Translate*`」而不是「翻译是 None」）、取消不建窗也不清图片页内容而失败只出提示条、`capture_gate` 与按钮置灰同源、带子收起时那几颗不进命中区、esc 只关有焦点那张、选中集合与识别块一致、`C` 的字/图分派、日志与文案不含文件名与 OCR 文本"
     },
     {
       "id": "V-003",
-      "requirements": ["REQ-005", "REQ-008"],
+      "requirements": ["REQ-008", "REQ-009"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "command": ["cargo", "test", "-p", "ice-core", "hotkey"],
+      "note": "配置面：`[hotkey]` 三条的解析（`\"f1\"`、`\"cmd+shift+4\"` 两种形态）、无法解析回默认、`sanitized()` 那套夹取继续成立、默认值就是用户报的 F1/F3/F2（他 2026-11-05 的原话是这条的出处）。**这一格是本包唯一新增的配置面**，除它以外出现新字段即触发停止条件 5"
+    },
+    {
+      "id": "V-004",
+      "requirements": ["REQ-009"],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
@@ -40,67 +52,94 @@
       "note": "平台判定只有一处出处：视图里出现 `#[cfg(target_os)]` 就是「某平台编译不过」的温床，也是那颗按钮的置灰理由与状态行文案各写一半的开始"
     },
     {
-      "id": "V-004",
-      "requirements": ["REQ-005"],
+      "id": "V-005",
+      "requirements": ["REQ-001", "REQ-009"],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
-      "command": ["bash", "-c", "grep -Rn 'screencapture' crates/ice-app/src | grep -v 'src/system/capture.rs' | grep -v '//' | grep -v '^$' ; test $(grep -Rl 'screencapture' crates/ice-app/src | wc -l) -eq 1"],
-      "note": "系统二进制的字面量只许出现在 `system/capture.rs` 一处（与 `vision_sys` 那条静态核查同族）。多一处就意味着第二个地方在拼命令，而取消判据与临时文件生命周期就会跟着分叉"
+      "command": ["bash", "-c", "test $(grep -Rl 'screencapture' crates/ice-app/src | wc -l) -eq 1"],
+      "note": "系统二进制的字面量只许出现在 `system/capture.rs` 一处（与 `vision_sys` 那条静态核查同族）。多一处就意味着第二个地方在拼命令，而取消判据与历史路径生命周期就会跟着分叉"
     },
     {
-      "id": "V-005",
-      "requirements": ["REQ-005", "REQ-007"],
+      "id": "V-006",
+      "requirements": ["REQ-006", "REQ-009", "REQ-011"],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "command": ["cargo", "tree", "-p", "ice-app", "-e", "normal"],
-      "note": "依赖图零增量是本包的结构保证（mac 走系统二进制子进程、兜底走既有 arboard ⇒ 不新增 crate 名）。比对基线取本包开工那一笔的输出，逐行相同才算过；多出一个名字即触发停止条件 4，先回来批准再继续。**编译级另注**：本机只有 `aarch64-apple-darwin` 一个 target，故 Linux/Windows 的「编译得过」按 TC-P-7 老规矩记「未验证」，不许拿源码扫描冒充"
+      "note": "依赖图零增量是本包的结构保证：取图走系统二进制子进程、**全局热键走手声明 Carbon FFI（2026-11-05 本机探针实测注册面 noErr，零 crate 名）**、贴图走 egui 既有 viewport API。比对基线取本包开工那一笔的输出，逐行相同才算过；多出一个名字即触发停止条件 4，先回来批准再继续。**编译级另注**：本机只有 `aarch64-apple-darwin` 一个 target，故 Linux/Windows 的「编译得过」按 TC-P-7 老规矩记「未验证」，不许拿源码扫描冒充"
     },
     {
-      "id": "V-006",
-      "requirements": ["REQ-003", "REQ-007", "REQ-008"],
+      "id": "V-007",
+      "requirements": ["REQ-007", "REQ-008", "REQ-011"],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "command": ["./sdd", "scan"],
-      "note": "敏感信息基线扫描：本包新引入的风险面是「截图内容可能落到仓库目录或日志」，扫描 + V-002 那条文件名断言 + V-007 的 `ls` 三件合起来才算这条边界闭合"
-    },
-    {
-      "id": "V-007",
-      "requirements": ["REQ-001", "REQ-002", "REQ-003"],
-      "repo": "ice-translator",
-      "kind": "VERIFIED_RUNTIME",
-      "environment": "sandbox",
-      "required": true,
-      "note": "真机一次完整链：发起 → esc 取消（**证 H1**：取消判据以「文件是否出现」为准，取消时盘上不留下东西）→ 再截一块 → 自动进识别 → 按 Q-001 的裁定决定是否自动接翻译；随后 `ls <临时目录>/ice-translator` 证不残留。要用户在机器前配合按键——Agent 不能替按 esc，这条是本包唯一不能自己收口的运行时验证"
+      "note": "敏感信息基线扫描：本包新引入的风险面是「截图内容合法地留在盘上 7 天」，扫描 + V-002 那条文件名断言 + V-008 的 `ls` + 「清除所有历史」与第一颗截图入口同批（T-003 明写这条顺序）四件合起来才算这条边界闭合"
     },
     {
       "id": "V-008",
-      "requirements": ["REQ-007"],
+      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-007", "REQ-008", "REQ-010"],
       "repo": "ice-translator",
       "kind": "VERIFIED_RUNTIME",
       "environment": "sandbox",
       "required": true,
-      "note": "`nettop -p <pid>` 采样：截图、临时文件、识别期间零条出站长连接（带阳性对照，手法沿用 CHG-005 TC-2.2-b）。口径按本包收窄：像素与文件全程本地，文本只在「翻译」那一步（自动档下由截图触发）经 P3 通道出去，SHALL NOT 写成「整条链零外发」"
+      "note": "真机一次完整链：发起 → esc 取消（**证 H1**：判据以「文件是否出现」为准，取消时不建窗也不留文件）→ 再截一块 → 钉住 → 带子里点「翻译」→ 成品原地替换 → 再按一次入口截第二块（**证 H5**：上一张贴图和主窗都没进这张图）；随后 `ls` 历史目录证内容只有图片文件、等过期那条只验排序不真等 7 天。要用户在机器前配合按 esc——Agent 不能替按，这条与 V-009 是本包两条不能自己收口的运行时验证"
     },
     {
       "id": "V-009",
-      "requirements": ["REQ-004"],
+      "requirements": ["REQ-006"],
       "repo": "ice-translator",
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
       "required": true,
-      "note": "W-5.1：截出来的图里有没有我们自己的窗口（含半透明态、以及「上一张成品正显示着」那种最尴尬的情形）。REQ-004 唯一的判据，无头与日志都替代不了；选定的处置档（Q-003）也在这条上定生死"
+      "note": "W-5.1：**三个默认组合物理按一次**（H6 的唯一判据）。注册面本机已实测 noErr，但派发面用合成事件证不了（System Events 的 `key code` 没命中探针回调，退出码却是 0）；另外事实 8 记着本机「F1/F2/F3 当标准功能键」从未打开，裸按可能是亮度键——所以这一条同时判「命不命中」和「那句媒体键提示读不读得懂」。命中不了即停止条件 1，回来重定这一格的形态，不许在代码里偷偷换默认键"
     },
     {
       "id": "V-010",
-      "requirements": ["REQ-002", "REQ-005", "REQ-006"],
+      "requirements": ["REQ-003", "REQ-004"],
       "repo": "ice-translator",
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
       "required": true,
-      "note": "W-5.2 取消/失败/「未发现文字」三档文案读不读得懂、失败时既有识别结果有没有被清掉；W-5.3 快捷键顺不顺手且没有抢掉系统的 `Cmd+Shift+4`；W-5.4 非 mac 那一颗禁用入口的说明是否像「这台机器不行」而不是「没做完」。按 NFR-7 的 S 档记法，本包不许把「截图能做」写成「整条链跨平台」"
+      "note": "W-5.2 与 W-5.3：贴图的键盘与拖动手感（无边框子窗口收不收得到 esc/空格、`StartDrag` 跟不跟手、四项右键菜单点不点得中）、那条带子的观感（按钮确实**在图片外**是这条 REQ 的全部争议点，肉眼确认一次）、第一次钉上时带子是不是展开的"
+    },
+    {
+      "id": "V-011",
+      "requirements": ["REQ-005"],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "W-5.4：文字层拖选可用性——「识别中」那一格是不是先出现在「可拖选文字」之前、拖选顺不顺手、选中的字对不对、没选中时按 `C` 拿到的是图而选中时拿到的是字，以及界面有没有一句说清现在按 `C` 会得到什么。这条是包尾，做不出可用交互即停止条件 6（停下来报工作量，不砍整包）"
+    },
+    {
+      "id": "V-012",
+      "requirements": ["REQ-002", "REQ-008", "REQ-009"],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "W-5.5 与 W-5.6：取消/失败/「未发现文字」三档文案读不读得懂、非 mac 那一颗禁用入口的说明是否像「这台机器不行」而不是「没做完」（按 NFR-7 的 S 档记法，本包不许把「截图能做」写成「整条链跨平台」）；历史目录里到底有什么、「清除所有历史」按下是不是真的删掉了文件并给了「已清除 N 张」、设置页那句 7 天口径与 `docs/01` NFR-3 的改写是不是同一句话"
+    },
+    {
+      "id": "V-013",
+      "requirements": ["REQ-011"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "`nettop -p <pid>` 采样：截图、贴图、后台那次「只识别」期间零条出站长连接（带阳性对照，手法沿用 CHG-005 TC-2.2-b）。口径按本包收窄：像素与历史文件全程本地，**文本只在用户按下那颗「翻译」之后**经 P3 通道出去——本包没有自动翻译，所以「截图后自动出网」的任何实现都是错的"
+    },
+    {
+      "id": "V-014",
+      "requirements": ["REQ-010"],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "W-5.5 的后半：`prepare()`/`restore()` 选定的那一档（Q-003）在真机上是不是可接受——「闪一下」能否忍、主窗与 N 张贴图回来的位置与焦点对不对、恢复失败时那张截好的图还在不在（REQ-010 末句）。REQ-010 唯一判据，无头与日志都替代不了"
     }
   ]
 }
