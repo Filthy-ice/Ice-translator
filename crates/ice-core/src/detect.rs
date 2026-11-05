@@ -87,14 +87,14 @@ pub fn detect(text: &str) -> Option<Detection> {
                 }
                 in_term = false;
             }
-            if (0x4E00..=0x9FFF).contains(&code) || (0x3400..=0x4DBF).contains(&code) {
+            if crate::language::is_han(code) {
                 t.cjk += 1;
                 if TRADITIONAL_SAMPLE.contains(ch) {
                     t.traditional_cjk += 1;
                 }
-            } else if (0x3040..=0x30FF).contains(&code) || (0x31F0..=0x31FF).contains(&code) {
+            } else if crate::language::is_kana(code) {
                 t.kana += 1;
-            } else if (0xAC00..=0xD7AF).contains(&code) || (0x1100..=0x11FF).contains(&code) {
+            } else if crate::language::is_hangul(code) {
                 t.hangul += 1;
             } else if (0x0400..=0x04FF).contains(&code) {
                 t.cyrillic += 1;

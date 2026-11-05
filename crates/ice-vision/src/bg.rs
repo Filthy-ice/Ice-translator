@@ -44,8 +44,9 @@ fn bucket(pixel: &Rgba<u8>) -> usize {
 }
 
 /// 两个颜色的切比雪夫距离（最大通道差）：按人眼的方式判"差多少"——
-/// 一个通道差得远就显眼，不必三通道都差。
-fn distance(a: &Rgba<u8>, b: &Rgba<u8>) -> i64 {
+/// 一个通道差得远就显眼，不必三通道都差。`typeset` 判框内哪一圈是字用的也是它，
+/// 于是"什么算跟背景不一样"全仓只有这一条判据。
+pub(crate) fn distance(a: &Rgba<u8>, b: &Rgba<u8>) -> i64 {
     (0..3)
         .map(|i| (a.0[i] as i64 - b.0[i] as i64).abs())
         .max()
@@ -173,6 +174,53 @@ pub fn estimate(
     }
 }
 
+/// 框内**首行**文字的横向范围 `(左缘, 右缘)`（像素栅格坐标，右缘不含）。
+///
+/// 为什么这件事归看像素的这一层：REQ-004 那句"依据首行左边界与块框中心的相对位置推断左/中/右"
+/// 里的"首行左边界"只有看像素才拿得到——`TextBlock` 存的是**整块**的外接框，行与行的几何在
+/// CHG-005 合并成块之后就没了（`source_rows` 只留行号）。返回值交给纯函数
+/// `typeset::infer_align`，于是对齐判据本身仍能在无头里用四个数钉死。
+///
+/// 判"这是字"沿用同一个 [`BG_DISTANCE_THRESHOLD`]：与 `bg` 的切比雪夫距离超过它就算墨迹。
+/// 从最上面一行有墨迹的行开始，连续往下走到第一条没有墨迹的行为止。
+/// 返回 `None` 表示框内一个墨迹像素都没有（空白块），调用方按左对齐处理。
+pub fn first_line_extent(image: &RgbaImage, rect: &PixelRect, bg: Rgba<u8>) -> Option<(f32, f32)> {
+    let (x0, y0, x1, y1) = inset(image, rect);
+    let mut extent: Option<(f32, f32)> = None;
+    for y in y0..y1 {
+        let row = ink_extent_in_row(image, x0, x1, y, bg);
+        match (row, extent) {
+            (Some(row), Some((left, right))) => extent = Some((left.min(row.0), right.max(row.1))),
+            (Some(row), None) => extent = Some(row),
+            // 已经起手、这一行却空了：首行到此为止
+            (None, Some(_)) => break,
+            (None, None) => {}
+        }
+    }
+    extent
+}
+
+/// 一行里墨迹的 `(最左, 最右 + 1)`；整行没有墨迹返回 `None`
+fn ink_extent_in_row(
+    image: &RgbaImage,
+    x0: i64,
+    x1: i64,
+    y: i64,
+    bg: Rgba<u8>,
+) -> Option<(f32, f32)> {
+    let mut row: Option<(f32, f32)> = None;
+    for x in x0..x1 {
+        let pixel = *image.get_pixel(x as u32, y as u32);
+        if distance(&pixel, &bg) > BG_DISTANCE_THRESHOLD {
+            row = match row {
+                None => Some((x as f32, (x + 1) as f32)),
+                Some((left, right)) => Some((left, right.max((x + 1) as f32))),
+            };
+        }
+    }
+    row
+}
+
 /// 框内那一簇前景的众数：离 `bg` 最远的那批里再取多数。
 ///
 /// 先求框内最大距离、再按 `≥ 最大距离 × FG_CLUSTER_RATIO` 取一簇，而不是写死一个距离阈值：
@@ -228,8 +276,9 @@ fn mode_of(pixels: &[Rgba<u8>]) -> Rgba<u8> {
 /// 矩形在像素栅格上的闭开区间，已夹进图像范围。
 ///
 /// 取 `floor`/`ceil` 而不是 `round`：估计的框必须**盖住** Vision 给的那块文字，宁可多算一圈也不
-/// 许少算一行——少算的那一行擦不掉，会变成译文旁边留着半个字。
-fn inset(image: &RgbaImage, rect: &PixelRect) -> Span {
+/// 许少算一行——少算的那一行擦不掉，会变成译文旁边留着半个字。`typeset` 找首行墨迹用的也是这
+/// 个区间，两处对"框覆盖哪些像素"不许有两种说法。
+pub(crate) fn inset(image: &RgbaImage, rect: &PixelRect) -> Span {
     let (w, h) = (image.width() as f32, image.height() as f32);
     let x0 = rect.x.floor().max(0.0).min(w) as i64;
     let y0 = rect.y.floor().max(0.0).min(h) as i64;
