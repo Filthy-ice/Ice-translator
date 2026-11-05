@@ -3,7 +3,7 @@
   "id": "CHG-006",
   "title": "图片翻译 P7：原文擦除与译文回填、覆盖层降级、导出与三阶段进度",
   "version": "v0.1",
-  "status": "SPEC_REVIEW",
+  "status": "IMPLEMENTING",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -81,8 +81,56 @@
       "at": "2026-11-04T12:57:16+00:00",
       "action": "transition",
       "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-05T02:02:33+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "a1093a801d663bb75d85ec62abd9a389494b9c992077bbc297c87f47177a9df3",
+        "version": "v0.1",
+        "by": "filthy-ice",
+        "reference": "2026-11-05 Qoder Desktop 会话：用户看过待批清单 01-11 后亲自执行本条 approve，批准 CHG-006@v0.1 十一条任务与依赖增量（原话：你就说我怎么执行命令吧，给完整的命令）",
+        "at": "2026-11-05T02:02:33+00:00",
+        "snapshot": "approvals/v0.1-a1093a801d663bb75d85ec62abd9a389494b9c992077bbc297c87f47177a9df3.md",
+        "scope": "local-delivery",
+        "context_hash": "0034152691cc6cda47c99b8dda39652f3609c4f35d27bec8a1be7b528376b349",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-05T02:02:33+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-006",
+        "version": "v0.1",
+        "spec_hash": "a1093a801d663bb75d85ec62abd9a389494b9c992077bbc297c87f47177a9df3"
+      }
+    },
+    {
+      "at": "2026-11-05T02:02:34+00:00",
+      "action": "seal-plan",
+      "detail": "24f5ca2c7f42c2a3255b5020df535088a75ed29a1bd8f6d94f237f3a8b35e9db"
+    },
+    {
+      "at": "2026-11-05T02:02:34+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
     }
   ],
-  "approval": null,
-  "plan_hash": null
+  "approval": {
+    "hash": "a1093a801d663bb75d85ec62abd9a389494b9c992077bbc297c87f47177a9df3",
+    "version": "v0.1",
+    "by": "filthy-ice",
+    "reference": "2026-11-05 Qoder Desktop 会话：用户看过待批清单 01-11 后亲自执行本条 approve，批准 CHG-006@v0.1 十一条任务与依赖增量（原话：你就说我怎么执行命令吧，给完整的命令）",
+    "at": "2026-11-05T02:02:33+00:00",
+    "snapshot": "approvals/v0.1-a1093a801d663bb75d85ec62abd9a389494b9c992077bbc297c87f47177a9df3.md",
+    "scope": "local-delivery",
+    "context_hash": "0034152691cc6cda47c99b8dda39652f3609c4f35d27bec8a1be7b528376b349",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "24f5ca2c7f42c2a3255b5020df535088a75ed29a1bd8f6d94f237f3a8b35e9db"
 }

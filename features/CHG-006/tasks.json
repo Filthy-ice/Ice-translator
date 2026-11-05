@@ -1,5 +1,9 @@
 {
-  "baseline": null,
+  "baseline": {
+    "change": "CHG-006",
+    "version": "v0.1",
+    "spec_hash": "a1093a801d663bb75d85ec62abd9a389494b9c992077bbc297c87f47177a9df3"
+  },
   "tasks": [
     {
       "id": "T-001",
