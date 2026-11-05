@@ -299,7 +299,31 @@
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
       "required": true,
-      "note": "W-5.9：托盘隐藏态（主窗已 `Visible(false)`、屏幕上一张贴图都没有）按一次截图热键——**这是 H10 的唯一判据**，也是本包最后一条需要他眼睛的验证。事实 28 实测：那种状态下 `App::ui` 一帧都不跑，所以新贴图在那一刻**根本建不出来**（探针里第 5 秒隐藏后，第 9 秒才 allow 的那张贴图始终没出现；而只要有一张贴图活着，隐藏主窗后子窗照常出图）。要看清两件事：① 那一按**有没有把贴图钉出来**（默认走 H10 (a)：回调先 `request_repaint` 唤醒一帧，再短暂可见把贴图 show 出来后收回）；② 主窗**闪不闪**、闪多久。第 ② 条不可接受时回来问他选 H10 (b)（改托盘隐藏的做法，会牵动已批准的 CHG-008，需 `revise`）或 (c)，**不许自己滑到「隐藏态不生效」当没事发生**（REQ-006 末句）"
+      "note": "W-5.9：托盘隐藏态（主窗已 `Visible(false)`、屏幕上一张贴图都没有）按一次截图热键。**H10 的写法本身已由事证定死，不再靠这一格决定**（见 V-018：从循环外发一次 `RequestPaintWhileHidden` + `request_repaint()`，那一帧 `ui()` 跑了、贴图出图、主窗全程 `onscreen=false`）。这一格因此**只判两问**：① 那一按**有没有把贴图钉出来**；② **主窗有没有冒出来过**（期望是「没有」——写法里不含任何可见性切换，出现即说明实现走样）。原备注里那三条候选（(a) 短暂可见 / (b) `revise` CHG-008 / (c) 隐藏态不生效）**全部作废**（事实 30 是第四候选且成立），本包不动 CHG-008 一行；也不许在这一格里替他改成「主窗闪一下」当没发生"
+    },
+    {
+      "id": "V-018",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "repo": "ice-translator",
+      "requirements": [
+        "REQ-003",
+        "REQ-006"
+      ],
+      "required": true,
+      "note": "**H10 闭合（事实 30/31，2026-11-05 21:02 仓库外探针）**：主窗 `Visible(false)` 且屏幕上一张贴图都没有时，从循环外的那条线程发 `send_viewport_cmd_to(ROOT, ViewportCommand::RequestPaintWhileHidden)` **紧跟** `ctx.request_repaint()` ⇒ 被唤醒的那一帧 `App::ui` 真的跑了， 贴图在同一帧建出来：`winlist` 读到 `layer=3 onscreen=true bounds=500,300 200x180`，采样 `#1E5ADC`/`#2E6FF2` 命中那张自己的色；主窗在那之前与之后都是 `onscreen=false`，之后每一帧 `ViewportInfo::visible()` 仍是 false。**对照那遍只发 `request_repaint()`**（事实 31）：8 次 logic tick、0 次 ui tick、一张贴图都没出来 ⇒ 两半各管一件事，`request_repaint` 只叫醒循环、`RequestPaintWhileHidden` 才让那一帧真绘制。**该命令只保一帧**（egui 自己的文档口径），下一帧要绘制就得再发。**这条关闭了 H10，也作废了上一版默认的 (a)「让主窗闪一下」与 (b)「`revise` CHG-008」**；探针不进仓，实施时以本仓 `hotkey.rs`/`pin.rs` 里的形状核查为准：起贴图那一段 SHALL NOT 出现 `Visible(true)`。来源：egui-0.37.0/src/viewport.rs:1239 定义、egui-winit-0.37.0/src/lib.rs:2162 处理"
+    },
+    {
+      "id": "V-019",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "repo": "ice-translator",
+      "requirements": [
+        "REQ-004",
+        "REQ-010"
+      ],
+      "required": true,
+      "note": "**两格一并闭合（事实 32/33）**：① **H5 / REQ-010「自家窗进不进图」有了正负对照**：同一条 `screencapture` 命令、同一块坐标，主窗与贴图**可见**时三点是 `#DC1E1E`/`#1EC81E`/`#080808`，**隐藏**时变成 `#161616`/`#A9AAAC`/`#1C1D1F`（桌面与另一扇窗）；隐藏期间 `layer=3` 与 bounds 都保留，从循环外发回可见后贴图落回拖动过的 (660,480)。⇒ Q-003 的 (a) 档「临时取消置顶并收起、结束原样回来」实测成立，**REQ-010 的真机那一半不再需要他那双眼睛**，W-5.8 只留「还原后回不回得来」；几何**不用自己记**——`ViewportInfo::outer_rect` 跟着拖动、系统搬窗、隐藏期都对得上（也解释了本轮那块第二屏插入后窗被挪走时它为何能跟上）。② **H7 的「能不能同时钉」闭合**：8 张贴图同时在屏、各自出现在请求位，逐张采样都命中自己的色 ⇒ 上限不是机制问题，只是代价问题；6 张上限（Q-007）与「攒到上限卡不卡、主窗掉不掉帧」仍归 W-5.3。**这两条都是仓库外探针读数，不进仓，也不代替真应用里的复验。**"
     }
   ]
 }
