@@ -2,6 +2,7 @@
 //!
 //! 图片处理必须完全在本机完成（NFR-3），本 crate 不发起任何网络请求。
 
+pub mod bg;
 pub mod composite;
 pub mod error;
 pub mod import;
