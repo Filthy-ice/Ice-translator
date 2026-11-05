@@ -1,8 +1,8 @@
 {
   "baseline": {
     "change": "CHG-008",
-    "version": "v0.1",
-    "spec_hash": "bb8b66e8f5c5dd49e712f8ca988089c3cff268f29bc74c1be75330e2c282d354"
+    "version": "v0.2",
+    "spec_hash": "17c07165a63289435f85c7454210b5bb5d2733263c4690a7b4e32c9e7d5e9012"
   },
   "tasks": [
     {
