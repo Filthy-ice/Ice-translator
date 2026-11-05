@@ -216,11 +216,10 @@ fn band_frame<R>(
     ui: &mut egui::Ui,
     add: impl FnOnce(&mut egui::Ui) -> R,
 ) -> egui::InnerResponse<R> {
-    egui::Frame::group(ui.style())
+    theme::pane_frame(ui.style())
         .inner_margin(egui::Margin::symmetric(8, BAND_V_PAD as i8))
         .corner_radius(egui::CornerRadius::same(6))
         .outer_margin(egui::Margin::symmetric(4, 0))
-        .shadow(theme::pane_shadow(ui.visuals().dark_mode))
         .show(ui, add)
 }
 
@@ -961,7 +960,22 @@ mod tests {
             flatten(&clipped.shape, &mut rects);
         }
 
+        let surface = theme::surface_fill(&h.ctx.global_style().visuals);
         for (name, band) in [("输入带", input), ("译文带", body)] {
+            // 阴影只是"抬起"的那一半，还得有**白卡**那一半：底色必须是正文面那一档
+            // 不透明色（`Frame::group` 自己是透明的，只加阴影的话软阴影会从盒底透上来
+            // 糊满整格——2026-11-05 用户复报的"整个都是灰呼呼的"就是这个机制）
+            let card = rects.iter().any(|rect| {
+                rect.blur_width == 0.0
+                    && rect.fill == surface
+                    && rect.fill.a() == 255
+                    && band.contains(rect.rect.center())
+            });
+            assert!(
+                card,
+                "{name} 没有铺上正文面底色（期望 {surface:?}）——只挂阴影不铺底就是那片灰呼呼"
+            );
+
             let sunk: Vec<_> = rects
                 .iter()
                 .filter(|rect| {

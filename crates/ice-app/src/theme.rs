@@ -99,8 +99,9 @@ pub const fn knob_tones(dark: bool) -> KnobTones {
 
 /// 正文框底那一圈淡阴影（用户 2026-11-04："淡淡的阴影就行，你看别人的软件立体感好强"）。
 ///
-/// 用 `Frame::shadow` 而不是自己叠矩形：egui 0.37 的 `Shadow` 会走 `ShadowShape`，
-/// 那是真按 `blur` 分步铺开的软阴影，手画的偏移矩形只有硬边。偏移往下 2 档、模糊 6 档、
+/// 用 `Frame::shadow` 而不是自己叠矩形：egui 0.37 的阴影会走 `RectShape { blur_width }`
+/// 那条软边通道（`Shape` 枚举里**没有** `ShadowShape` 这个变体，它被包进 `Shape::Vec` 交出来），
+/// 手画的偏移矩形只有硬边。偏移往下 2 档、模糊 6 档、
 /// alpha 34——再深就不是"淡"，是两条框各自浮起来一块黑板。
 pub const fn pane_shadow(dark: bool) -> egui::Shadow {
     egui::Shadow {
@@ -158,6 +159,22 @@ fn scale_rgb(color: Color32, factor: f32) -> Color32 {
 /// 底色（只有一圈 stroke），框里框外都是 `panel_fill`，两个正文区就融进了背景。
 pub fn surface_fill(visuals: &egui::Visuals) -> Color32 {
     visuals.text_edit_bg_color()
+}
+
+/// 一个「正文框」该长什么样：**底色与阴影在同一处定义**——全量窗那两个框与精简窗那两条带共用它。
+///
+/// 为什么必须连底色一起给，而不是只给调用方补一个阴影：`Frame::group` 的 `fill` 是**透明的**
+/// （`egui-0.37.0/src/containers/frame.rs:163`，`NONE` 那份常量就是 `Color32::TRANSPARENT`）。
+/// 只挂阴影不铺底，那圈软阴影就从盒子的**底下透上来糊满整格**——用户 2026-11-05 看到的
+/// "整个都是灰呼呼的，和全量界面的文本框区别太大了"就是这么来的，缺一层绘制而不是审美差异。
+/// 底色取 [`surface_fill`]（"可书写表面"那一档近白），于是三件事一次配齐：**白卡、描边、投影**。
+///
+/// 描边留给调用方覆盖（源文框要跟着焦点换色），几何也留给调用方（两种形态的内边距与圆角本就不同）
+/// ——**共用的是"长什么样"，不是"占多大地方"**，这条界线别抹掉。
+pub fn pane_frame(style: &egui::Style) -> egui::Frame {
+    egui::Frame::group(style)
+        .fill(surface_fill(&style.visuals))
+        .shadow(pane_shadow(style.visuals.dark_mode))
 }
 
 pub const fn tone_color(tone: Tone) -> Color32 {
@@ -728,6 +745,37 @@ mod tests {
 
     /// 用户 2026-11-04："淡淡的阴影就行。" 这条锁四个方向：有模糊（不是硬边）、只往下沉、
     /// 浅到不会让两个框各自浮成一块黑板、`spread` 恒 0（非 0 就是向外涨出一圈实色描边）。
+    /// 「正文框」的底色与阴影必须**一起**给（2026-11-05 用户复报"精简界面…现在倒好整个都是
+    /// 灰呼呼的，和全量界面的文本框区别太大了"）。病根是 `Frame::group` 的 `fill` 是透明的：
+    /// 只挂阴影不铺底，软阴影会从盒子底下透上来糊在格子里。所以这条锁的是"缺一层绘制"这件事，
+    /// 不是某个色值——三处调用点（全量两个框、精简两条带）共用这个函数。
+    #[test]
+    fn a_pane_frame_carries_its_surface_color_together_with_its_shadow() {
+        for dark in [false, true] {
+            let style = style_for(dark);
+            let frame = pane_frame(&style);
+            assert_eq!(
+                frame.fill,
+                surface_fill(&style.visuals),
+                "底色没铺上，阴影就会从盒底透上来"
+            );
+            assert_ne!(
+                frame.fill,
+                Color32::TRANSPARENT,
+                "`Frame::group` 自己是透明的——这一层不铺就等于什么都没画"
+            );
+            assert_ne!(
+                frame.fill, style.visuals.panel_fill,
+                "底色与整窗基底同色的话，框就只剩一圈阴影，正是用户报的那个样子"
+            );
+            assert_eq!(
+                frame.shadow,
+                pane_shadow(dark),
+                "阴影不与底色同处定义，两处就会各自漂走"
+            );
+        }
+    }
+
     #[test]
     fn the_pane_shadow_is_soft_and_stays_faint() {
         let light = pane_shadow(false);
