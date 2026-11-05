@@ -1,6 +1,12 @@
-//! 剪贴板（FR-1.5，REQ-003）。
+//! 剪贴板（FR-1.5，REQ-003；图片那两条出入口属 CHG-005 REQ-001 与 CHG-006 REQ-008）。
 //!
-//! 组装内容是纯函数，可单测；真正读写走 arboard，只在真机验证。
+//! 组装内容与判据是纯函数，可单测；真正读写走 arboard，只在真机验证。
+//! 四条通道各管一个方向：文本写（`write`）、文本读（`read`，服务于"剪贴板即翻"）、
+//! 图片读（`read_image`，「粘贴」入口）与图片写（`write_image`，「复制图片」出口）。
+
+use std::borrow::Cow;
+
+use image::RgbaImage;
 
 /// 两个按钮各对应一种写入内容
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,10 +47,60 @@ pub fn compose(kind: CopyKind, source: &str, translation: &str) -> Option<String
 }
 
 pub fn write(text: &str) -> Result<(), String> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| format!("剪贴板不可用：{e}"))?;
+    let mut clipboard = arboard::Clipboard::new().map_err(unavailable)?;
+    clipboard.set_text(text.to_string()).map_err(refused)
+}
+
+/// 「复制图片」那颗按钮的悬停提示与成功提示条各一句（Q-004）。
+///
+/// 两句都写在这一层，是因为它们说的是**同一个系统行为**：arboard 在 macOS 上的实现先
+/// `clipboard.clear()` 再 `writeObjects`（`arboard-3.7.0/src/platform/osx.rs:347`），所以这一步
+/// 必然抹掉剪贴板里原有的文本。这是所有 macOS App 的共性，不是本应用的缺陷；要做的只有一件
+/// ——在用户点下去**之前**就说清（hover），点完再确认一次（提示条）。SHALL NOT 先读原文本、
+/// 写完再偷偷还原：那会在用户没要求的时候两次改写剪贴板，还可能把几 MB 的旧图留在内存里。
+pub const COPY_IMAGE_HOVER: &str = "复制图片会覆盖剪贴板里的文本（macOS 写图先清空剪贴板）";
+
+/// 复制成功那条提示。按既有 `TOAST_LIFETIME`（1s）淡出、没有关闭按钮
+pub const COPY_IMAGE_DONE: &str = "图片已复制；剪贴板里原来的文本已被替换";
+
+/// 像素数与尺寸对不上时那句话。正常输入走不到这里（`RgbaImage` 自己保证这个等式），
+/// 走到了就是缓冲在别处被截断过——那句话说的是"没法复制"，不带尺寸也不带任何字节。
+pub const IMAGE_SIZE_TEXT: &str = "复制失败：这张图的像素数与它的尺寸对不上";
+
+/// 把一张成品图写进剪贴板（REQ-008 的第二条出路）。
+///
+/// 交出去的是**裸 RGBA 像素**，由系统自己编成 TIFF/PNG：`arboard::set_image` 收的就是
+/// `ImageData`，字节序按 `CGImageAlphaInfo::Last` = 直通 RGBA，与 `RgbaImage` 一致，
+/// 所以这一路不经过 `ice_vision::export::encode`（那一层只服务落盘）。
+///
+/// 写之前不动剪贴板、写之后不还原（见 [`COPY_IMAGE_HOVER`]）。
+pub fn write_image(image: &RgbaImage) -> Result<(), String> {
+    let (width, height) = (image.width() as usize, image.height() as usize);
+    let bytes = image.as_raw();
+    // 与读那一侧同一条纪律：字节数对不上就不交出去。跨进外部 API 之前把这条等式断言一次，
+    // 免得一段缺尾像素的缓冲被系统按声称的尺寸解释
+    if !rgba_matches(width, height, bytes.len()) {
+        return Err(IMAGE_SIZE_TEXT.to_string());
+    }
+    let mut clipboard = arboard::Clipboard::new().map_err(unavailable)?;
     clipboard
-        .set_text(text.to_string())
-        .map_err(|e| format!("写入剪贴板失败：{e}"))
+        .set_image(arboard::ImageData {
+            width,
+            height,
+            bytes: Cow::Owned(bytes.clone()),
+        })
+        .map_err(refused)
+}
+
+/// 两句失败文案的唯一出处：拿不到剪贴板句柄、与拿到了但写不进去。文本与图片两条写入共用，
+/// 免得"同一个故障两种说法"。转发的 `e` 是 arboard 的错误名（`ContentNotAvailable` 那一类），
+/// 不含用户内容——真要打日志也只会有这一句（NFR-3）。
+fn unavailable(error: impl std::fmt::Display) -> String {
+    format!("剪贴板不可用：{error}")
+}
+
+fn refused(error: impl std::fmt::Display) -> String {
+    format!("写入剪贴板失败：{error}")
 }
 
 /// 剪贴板轮询间隔（REQ-008）。arboard 3.7 只有 `get_text()`，没有 changeCount 之类的
@@ -75,11 +131,18 @@ pub fn read_image() -> Option<(Vec<u8>, usize, usize)> {
 
 /// 尺寸与字节数对得上才放行；`None` 表示这对数值不构成一张合法的 RGBA 图。
 fn validate_rgba(bytes: Vec<u8>, width: usize, height: usize) -> Option<(Vec<u8>, usize, usize)> {
-    let expected = width.checked_mul(height)?.checked_mul(4)?;
-    if bytes.len() != expected {
-        return None;
-    }
-    Some((bytes, width, height))
+    rgba_matches(width, height, bytes.len()).then_some((bytes, width, height))
+}
+
+/// `宽 × 高 × 4` 等不等这一段字节的长度；任何一步溢出都算不等。
+///
+/// 读与写两侧共用这一条：读那一侧剪贴板是外部输入，写那一侧是我们要把缓冲交给一个会按
+/// 声称尺寸解释它的外部 API。两侧的纪律是同一句——对不上就不交出去。
+fn rgba_matches(width: usize, height: usize, len: usize) -> bool {
+    width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        == Some(len)
 }
 
 /// "剪贴板即翻"的判定器（FR-3.8）。
@@ -245,5 +308,54 @@ mod tests {
         );
         // 0 宽高是合法的空图，不是崩溃；0×0×4 = 0 字节
         assert!(validate_rgba(Vec::new(), 0, 0).is_some());
+    }
+
+    /// 写那一侧走的是同一条判据（`write_image` 里那道门）：字节数对不上就不交出去。
+    /// 单独测这一层是因为 `RgbaImage` 自己保证那个等式，从它身上构造不出反例——
+    /// 反例只能按数字造，而数字正是跨进 arboard 之前唯一还能拦住的东西。
+    #[test]
+    fn the_write_side_refuses_the_same_mismatched_buffers() {
+        assert!(rgba_matches(3, 2, 24));
+        assert!(!rgba_matches(3, 2, 23), "少一个字节就是坏数据");
+        assert!(!rgba_matches(3, 2, 25), "多出来的字节没有归属");
+        assert!(rgba_matches(0, 0, 0), "空图合法，不是崩溃");
+        // 溢出那一档：`usize::MAX × 2` 绕回来是 0，不许因为"正好等于 len"而放行
+        assert!(!rgba_matches(usize::MAX, 2, 0));
+
+        let image = RgbaImage::new(3, 2);
+        assert!(
+            rgba_matches(
+                image.width() as usize,
+                image.height() as usize,
+                image.as_raw().len()
+            ),
+            "一张真图的缓冲必须对得上，否则「复制图片」恒失败"
+        );
+    }
+
+    /// Q-004 那两句：点之前（hover）与点之后（提示条）都得说到"文本被换掉"，而且不是同一句。
+    /// 两句写在这一层，是因为它们讲的是同一个系统行为——界面与帧末各抄一份，
+    /// 迟早有一份忘了提，用户就会在 Cmd+V 之后才发现刚才那段文字没了。
+    #[test]
+    fn both_copy_image_sentences_say_the_text_is_replaced() {
+        assert!(
+            COPY_IMAGE_HOVER.contains("覆盖剪贴板里的文本"),
+            "点之前那句没把后果说在前头：{COPY_IMAGE_HOVER}"
+        );
+        assert!(
+            COPY_IMAGE_DONE.contains("文本已被替换"),
+            "点之后那句没确认这件事：{COPY_IMAGE_DONE}"
+        );
+        assert_ne!(
+            COPY_IMAGE_HOVER, COPY_IMAGE_DONE,
+            "两句一字不差，用户看不出哪句是提醒哪句是结果"
+        );
+        // Q-004 明写 SHALL NOT 备份还原，所以文案里不许出现这类承诺
+        for text in [COPY_IMAGE_HOVER, COPY_IMAGE_DONE] {
+            assert!(
+                !text.contains("还原") && !text.contains("恢复"),
+                "{text} 许了一个不做的承诺"
+            );
+        }
     }
 }

@@ -1,12 +1,13 @@
-//! 图片页（CHG-005 + CHG-006）：E 导入与两条动作、F 原图预览（识别框可点）、G 成品预览、
+//! 图片页（CHG-005 + CHG-006）：E 导入与四条动作、F 原图预览（识别框可点）、G 成品预览、
 //! H 可编辑识别结果与译文列、I 三段状态与那颗共用「停止」。
 //!
 //! 每一颗控件都立刻改到 `AppState` 那份文档上，而那份文档正是要拿去翻译与合成的那一份
-//! （REQ-005 的判据就落在这里）；翻译段逐块写回同一份文档的 `translation`，合成段读它出一张成品。
-//! 两条出路的动作（保存 / 复制图片）要等原生接缝，这一版不放只会灰着的半颗按钮。
+//! （REQ-005 的判据就落在这里）；翻译段逐块写回同一份文档的 `translation`，合成段读它出一张成品，
+//! 两条出路（保存 / 复制图片）再把那张成品交出去。
 //!
-//! 视图不碰系统：面板、剪贴板读图、拖拽落地统统记成 `Effects`，帧末由 `app.rs` 执行；
-//! 识别、逐块翻译、合成三段派发都走 `Effects::job` 那同一条口。
+//! 视图不碰系统：面板、剪贴板读写图、拖拽落地统统记成 `Effects`，帧末由 `app.rs` 执行；
+//! 识别、逐块翻译、合成三段派发都走 `Effects::job` 那同一条口。本页对 `system` 的唯一依赖是
+//! 两句**文案常量**（Q-004 那两句要说的事只有一处出处），没有一次系统调用。
 
 use egui::{self, Color32, ColorImage, Id, RichText, Sense, TextureOptions, Ui};
 use ice_core::document::{OcrDocument, PixelRect};
@@ -16,6 +17,7 @@ use ice_vision::{Admitted, LOW_CONFIDENCE_WARN};
 use image::RgbaImage;
 
 use crate::state::{AppState, ComposeStage, Phase, RecognitionStage, Split, Tone, TranslateStage};
+use crate::system::clipboard;
 use crate::theme;
 use crate::views::Effects;
 
@@ -47,6 +49,11 @@ const MODES: &[(CompositeMode, &str, &str)] = &[
         "一个像素都不擦，在块框上盖一块底板再写译文",
     ),
 ];
+
+/// 「保存」那颗的悬停提示。三件事各半句：格式由扩展名定、位置由用户在系统面板里选、
+/// 存的是**当前 G 区那一张**（合成在飞时那一格显示的是上一张成品，门也照样开着——
+/// 所见即所存，见 [`AppState::export_gate`]）。
+const SAVE_HINT: &str = "存成 PNG 或 JPEG（扩展名决定格式）；存的是 G 区现在这一张";
 
 pub fn show(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, supported: bool) {
     ui.spacing_mut().item_spacing.y = 8.0;
@@ -131,6 +138,7 @@ fn import_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, su
 fn action_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
     let translate_blocker = state.translate_gate();
     let compose_blocker = state.compose_gate();
+    let export_blocker = state.export_gate();
     // 台账为空时这一颗说的是"没有可重试的"；否则跟着翻译段走（在飞就等一等的说法一样）
     let retry_blocker = if state.failed_blocks.is_empty() {
         Some("这一批没有失败块")
@@ -169,6 +177,24 @@ fn action_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
                     effects.request(state.submit_image_retry_failed());
                 }
                 retry.on_hover_text(retry_blocker.unwrap_or("只重发失败的那几块，已翻好的不动"));
+
+                // 两条出路（REQ-008）共用一道门：手上得有一张成品。写出去的动作都在帧末
+                // （面板 / 剪贴板），这里只记意图，所以这两颗在本页是无头可测的。
+                let save = ui.add_enabled(export_blocker.is_none(), egui::Button::new("保存"));
+                record(ui.ctx(), "save", save.rect);
+                if save.clicked() {
+                    effects.save_image = true;
+                }
+                save.on_hover_text(export_blocker.unwrap_or(SAVE_HINT));
+
+                let copy = ui.add_enabled(export_blocker.is_none(), egui::Button::new("复制图片"));
+                record(ui.ctx(), "copy_image", copy.rect);
+                if copy.clicked() {
+                    effects.copy_image = true;
+                }
+                // Q-004：那句"会覆盖剪贴板里的文本"必须在点下去**之前**看得见，
+                // 所以它是 hover 的正文，不是复制成功之后才补的一句
+                copy.on_hover_text(export_blocker.unwrap_or(clipboard::COPY_IMAGE_HOVER));
 
                 ui.colored_label(theme::MUTED, "画法");
                 for (mode, name, hint) in MODES {
@@ -1420,8 +1446,7 @@ mod tests {
     }
 
     /// 前置条件矩阵（REQ-006 后半句 + REQ-007）：条件不满足时那颗入口**还在页面上**、灰着，
-    /// 而缺的那一步写在 I 区状态行里。三颗各测自己那一格，不写成"整页都灰"这种糊断言。
-    /// 「保存」「复制图片」那两颗要等 T-010 的原生接缝，这一版不画只会灰着的半颗按钮。
+    /// 而缺的那一步写在 I 区状态行里。五颗各测自己那一格，不写成"整页都灰"这种糊断言。
     #[test]
     fn each_greyed_entry_leaves_the_page_intact_and_the_status_line_names_the_missing_step() {
         // 只识别完、一块译文都没有：翻译那颗能点，合成那颗灰着并说出缺哪一步
@@ -1441,22 +1466,32 @@ mod tests {
             !text.contains("先识别出至少一块文字"),
             "已经有文字块，别再报那一步：{text:?}"
         );
-        for salt in ["translate", "compose", "retry"] {
+        for salt in ["translate", "compose", "retry", "save", "copy_image"] {
             let rect = recorded_entry(&ctx, salt);
             assert!(
                 rect.width() > 1.0 && rect.height() > 1.0,
                 "{salt} 在条件不满足时消失了（{rect:?}）——置灰才是 REQ-007 要的"
             );
         }
-        // 灰着的那两颗点下去一条意图都不给
-        let compose_at = recorded_entry(&ctx, "compose").center();
-        let retry_at = recorded_entry(&ctx, "retry").center();
+        // 灰着的那几颗点下去一条意图都不给：合成/重试不给任务，保存/复制不给那两条出路
+        let greyed = [
+            recorded_entry(&ctx, "compose").center(),
+            recorded_entry(&ctx, "retry").center(),
+            recorded_entry(&ctx, "save").center(),
+            recorded_entry(&ctx, "copy_image").center(),
+        ];
         let mut effects = Effects::default();
-        run(&mut state, &mut effects, true, &[compose_at, retry_at]);
+        run(&mut state, &mut effects, true, &greyed);
         assert!(
             effects.job.is_none(),
             "条件不满足的合成/重试却派发了任务：{:?}",
             effects.job
+        );
+        assert!(
+            !effects.save_image && !effects.copy_image,
+            "没有成品却给出了保存/复制的意图：save={} copy={}",
+            effects.save_image,
+            effects.copy_image
         );
 
         // 连文字块都没有：翻译那颗也说得出缺哪一步
@@ -1579,6 +1614,47 @@ mod tests {
             "空台账点重试派发了任务：{:?}",
             effects.job
         );
+    }
+
+    /// 两条出路（REQ-008）：有成品时两颗各给各的意图、互不牵连，而且**谁都不派发任务**——
+    /// 保存与复制都在帧末碰系统（面板 / 剪贴板），视图这一层只记意图，所以这两颗在无头里能测到底。
+    /// 点完成品还得在（那两条出路都是"交出去一份拷贝"，不是"消费掉它"）。
+    ///
+    /// Q-004 那句"会覆盖剪贴板里的文本"本身锁在 `system::clipboard` 的测试里，这里锁的是接线：
+    /// 那颗按钮的 hover 直接引用同一个常量，界面没有第二份文案。
+    #[test]
+    fn the_two_export_entries_give_their_own_intent_and_never_a_job() {
+        for (salt, saving) in [("save", true), ("copy_image", false)] {
+            let mut state = translated_state(&[("hello", "你好")]);
+            state.composed = Some(composed(&[(0, false)]));
+            let mut effects = Effects::default();
+            let ctx = run(&mut state, &mut effects, true, &[]);
+            let at = recorded_entry(&ctx, salt).center();
+            effects = Effects::default();
+            run(&mut state, &mut effects, true, &[at]);
+            assert_eq!(effects.save_image, saving, "点 {salt} 给的保存意图不对");
+            assert_eq!(effects.copy_image, !saving, "点 {salt} 给的复制意图不对");
+            assert!(
+                effects.job.is_none(),
+                "点 {salt} 派发了任务：{:?}",
+                effects.job
+            );
+            assert!(state.composed.is_some(), "点 {salt} 把成品抹掉了");
+        }
+
+        // 缺成品时那两颗灰着，说的是状态层给的那一句（同一个出处，界面不抄第二份）
+        let mut bare = translated_state(&[("hello", "你好")]);
+        assert_eq!(bare.export_gate(), Some("先生成一张成品图"));
+        bare.composed = Some(composed(&[(0, false)]));
+        assert_eq!(bare.export_gate(), None, "有成品了那道门就该开");
+
+        // 合成在飞时门照样开着：G 区显示的是上一张成品，存出去的就是它（所见即所存）
+        let mut composing = translated_state(&[("hello", "你好")]);
+        composing.composed = Some(composed(&[(0, false)]));
+        composing
+            .submit_image_compose()
+            .expect("有译文就该派发得出合成");
+        assert_eq!(composing.export_gate(), None, "合成在飞时两条出路被挡了");
     }
 
     /// 画法单选只改下一次生成用哪一档：不派发、不重认、不重翻，已有的成品也留着（REQ-006）。

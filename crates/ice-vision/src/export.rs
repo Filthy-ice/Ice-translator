@@ -58,8 +58,10 @@ pub fn format_of(path: &Path) -> Format {
     }
 }
 
-/// 编成字节，不落盘。剪贴板那一路（REQ-008 的"复制图片"）要的也是这份字节，
-/// 所以它不经过 [`save`]——两条出口共用同一个编码器，不会出现"存出来的和复制出来的不一样"。
+/// 编成字节，不落盘。**只有落盘那一条出路走它**：剪贴板那一路（REQ-008 的"复制图片"）交给
+/// `arboard::set_image` 的是裸 RGBA 像素（见 `ice-app::system::clipboard::write_image`），
+/// 由系统自己编成 TIFF/PNG。两条出口拿到的是同一张图，编码各归各家——所以这一条注释原来那句
+/// "剪贴板要的也是这份字节"是错的，T-010 落地时按实际形状更正。
 pub fn encode(image: &RgbaImage, format: Format) -> VisionResult<Vec<u8>> {
     let (width, height) = (image.width(), image.height());
     let mut buffer = Vec::new();
@@ -86,6 +88,15 @@ pub fn encode(image: &RgbaImage, format: Format) -> VisionResult<Vec<u8>> {
 pub fn save(image: &RgbaImage, path: &Path, format: Format) -> VisionResult<()> {
     let bytes = encode(image, format)?;
     std::fs::write(path, bytes).map_err(|_| VisionError::Composite(SAVE_IO_TEXT.to_string()))
+}
+
+/// 这张图里有没有透明或半透明的像素。
+///
+/// 只服务一句话：用户在面板里选了 JPEG 而图里确实有透明时，界面要说清"透明的地方按白色合成"
+/// （Q-005，也就是上面第 2 条那一步）。PNG 那一路用不到它——alpha 原样保留，没什么可提醒的。
+/// 判据放在这一层而不是界面层，是因为"JPEG 会丢 alpha"这件事的口径就住在这里。
+pub fn has_transparency(image: &RgbaImage) -> bool {
+    image.pixels().any(|pixel| pixel.0[3] < 255)
 }
 
 /// 把 RGBA 合成到纯白上的 RGB 字节串。
@@ -170,6 +181,26 @@ mod tests {
             "不透明色被改得太多了：{red},{green},{blue}"
         );
         assert_eq!(alpha, 255, "JPEG 解出来不该有半透明");
+    }
+
+    /// 那句"JPEG 会丢掉透明"只在真有透明时才该出现：整张图不透明时提它是吓人。
+    /// 判据是 `alpha < 255`，所以半透明（128）与量化边缘上那一点（17）都算，全不透明不算。
+    #[test]
+    fn transparency_is_reported_only_when_some_pixel_is_not_opaque() {
+        assert!(has_transparency(&swatch()), "那张样图里有三种 alpha");
+        assert!(
+            has_transparency(&RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 0]))),
+            "全透明当然算"
+        );
+        assert!(
+            !has_transparency(&RgbaImage::from_pixel(4, 4, Rgba([10, 200, 30, 255]))),
+            "整张不透明却报有透明，JPEG 那一路会白提一句"
+        );
+
+        // 一个像素就够：判据是"有没有"，不是"占多少"
+        let mut one = RgbaImage::from_pixel(4, 4, Rgba([255, 255, 255, 255]));
+        one.put_pixel(3, 3, Rgba([255, 255, 255, 254]));
+        assert!(has_transparency(&one), "只差一个像素的透明也要报");
     }
 
     #[test]
