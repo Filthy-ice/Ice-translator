@@ -90,7 +90,7 @@
         "REQ-008"
       ],
       "repo": "ice-translator",
-      "status": "todo",
+      "status": "done",
       "code_refs": [
         "crates/ice-vision/src/export.rs",
         "crates/ice-vision/src/lib.rs"
