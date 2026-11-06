@@ -32,6 +32,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, mpsc};
 
 use crate::state::{AppState, ImageInput, ImageRecognition, Job, Outcome, RequestId};
+use crate::system::capture;
 
 /// 通道容量：界面上同一时刻只允许一个请求在飞，留一点余量给切换语言时的重译
 const CHANNEL_CAPACITY: usize = 8;
@@ -97,6 +98,12 @@ impl JobRunner {
                 blocks,
                 cancel,
             } => self.submit_image_translate(runtime, id, engine, blocks, cancel, ctx),
+            Job::ScreenCapture { id, seq } => self.submit_screen_capture(runtime, id, seq, ctx),
+            Job::PinRecognize {
+                pin,
+                generation,
+                path,
+            } => self.submit_pin_recognize(runtime, pin, generation, path, ctx),
             Job::ImageCompose {
                 id,
                 source,
@@ -280,6 +287,100 @@ impl JobRunner {
             }
         });
     }
+
+    /// 一次区域截图。**整段跑在 `spawn_blocking` 里**：系统的交互框选会阻塞到用户画完为止
+    /// （两秒或两分钟都可能），放在帧循环里就是"界面冻住"（事实 12，CHG-005 那条
+    /// 面板不许 `runModal` 是同一个错误换了个载体）。
+    ///
+    /// 落点目录与文件名都在这条线程上算——状态层不知道文件系统的事。日志只记结局与耗时：
+    /// 那张图的文件名本身就可能是用户内容（REQ-008 的白名单：尺寸、耗时、张数、类别）。
+    fn submit_screen_capture(&mut self, runtime: &Runtime, id: RequestId, seq: u64, ctx: &Context) {
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+
+        runtime.spawn_blocking(move || {
+            let started = Instant::now();
+            let outcome = match capture::shots_dir() {
+                Ok(dir) => capture::capture(&dir, seq),
+                Err(kind) => capture::Outcome::Failed(kind),
+            };
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            tracing::info!(
+                request_id = id,
+                result = outcome_name(&outcome),
+                elapsed_ms,
+                "框选结束"
+            );
+            let sent = tx.try_send(Outcome::ScreenCaptured { id, outcome }).is_ok();
+            if sent {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    /// 一张贴图的"只识别"。**这条不派翻译**（REQ-001 主干：那颗「翻译」是人按的），
+    /// 用的入口与图片页那条完全同一个 `recognize_with_rows`——不开第二条识别路。
+    ///
+    /// `generation` 原样带回来：这张图可能在识别期间被关掉或重派过，晚到的结果对不上代就整条丢弃。
+    /// 错误文本不进日志（`VisionError` 的 `Decode` 那一档会带路径）。
+    fn submit_pin_recognize(
+        &mut self,
+        runtime: &Runtime,
+        pin: RequestId,
+        generation: u64,
+        path: std::path::PathBuf,
+        ctx: &Context,
+    ) {
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+
+        runtime.spawn_blocking(move || {
+            let started = Instant::now();
+            let result = admit_path(&path).and_then(|admitted| {
+                let (_rows, document, _progress) =
+                    ice_vision::recognize_with_rows(&admitted.image)?;
+                Ok(document)
+            });
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            match &result {
+                Ok(document) => tracing::info!(
+                    pin,
+                    generation,
+                    blocks = document.blocks.len(),
+                    elapsed_ms,
+                    "贴图识别完成"
+                ),
+                Err(err) => tracing::warn!(
+                    pin,
+                    generation,
+                    error = vision_variant_name(err),
+                    elapsed_ms,
+                    "贴图识别失败"
+                ),
+            }
+            let sent = tx
+                .try_send(Outcome::PinRecognized {
+                    pin,
+                    generation,
+                    result,
+                    elapsed_ms,
+                })
+                .is_ok();
+            if sent {
+                ctx.request_repaint();
+            }
+        });
+    }
+}
+
+/// 截图结局的**变体名**，专门给日志用：成功只说"captured"，不把路径说出去。
+fn outcome_name(outcome: &capture::Outcome) -> &'static str {
+    match outcome {
+        capture::Outcome::Captured(_) => "captured",
+        capture::Outcome::Cancelled => "cancelled",
+        capture::Outcome::Unsupported => "unsupported",
+        capture::Outcome::Failed(_) => "failed",
+    }
 }
 
 /// 把任务原料变成入场后的图。剪贴板那一支的字节长度已由 `system::clipboard::read_image` 校验，
@@ -406,6 +507,33 @@ fn log_outcome(outcome: &Outcome) {
                 request_id = id,
                 error = vision_variant_name(err),
                 "本地合成失败"
+            ),
+        },
+        // 截图这一支**只有结局与耗时**：那张图的路径与文件名可能就是用户内容，
+        // 一个字符都不许进日志（REQ-008 的字段白名单）。
+        Outcome::ScreenCaptured { id, outcome } => {
+            tracing::info!(request_id = id, result = outcome_name(outcome), "截图回信")
+        }
+        Outcome::PinRecognized {
+            pin,
+            generation,
+            result,
+            elapsed_ms,
+        } => match result {
+            Ok(document) => tracing::info!(
+                pin,
+                generation,
+                blocks = document.blocks.len(),
+                width = document.width,
+                height = document.height,
+                elapsed_ms,
+                "贴图识别完成"
+            ),
+            Err(err) => tracing::warn!(
+                pin,
+                generation,
+                error = vision_variant_name(err),
+                "贴图识别失败"
             ),
         },
     }

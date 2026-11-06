@@ -21,6 +21,8 @@ use ice_vision::layout::{RowObservation, flip_rect};
 use ice_vision::typeset::CompositeMode;
 use image::RgbaImage;
 
+use crate::system::capture;
+
 pub type RequestId = u64;
 
 /// 全量模式的四个页签（`03-ui-design.md` §2 F-01）。术语表是设置页内的一个分区（F-12），不占页签。
@@ -270,6 +272,21 @@ pub enum Job {
         /// 在飞的那一次请求不撤回（撤不回），所以停止最少要等一块的时间。
         cancel: Arc<AtomicBool>,
     },
+    /// 发起一次区域截图（CHG-009 REQ-001）。**只带自增号，不带路径**：历史目录在哪
+    /// 只有 `system::capture` 知道，状态层不许知道文件系统的事（REQ-005 那条分层纪律）。
+    /// 跑在 `spawn_blocking` 里，因为它会**阻塞到用户画完为止**。
+    ScreenCapture {
+        id: RequestId,
+        /// 历史文件名的第三段（同 pid 同秒的两次连点靠它分开）
+        seq: u64,
+    },
+    /// 一张贴图自己的"只识别"（REQ-005）。**不带翻译**：那颗「翻译」是人按的。
+    /// `gen` 是派发那一刻的代序号，回信原样带回来，对不上就丢弃。
+    PinRecognize {
+        pin: RequestId,
+        generation: u64,
+        path: PathBuf,
+    },
     /// 合成一张成品（REQ-003~REQ-006）。整段是一次同步的 CPU 活，走 `spawn_blocking`。
     ImageCompose {
         id: RequestId,
@@ -324,10 +341,116 @@ pub enum Outcome {
         result: Result<Composed, VisionError>,
         elapsed_ms: u64,
     },
+    /// 一次框选回来了。三态（成功/取消/失败）原样带，**不在工作线程里判该干什么**
+    ScreenCaptured {
+        id: RequestId,
+        outcome: crate::system::capture::Outcome,
+    },
+    /// 某张贴图的识别回来了，带着它那一代的序号
+    PinRecognized {
+        pin: RequestId,
+        generation: u64,
+        result: Result<ice_core::document::OcrDocument, VisionError>,
+        elapsed_ms: u64,
+    },
 }
 
 /// 提示条最多同时显示这么多条，避免把界面挤没
 const MAX_TOASTS: usize = 3;
+
+/// 截图那一段自己的状态（CHG-009 REQ-001/002/004，第四条通道）。
+///
+/// 与识别/翻译/合成三段**并列**而不是嵌在里面：一次框选回来的第一件事是"钉住"，
+/// 识别是钉住之后**每张各自**跑的（[`CaptureStage::Pinned`] 之后才有 [`Pin`] 的 stage）。
+/// 把两件事塞进一个枚举，就会出现"第三张贴图在识别、第二张的状态被顶掉"这类只对一半的画面。
+/// `Cancelled` 单列一态：它既不是失败也不是空闲，那一条路上什么都不该发生（REQ-002）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum CaptureStage {
+    #[default]
+    Idle,
+    /// 交互框选已经发起，正在等用户画完（可能两秒，也可能两分钟）
+    Capturing,
+    /// 拿到图并且钉上了。贴图的细节在 [`AppState::pins`] 里，这一态只说"这一段成功了"
+    Pinned,
+    /// 工具报错、权限被拒、图坏了——装的是一句能行动的话（`capture` 那侧算好的）
+    Failed(String),
+    /// 用户 esc 取消：**什么都不做**的那一条，状态行不许说"失败"
+    Cancelled,
+}
+
+impl CaptureStage {
+    /// 状态行那一格。空串=这一句不该出现（`Idle`/`Capturing` 由界面上那颗按钮自己表达）。
+    pub fn label(&self) -> Option<&'static str> {
+        match self {
+            CaptureStage::Idle => None,
+            CaptureStage::Capturing => Some("在框选里…"),
+            CaptureStage::Pinned => Some("已钉住"),
+            // 失败那句已经在 `Failed` 里带着了，这一层不再造第二句
+            CaptureStage::Failed(_) => Some("截不出来"),
+            CaptureStage::Cancelled => Some("已取消"),
+        }
+    }
+}
+
+/// 一张钉在屏幕上的图。
+///
+/// **状态层只存"它存在、它现在在做什么"**：窗口的建/销、几何、带子开合都在 `system::pin`，
+/// 这里存的是视图与派发要读的东西。`document` 为 `None` 时拖选**不产生任何选中**
+/// （REQ-005：没长出来就不许假装能选，而不是"选中了一个空字符串"）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pin {
+    /// 贴图自己的号（与请求序号分开：窗口关掉之后这个号不再复用）
+    pub id: RequestId,
+    /// 历史里那张原图
+    pub path: PathBuf,
+    /// 代序号：每一次**重新派识别**都要 +1。回信带的是派发那一刻的代，
+    /// 对不上就丢弃——同一张贴图上"晚到的上一次结果盖掉这一次"是最难查的那种错
+    /// （第四条序号互不作废那条纪律的第四处）
+    pub recognize_gen: u64,
+    /// 这张自己的识别进度。**每张一条**，共用一条就会让第七张的进度盖掉第一张的
+    pub stage: RecognitionStage,
+    /// 文字层的数据源
+    pub document: Option<ice_core::document::OcrDocument>,
+    /// 带子开着还是收着（REQ-003：收起 = 窗口缩到图片本身）
+    pub band_open: bool,
+    /// 图片本体上有没有正被按住拖动（REQ-004，走查要看的那一件）
+    pub dragging: bool,
+}
+
+impl Pin {
+    fn new(id: RequestId, path: PathBuf) -> Self {
+        Self {
+            id,
+            path,
+            recognize_gen: 0,
+            stage: RecognitionStage::Idle,
+            document: None,
+            band_open: true,
+            dragging: false,
+        }
+    }
+}
+
+/// 一次截图回信的落点结果，交给帧循环决定要不要开窗与派识别。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CaptureApplied {
+    /// 回信过期（被更晚的一次顶掉，或这一轮已经没有在飞标记）：**界面零变化**
+    Stale,
+    /// 用户取消：不建贴图、不改图片页任何东西
+    Cancelled,
+    /// 失败，带那句能行动的话。**"屏幕上已经钉满"也走这一档**（Q-007）：
+    /// 那句话同样是一句能行动的提示（"先 esc 关掉一张"），而不是"截图失败了"
+    Failed(String),
+    /// 新建的贴图号。帧循环拿它去开窗（`system::pin::open`）并派"只识别"
+    Pinned { pin: RequestId },
+}
+
+/// 同时能钉几张。**6 不是能力上限**（本机实测同时钉 8 张各自出图，事实 33），
+/// 它是"屏幕上摆六张还找得着"那个判断（Q-007）。
+///
+/// 满了的行为是**拒绝新的那一张**，不是撤掉最老的那一张：用户正对着的那张凭空消失，
+/// 比"这张没钉上，先关一张"糟糕得多——后者他一眼就看见、一句话就知道下一步。
+pub const PIN_MAX: usize = 6;
 
 /// 图片页识别段的五态（CHG-005 REQ-006）。
 ///
@@ -648,6 +771,19 @@ pub struct AppState {
     /// 下一张成品用什么画法（REQ-006 的三档单选）。运行态、默认"自动"、不进配置：
     /// 它是对**这一张图**的一次性决定，不是用户对整个软件的偏好
     pub compose_mode: CompositeMode,
+    /// ---- 截图与贴图（CHG-009 第四条通道） ----
+    pub capture_stage: CaptureStage,
+    pub capture_request_id: RequestId,
+    pub capture_in_flight: Option<RequestId>,
+    /// 历史文件名的自增段。**从 1 起**，0 留给"一次都没发过"那个读法
+    pub capture_seq: u64,
+    /// 屏幕上正钉着的图，按钉上的先后排列（老化与「打开上一次」都读这个次序）
+    pub pins: Vec<Pin>,
+    /// 下一个贴图号。关掉的不回收——号只往前走，晚到的回信因此不可能落在一张新图上
+    pub next_pin_id: RequestId,
+    /// 最近一次截图回信的**落点**，由帧循环取走（`take`）后清空：开窗与派"只识别"
+    /// 都是碰系统的事，不能发生在状态层里（REQ-005 那条分层纪律）
+    pub capture_applied: Option<CaptureApplied>,
 }
 
 impl AppState {
@@ -709,6 +845,13 @@ impl AppState {
             compose_elapsed_ms: 0,
             composed: None,
             compose_mode: CompositeMode::default(),
+            capture_stage: CaptureStage::Idle,
+            capture_request_id: 0,
+            capture_in_flight: None,
+            capture_seq: 0,
+            pins: Vec::new(),
+            next_pin_id: 0,
+            capture_applied: None,
         }
     }
 
@@ -836,6 +979,17 @@ impl AppState {
                 result,
                 elapsed_ms,
             } => self.apply_image_composed(id, result, elapsed_ms),
+            // 截图与贴图那两条：回信**只改状态**，开窗与派识别发生在帧循环里
+            Outcome::ScreenCaptured { id, outcome } => {
+                self.capture_applied = Some(self.apply_capture(id, outcome));
+                true
+            }
+            Outcome::PinRecognized {
+                pin,
+                generation,
+                result,
+                ..
+            } => self.apply_pin_recognized(pin, generation, result),
         }
     }
 
@@ -1048,6 +1202,188 @@ impl AppState {
             document: document.clone(),
             mode: self.compose_mode,
         })
+    }
+
+    // ---- 区域截图与贴图（CHG-009 REQ-001/002/004/005，第四条通道） ----
+
+    /// 发起一次框选。图片页那颗「框选贴图」与全局热键**共用这一个入口**——
+    /// 两条路迟早会不一样（图钉那次的教训），所以热键命中后也只是调它。
+    ///
+    /// 一次框选在飞时**不发起第二次**（REQ-001 末句：后到的直接忽略）。这一条不靠
+    /// `capture_gate` 的灰按钮兜住，因为热键那一下不经过按钮。
+    pub fn submit_capture(&mut self) -> Option<Job> {
+        if self.capture_in_flight.is_some() {
+            return None;
+        }
+        self.capture_request_id += 1;
+        let id = self.capture_request_id;
+        self.capture_seq += 1;
+        self.capture_in_flight = Some(id);
+        self.capture_stage = CaptureStage::Capturing;
+        Some(Job::ScreenCapture {
+            id,
+            seq: self.capture_seq,
+        })
+    }
+
+    /// 那颗按钮灰不灰与状态行说哪句话，**读同一个来源**（与 `translate_gate` /
+    /// `compose_gate` 同形）。三道门从上往下依次是：这台机器没这件事、上一次还在画、
+    /// 屏幕上钉满了。
+    pub fn capture_gate(&self) -> Option<&'static str> {
+        if !crate::system::capture::capability().capture {
+            return Some("这台机器没有可用的框选截图；可先用系统截图再点「粘贴」");
+        }
+        if self.capture_in_flight.is_some() {
+            return Some("上一次框选还没画完");
+        }
+        if self.pins.len() >= PIN_MAX {
+            return Some("屏幕上已经钉满 6 张，先 esc 关掉一张");
+        }
+        None
+    }
+
+    /// 一次框选的回信落地。**这是唯一一处把 `capture` 的三态翻译成状态**：
+    /// 取消什么都不做、失败只留一句、成功才建贴图。序号对不上（`Stale`）时
+    /// 连状态都不动——晚到的上一次结果盖掉这一次的画面最难查。
+    pub fn apply_capture(&mut self, id: RequestId, outcome: capture::Outcome) -> CaptureApplied {
+        if self.capture_in_flight != Some(id) {
+            return CaptureApplied::Stale;
+        }
+        self.capture_in_flight = None;
+        match outcome {
+            capture::Outcome::Cancelled => {
+                self.capture_stage = CaptureStage::Cancelled;
+                CaptureApplied::Cancelled
+            }
+            capture::Outcome::Failed(kind) => {
+                // 那句能行动的话由 `capture` 算好带回来，这一层不再造第二套文案
+                let text = capture::Outcome::Failed(kind)
+                    .explain()
+                    .unwrap_or("截图失败")
+                    .to_string();
+                self.capture_stage = CaptureStage::Failed(text.clone());
+                CaptureApplied::Failed(text)
+            }
+            capture::Outcome::Unsupported => {
+                let text = capture::Outcome::Unsupported
+                    .explain()
+                    .unwrap_or("这台机器没有可用的框选截图")
+                    .to_string();
+                self.capture_stage = CaptureStage::Failed(text.clone());
+                CaptureApplied::Failed(text)
+            }
+            capture::Outcome::Captured(path) => {
+                // 满了：**图仍然留在历史里**（老化照常），只是不再往屏幕上钉。
+                // 撤掉用户已经钉着的那一张来腾位置是不可接受的（Q-007）。
+                if self.pins.len() >= PIN_MAX {
+                    let text = "屏幕上已经钉满 6 张，先 esc 关掉一张".to_string();
+                    self.capture_stage = CaptureStage::Failed(text.clone());
+                    return CaptureApplied::Failed(text);
+                }
+                let pin = self.push_pin(path);
+                self.capture_stage = CaptureStage::Pinned;
+                match pin {
+                    Some(id) => CaptureApplied::Pinned { pin: id },
+                    None => {
+                        // 只有并发才可能到这里（同一帧内两次 push），保底说"钉不上"
+                        let text = "这张没钉上，先 esc 关掉一张".to_string();
+                        self.capture_stage = CaptureStage::Failed(text.clone());
+                        CaptureApplied::Failed(text)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 记下一张新的贴图，返回它的号。满了返回 `None`（调用方负责给那句话）。
+    ///
+    /// 号只往前走、不复用：窗口关掉之后那个号不会被下一张顶替，所以任何一条晚到的回信
+    /// 都不可能落在一张新贴图上（[`Pin::recognize_gen`] 是同一族纪律的第二层）。
+    pub fn push_pin(&mut self, path: PathBuf) -> Option<RequestId> {
+        if self.pins.len() >= PIN_MAX {
+            return None;
+        }
+        self.next_pin_id += 1;
+        let id = self.next_pin_id;
+        self.pins.push(Pin::new(id, path));
+        Some(id)
+    }
+
+    /// 「打开上一次截图」（F2 那一格）要的那张：**与老化共用同一个排序**，
+    /// 所以"最近"在这条链上只有一个定义。没有历史时返回 `None`，界面给"还没有截图记录"。
+    pub fn newest_pin_source(&self) -> Option<&Pin> {
+        self.pins.last()
+    }
+
+    /// 关掉一张：从状态里摘掉，返回是否真摘掉了（`false` = 那个号本来就不在，
+    /// 调用方不该为它说"已关闭"）。窗口的关闭命令由帧循环发，这里不碰 egui。
+    pub fn close_pin(&mut self, id: RequestId) -> bool {
+        let before = self.pins.len();
+        self.pins.retain(|pin| pin.id != id);
+        self.pins.len() != before
+    }
+
+    /// 给某张贴图派一次"只识别"。**这一支里一个翻译任务都不许出现**（REQ-001 主干：
+    /// 翻译由人按那颗按钮才走）。每次派发都换代，晚到的上一代结果因此作废。
+    pub fn submit_pin_recognize(&mut self, pin: RequestId) -> Option<Job> {
+        let target = self.pins.iter_mut().find(|p| p.id == pin)?;
+        if matches!(target.stage, RecognitionStage::Recognizing) {
+            return None;
+        }
+        target.recognize_gen += 1;
+        let generation = target.recognize_gen;
+        let path = target.path.clone();
+        target.stage = RecognitionStage::Recognizing;
+        Some(Job::PinRecognize {
+            pin,
+            generation,
+            path,
+        })
+    }
+
+    /// 一张贴图的识别回信。`false` = 这一代已经不是当前那一代（贴图换过图或被重派过），
+    /// 结果整条丢弃，界面上那一格保持它现在的样子。
+    pub fn apply_pin_recognized(
+        &mut self,
+        pin: RequestId,
+        generation: u64,
+        result: Result<OcrDocument, VisionError>,
+    ) -> bool {
+        let Some(pin) = self.pins.iter_mut().find(|p| p.id == pin) else {
+            return false;
+        };
+        if pin.recognize_gen != generation {
+            return false;
+        }
+        match result {
+            Ok(document) => {
+                pin.stage = RecognitionStage::Done {
+                    blocks: document.blocks.len(),
+                };
+                pin.document = Some(document);
+            }
+            // "这张图上真没有可读的字"不是失败：沿用 CHG-005 那一档，不新造（REQ-002）
+            Err(VisionError::NoTextFound) => {
+                pin.stage = RecognitionStage::NoText;
+                pin.document = None;
+            }
+            Err(err) => {
+                pin.stage = RecognitionStage::Failed(image_failure_text(&err));
+                pin.document = None;
+            }
+        }
+        true
+    }
+
+    /// 带子开合（REQ-003）。返回 `false` = 那个号不在，界面不该装作收起了。
+    pub fn set_pin_band(&mut self, pin: RequestId, open: bool) -> bool {
+        match self.pins.iter_mut().find(|p| p.id == pin) {
+            Some(p) => {
+                p.band_open = open;
+                true
+            }
+            None => false,
+        }
     }
 
     /// 那条共用的「停止」（REQ-009 的边界：一条入口，两种含义）。
@@ -1664,6 +2000,268 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    /// 截图这十条用例共用的一个干净状态（构造与 `app_with_source` 同一份，只是不塞源文）。
+    fn capture_state() -> AppState {
+        AppState::new(
+            Config::default(),
+            Glossary::default(),
+            KeyState::Missing,
+            None,
+        )
+    }
+
+    // ---- CHG-009 第四条通道（T-004/T-005 的无头判据） ----
+
+    /// 回信只改状态：成功那一支建一张贴图、派一次"只识别"，**一条翻译任务都不许出现**。
+    /// 断言写成"不发 `Job::ImageTranslate` / `Job::Translation`"，而不是"译文是 None"——
+    /// 后者在"根本没派过"与"派了但失败"两种情况下长得一模一样。
+    #[test]
+    fn a_capture_reply_builds_a_pin_and_dispatches_recognize_not_translation() {
+        let mut st = capture_state();
+        let path = PathBuf::from("/tmp/history/1-1-100.png");
+        // 先真派发一次：回信带的是那一刻的序号，凭空喂一个 1 会被判过期
+        let job = st.submit_capture().expect("空闲时该发得出框选任务");
+        assert!(matches!(job, Job::ScreenCapture { id: 1, seq: 1 }));
+        let applied = st.apply_capture(1, capture::Outcome::Captured(path.clone()));
+        assert_eq!(applied, CaptureApplied::Pinned { pin: 1 });
+        assert_eq!(st.pins.len(), 1);
+        assert_eq!(st.pins[0].path, path);
+        assert_eq!(st.capture_stage, CaptureStage::Pinned);
+        // 翻译段与合成段一个都没被这条回信碰过
+        assert!(st.translate_in_flight.is_none());
+        assert_eq!(st.compose_stage, ComposeStage::Idle);
+        assert!(st.composed.is_none());
+
+        // 识别派发走的是贴图自己那一支，回来的是"块"，仍然不是翻译
+        let job = st
+            .submit_pin_recognize(1)
+            .expect("刚钉上就该能派一次只识别");
+        assert!(
+            matches!(
+                job,
+                Job::PinRecognize {
+                    pin: 1,
+                    generation: 1,
+                    ..
+                }
+            ),
+            "派出来的必须是贴图识别：{job:?}"
+        );
+        assert!(st.pins[0].stage == RecognitionStage::Recognizing);
+    }
+
+    /// 取消那一支：**贴图不建、图片页现有内容一个都不动**（REQ-002 与面板 `Cancelled` 同规）。
+    /// 所以这里先故意摆一张已有的图与文档，回信之后必须还在原处。
+    #[test]
+    fn a_cancelled_reply_touches_nothing_but_its_own_stage() {
+        let mut st = capture_state();
+        st.ocr = Some(OcrDocument::empty(64, 48));
+        st.capture_in_flight = Some(1);
+        st.capture_stage = CaptureStage::Capturing;
+
+        let applied = st.apply_capture(1, capture::Outcome::Cancelled);
+        assert_eq!(applied, CaptureApplied::Cancelled);
+        assert!(st.pins.is_empty(), "取消了就不该有贴图");
+        assert_eq!(st.capture_stage, CaptureStage::Cancelled);
+        assert!(st.ocr.is_some(), "取消不许把图片页已有的东西清掉");
+        assert!(st.capture_in_flight.is_none());
+    }
+
+    /// 一次框选在飞时**不发起第二次**：后到的直接忽略。这条不靠按钮变灰兜住——
+    /// 热键那一下不经过按钮。
+    #[test]
+    fn a_second_capture_while_one_is_in_flight_is_ignored() {
+        let mut st = capture_state();
+        let first = st.submit_capture();
+        assert!(first.is_some());
+        assert!(st.submit_capture().is_none(), "在飞时第二次派发必须被拒");
+        assert_eq!(
+            st.capture_gate(),
+            Some("上一次框选还没画完"),
+            "按钮的话与状态的事实得是同一件事"
+        );
+        // 序号只走了一次
+        assert_eq!(st.capture_request_id, 1);
+        assert_eq!(st.capture_seq, 1);
+    }
+
+    /// 过期回信（被更晚一次顶掉、或本来就没在飞）：**连状态都不动**，返回 `Stale`。
+    #[test]
+    fn a_stale_capture_reply_leaves_the_screen_alone() {
+        let mut st = capture_state();
+        st.capture_in_flight = Some(7);
+        st.capture_stage = CaptureStage::Capturing;
+        let applied = st.apply_capture(
+            9,
+            capture::Outcome::Captured(PathBuf::from("/tmp/history/9-9-9.png")),
+        );
+        assert_eq!(applied, CaptureApplied::Stale);
+        assert!(st.pins.is_empty());
+        assert_eq!(
+            st.capture_stage,
+            CaptureStage::Capturing,
+            "过期回信不许改阶段"
+        );
+        assert_eq!(st.capture_in_flight, Some(7));
+    }
+
+    /// 满 6 张时**拒绝新的那一张**，而且不动已经钉着的任何一张（Q-007）。
+    /// 撤最老那张来腾位置是不可接受的：用户正对着的那张会凭空消失。
+    #[test]
+    fn the_seventh_pin_is_refused_without_disturbing_the_six_already_there() {
+        let mut st = capture_state();
+        let before: Vec<PathBuf> = (1..=PIN_MAX as u64)
+            .map(|i| PathBuf::from(format!("/tmp/history/{i}.png")))
+            .collect();
+        for path in &before {
+            st.push_pin(path.clone()).expect("前六张该钉得上");
+        }
+        assert_eq!(st.pins.len(), PIN_MAX);
+        assert_eq!(
+            st.capture_gate(),
+            Some("屏幕上已经钉满 6 张，先 esc 关掉一张")
+        );
+
+        st.capture_in_flight = Some(1);
+        let applied = st.apply_capture(
+            1,
+            capture::Outcome::Captured(PathBuf::from("/tmp/history/7.png")),
+        );
+        assert!(
+            matches!(applied, CaptureApplied::Failed(_)),
+            "第七张要被拒绝"
+        );
+        // 已经钉着的六张：一张不少、次序不变、路径没被换
+        assert_eq!(st.pins.len(), PIN_MAX);
+        assert_eq!(
+            st.pins.iter().map(|p| p.path.clone()).collect::<Vec<_>>(),
+            before
+        );
+        assert!(st.pins.iter().all(|p| p.id <= PIN_MAX as RequestId));
+    }
+
+    /// 贴图的识别按**代**丢弃：重派之后上一代的回信整条作废，
+    /// 界面那一格保持它现在的样子（第四条序号互不作废那条纪律的第四处）。
+    #[test]
+    fn a_late_pin_reply_cannot_overwrite_the_newer_generation() {
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/a.png"));
+        // 第一代：派发 → 落地，文档是那一份 8×8
+        let gen1 = match st.submit_pin_recognize(1) {
+            Some(Job::PinRecognize { generation, .. }) => generation,
+            other => panic!("刚钉上的贴图该能派一次只识别：{other:?}"),
+        };
+        assert!(st.apply_pin_recognized(1, gen1, Ok(OcrDocument::empty(8, 8))));
+        assert_eq!(st.pins[0].document.as_ref().unwrap().width, 8);
+
+        // 第二代：同一张再派一次，换代
+        let gen2 = match st.submit_pin_recognize(1) {
+            Some(Job::PinRecognize { generation, .. }) => generation,
+            other => panic!("落地之后同一张该能再派一次：{other:?}"),
+        };
+        assert_eq!(gen1, 1);
+        assert_eq!(gen2, 2);
+        assert_eq!(st.pins[0].stage, RecognitionStage::Recognizing);
+
+        // 上一代那条晚到的回信（20×20）：整条丢弃，界面那一格还是第一代那份 8×8
+        assert!(
+            !st.apply_pin_recognized(1, gen1, Ok(OcrDocument::empty(20, 20))),
+            "上一代的回信不许盖掉这一代"
+        );
+        assert_eq!(st.pins[0].document.as_ref().unwrap().width, 8);
+        assert_eq!(st.pins[0].stage, RecognitionStage::Recognizing);
+
+        // 这一代的回信回来才落地
+        assert!(st.apply_pin_recognized(1, gen2, Ok(OcrDocument::empty(20, 20))));
+        assert_eq!(st.pins[0].document.as_ref().unwrap().width, 20);
+        assert_eq!(st.pins[0].stage, RecognitionStage::Done { blocks: 0 });
+
+        // 贴图关掉之后，任何一代的回信都落不下去（号不复用，落不到新贴图上）
+        assert!(st.close_pin(1));
+        assert!(!st.apply_pin_recognized(1, gen2, Ok(OcrDocument::empty(30, 30))));
+    }
+
+    /// "这张图上真没有可读的字"沿用 CHG-005 那一档，**不当失败**（REQ-002 末句）。
+    /// 同时 `document` 必须是 `None`——REQ-005 的"没长出来就不许假装能选"靠这一格成立。
+    #[test]
+    fn a_pin_with_no_text_is_not_a_failure_and_has_nothing_to_select() {
+        use ice_vision::error::VisionError;
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/b.png"));
+        st.submit_pin_recognize(1);
+        let applied = st.apply_pin_recognized(1, 1, Err(VisionError::NoTextFound));
+        assert!(applied);
+        assert_eq!(st.pins[0].stage, RecognitionStage::NoText);
+        assert!(
+            st.pins[0].document.is_none(),
+            "文字层没长出来时数据源必须是 None"
+        );
+
+        // 数据源是 None 时，拖选的命中测试拿不到任何块：这里直接断言那份数据是空的
+        let blocks = st.pins[0]
+            .document
+            .as_ref()
+            .map(|d| d.blocks.len())
+            .unwrap_or_default();
+        assert_eq!(blocks, 0);
+    }
+
+    /// 关掉一张：不存在的号返回 `false`，调用方因此不能凭空说"已关闭"。
+    /// 关完之后剩下的那些不受影响（号不复用，晚到的回信落不到新图上）。
+    #[test]
+    fn closing_a_pin_reports_whether_it_was_actually_there() {
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/1.png"));
+        st.push_pin(PathBuf::from("/tmp/history/2.png"));
+        assert!(st.close_pin(1));
+        assert!(!st.close_pin(1), "再关一次要说没关掉（它本来就不在）");
+        assert!(!st.close_pin(99), "不存在的号不许装作成功");
+        assert_eq!(st.pins.len(), 1);
+        assert_eq!(st.pins[0].id, 2);
+        // 关过的号不会被下一张顶替
+        assert_eq!(st.push_pin(PathBuf::from("/tmp/history/3.png")), Some(3));
+    }
+
+    /// 带子开合只认真存在的贴图（REQ-003 那条"收起=窗口缩到图片本身"的状态面）。
+    #[test]
+    fn the_band_toggle_refuses_a_pin_that_is_not_there() {
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/1.png"));
+        assert!(st.pins[0].band_open, "刚钉上时带子是开着的");
+        assert!(st.set_pin_band(1, false));
+        assert!(!st.pins[0].band_open);
+        assert!(!st.set_pin_band(77, true));
+    }
+
+    /// 那颗按钮的话与状态行读**同一个来源**：三道门从上往下——这台机器没这件事、
+    /// 上一次还在画、屏幕上钉满了。这里锁后两道（第一道要换平台才看得到）。
+    #[test]
+    fn the_button_gate_and_the_status_line_read_one_source() {
+        let mut st = capture_state();
+        if !capture::capability().capture {
+            // 非 mac：第一道门就该亮
+            assert_eq!(
+                st.capture_gate(),
+                Some("这台机器没有可用的框选截图；可先用系统截图再点「粘贴」")
+            );
+            return;
+        }
+        assert_eq!(st.capture_gate(), None, "空闲时按钮不该灰");
+        st.submit_capture();
+        assert_eq!(st.capture_gate(), Some("上一次框选还没画完"));
+        st.capture_in_flight = None;
+        for i in 0..PIN_MAX {
+            st.push_pin(PathBuf::from(format!("/tmp/history/{i}.png")));
+        }
+        assert_eq!(
+            st.capture_gate(),
+            Some("屏幕上已经钉满 6 张，先 esc 关掉一张")
+        );
+        // 关掉一张，门就开了（拒绝的前提是"满"，不是"截图这件事坏了"）
+        st.close_pin(1);
+        assert_eq!(st.capture_gate(), None);
+    }
+
     use super::*;
 
     fn ok(text: &str, engine: EngineKind) -> TranslationResult {
@@ -1692,7 +2290,11 @@ mod tests {
     fn request_of(job: &Job) -> &TranslationRequest {
         match job {
             Job::Translation { request, .. } => request,
-            Job::ImageOcr { .. } | Job::ImageTranslate { .. } | Job::ImageCompose { .. } => {
+            Job::ImageOcr { .. }
+            | Job::ImageTranslate { .. }
+            | Job::ImageCompose { .. }
+            | Job::ScreenCapture { .. }
+            | Job::PinRecognize { .. } => {
                 panic!("这条断言只适用于文本任务")
             }
         }
@@ -1701,7 +2303,11 @@ mod tests {
     fn engine_of(job: &Job) -> EngineKind {
         match job {
             Job::Translation { engine, .. } => *engine,
-            Job::ImageOcr { .. } | Job::ImageTranslate { .. } | Job::ImageCompose { .. } => {
+            Job::ImageOcr { .. }
+            | Job::ImageTranslate { .. }
+            | Job::ImageCompose { .. }
+            | Job::ScreenCapture { .. }
+            | Job::PinRecognize { .. } => {
                 panic!("这条断言只适用于文本任务")
             }
         }
@@ -1714,7 +2320,11 @@ mod tests {
             Job::Translation { id, .. }
             | Job::ImageOcr { id, .. }
             | Job::ImageTranslate { id, .. }
-            | Job::ImageCompose { id, .. } => *id,
+            | Job::ImageCompose { id, .. }
+            | Job::ScreenCapture { id, .. } => *id,
+            // 贴图那条带的是 `pin` + `generation`，**不是** 请求序号：
+            // 给它编一个 `id` 就等于让测试可以拿错东西去断言
+            Job::PinRecognize { .. } => panic!("贴图识别那条没有请求序号"),
         }
     }
 
