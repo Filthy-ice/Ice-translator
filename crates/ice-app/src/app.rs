@@ -4246,4 +4246,52 @@ mod tests {
         app.pending_save = PendingSave::None;
         assert_eq!(app.pending_save, PendingSave::None);
     }
+
+    /// esc 关这张贴图 = **只把它从"该被 show 的集合"里摘掉**，历史目录里那张原图
+    /// 一个字都不动（REQ-004 第一条）。关掉之后再点一次不许凭空报错说"已关闭"。
+    #[test]
+    fn closing_a_pin_with_escape_only_drops_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("esc.png");
+        image::RgbImage::from_pixel(6, 4, image::Rgb([7, 8, 9]))
+            .save(&file)
+            .unwrap();
+        let before = std::fs::read(&file).unwrap();
+
+        let mut state = plain_state();
+        let pin = state.push_pin(file.clone()).unwrap();
+        let mut app = app(dir.path(), state);
+        let mut effects = Effects::default();
+
+        app.apply_pin_intent(pin, crate::system::pin::PinIntent::Close, &mut effects);
+        assert!(app.state.pins.is_empty());
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            before,
+            "关一张贴图动了历史文件"
+        );
+        // 关掉这一张不碰剪贴板也不派任何任务
+        assert!(effects.copy_pin.is_none() && effects.job.is_none());
+
+        // 再关一次：那张本来就不在了，界面上不该说"已关闭"
+        let mut again = Effects::default();
+        app.apply_pin_intent(pin, crate::system::pin::PinIntent::Close, &mut again);
+        assert!(again.copy_pin.is_none());
+    }
+
+    /// 空格只收放这一张的带子，别把别人的也收了（六张同时在屏是合法情况）。
+    #[test]
+    fn the_space_key_toggles_the_band_of_that_pin_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = plain_state();
+        for name in ["a.png", "b.png"] {
+            state.push_pin(dir.path().join(name)).unwrap();
+        }
+        let mut app = app(dir.path(), state);
+        let mut effects = Effects::default();
+
+        app.apply_pin_intent(2, crate::system::pin::PinIntent::ToggleBand, &mut effects);
+        assert!(!app.state.pins[1].band_open, "第二张的带子没收起来");
+        assert!(app.state.pins[0].band_open, "第一张被牵连了");
+    }
 }

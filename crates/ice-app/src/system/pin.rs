@@ -188,15 +188,28 @@ pub fn band_buttons(ui: &mut Ui, sink: &mut Vec<PinIntent>) {
 }
 
 /// 图片本体那块的命中意图：**按住就能拖**（REQ-004 第一条）。
+/// 图片本体那一块。
 ///
-/// 首选 `with_movable_by_background(true)`——实测无边框子窗整张能拖着走，拖到的位置
-/// `outer_rect` 读得到（事实 29/32），不需要我们自己接拖动事件算增量；这条只负责"这块
-/// 区域该被当作窗口本体而不是控件"，真的拖动由系统做。
+/// `Sense::click()` 只为了右键菜单吃得着这一下；**左键按住拖动交给系统**
+/// （`with_movable_by_background(true)`，事实 29/32 实测能把无边框子窗拖着走，
+/// 拖到哪 `outer_rect` 就读到哪）。自己接按下事件算增量坐标是另一条路
+/// （`ViewportCommand::StartDrag`，它自己注释就写着"不保证有效，除非紧接左键按下"）——
+/// **两条都留一份坐标计算迟早对不上**，所以这里只留一条，另一条不出现。
 pub fn image_area(ui: &mut Ui, size: Vec2) -> Response {
-    // `Sense::hover()` 而不是 `drag()`：真的拖动由 `with_movable_by_background(true)` 交给
-    // 系统做（事实 29/32 实测能把无边框子窗拖着走）。我们自己接住按下事件反而会让系统
-    // 收不到那一下，症状是"按住图拖不动，按住带子却能动"。
-    ui.allocate_rect(Rect::from_min_size(Pos2::ZERO, size), Sense::hover())
+    ui.allocate_rect(Rect::from_min_size(Pos2::ZERO, size), Sense::click())
+}
+
+/// 右键菜单：画在图片本体上，**恰好四项**，与带子里那四颗同一张表（[`ACTIONS`]）。
+///
+/// 项数由那一张表一处决定；`exactly_four_actions_shared_by_the_band_and_the_menu` 钉住
+/// "只要四项"这句原话——加第五项要改表，而断言会先响。
+pub fn image_menu(ui: &mut Ui, sink: &mut Vec<PinIntent>) {
+    for action in ACTIONS {
+        if ui.button(action.menu_label()).clicked() {
+            sink.push(PinIntent::from_action(action));
+            ui.close();
+        }
+    }
 }
 
 /// 一张贴图在 egui 里的"活着"证据：纹理 + 像素尺寸 + 是哪一个来源。
@@ -405,17 +418,21 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
             root.data_mut(|d| d.insert_temp(size_key(id), layout.window_size));
         }
 
-        // 图片本体：铺在 `image_rect` 上。先占位再画，光标因此停在图片下缘，
-        // 下一格分配到的正是 `band_rect`——「按钮只在带子里活动」在代码里就是这两行。
-        image_area(ui, layout.image_rect.size());
+        // 这一帧这张攒下的意图（带子、菜单、键盘三处都往这儿放，最后一起交给交接槽）
+        let mut local: Vec<PinIntent> = Vec::new();
+
+        // 图片本体：先占位（光标因此停在图片下缘，下一格拿到的正是 `band_rect`），再画
+        let area = image_area(ui, layout.image_rect.size());
         ui.painter().image(
             texture.id(),
             layout.image_rect,
             Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
             egui::Color32::WHITE,
         );
+        // 右键：恰好四项，与带子同一张表
+        area.context_menu(|ui| image_menu(ui, &mut local));
+
         if band_open {
-            let mut local: Vec<PinIntent> = Vec::new();
             ui.allocate_ui_with_layout(
                 Vec2::new(layout.window_size.x, BAND_H),
                 egui::Layout::left_to_right(egui::Align::Center),
@@ -429,12 +446,13 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
                     }
                 },
             );
-            if !local.is_empty() {
-                if let Ok(mut queue) = slot.lock() {
-                    queue.extend(local);
-                }
-                root.request_repaint();
+        }
+        if !local.is_empty() {
+            if let Ok(mut queue) = slot.lock() {
+                queue.extend(local);
             }
+            // 意图是主窗下一帧要取的：**推完必须叫主窗**（同一条纪律的第三处）
+            root.request_repaint();
         }
     });
 }
@@ -451,6 +469,19 @@ pub fn default_save_name(id: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 把注释行与测试模块之前的部分留下：形状核查要看的是**代码里写了什么**，
+    /// 不是注释里讨论了什么（本文件就专门解释过为什么不用另一条拖动路）。
+    fn implementation_lines(source: &str) -> String {
+        source
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or(source)
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 
     fn px(w: f32, h: f32) -> Vec2 {
         Vec2::new(w, h)
@@ -746,5 +777,47 @@ mod tests {
         // 不带历史目录里那个内部编号形态（pid-自增-epoch），也不带文件名分隔符歧义
         assert!(!name.contains("1730000000"), "把 epoch 当名字了");
         assert_ne!(name, default_save_name(8), "两张的默认名不该撞");
+    }
+
+    /// **形状核查：一条拖动路。** 自己接按下算增量坐标那条（`StartDrag`）不许同时存在——
+    /// 两处各攒一份坐标迟早对不上（`outer_rect` 才是位置的唯一出处，事实 32）。
+    #[test]
+    fn only_one_drag_path_exists_in_this_module() {
+        let source = include_str!("pin.rs");
+        // 只看代码：本文件的注释里就提到过 StartDrag（说为什么不用它），拿散文当证据会误报
+        let body = implementation_lines(source);
+        assert!(
+            !body.contains("StartDrag"),
+            "本模块的实现里出现了 StartDrag：两条拖动路会各攒一份坐标"
+        );
+        assert_eq!(
+            body.matches("with_movable_by_background").count(),
+            1,
+            "系统那条拖动路只许出现一处（调用点），别在两个 builder 上各设一次"
+        );
+    }
+
+    /// **形状核查：一份清单。** 带子与右键菜单两处都只许遍历 `ACTIONS`，
+    /// 不许各自再写一遍按钮名——那句"只要四项"要被钉住，不是被打折理解。
+    #[test]
+    fn both_the_band_and_the_menu_iterate_the_one_table() {
+        let body = implementation_lines(include_str!("pin.rs"));
+        for name in ["band_buttons", "image_menu"] {
+            let start = body
+                .find(&format!("pub fn {name}"))
+                .unwrap_or_else(|| panic!("找不到 {name}"));
+            let text =
+                &body[start..body[start..].find("\n}").unwrap_or(body.len() - start) + start];
+            assert!(
+                text.contains("ACTIONS"),
+                "{name} 不再遍历 ACTIONS 了，等于私自加了第二份清单"
+            );
+        }
+        // 按钮名只出现在 PinAction 的 match 里（一处），不在两个绘制函数里各写一遍
+        assert_eq!(
+            body.matches("\"翻译\"").count(),
+            1,
+            "「翻译」这两个字出现了第二处：文案该由那张表一处给"
+        );
     }
 }
