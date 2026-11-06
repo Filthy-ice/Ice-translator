@@ -188,6 +188,11 @@
       "at": "2026-11-06T07:29:05+00:00",
       "action": "task-done",
       "detail": "T-007"
+    },
+    {
+      "at": "2026-11-06T07:36:34+00:00",
+      "action": "task-done",
+      "detail": "T-008"
     }
   ],
   "approval": {
