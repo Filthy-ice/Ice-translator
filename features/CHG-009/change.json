@@ -163,6 +163,21 @@
       "at": "2026-11-06T04:07:06+00:00",
       "action": "task-done",
       "detail": "T-005"
+    },
+    {
+      "at": "2026-11-06T06:27:20+00:00",
+      "action": "replan",
+      "detail": "V-023 入账（默认键保持的两条 A/B 旁证），任务表内容未变，重新封存计划指纹"
+    },
+    {
+      "at": "2026-11-06T06:27:21+00:00",
+      "action": "seal-plan",
+      "detail": "4649648fb176bb14109fd7af3961dd911e2aaa588d89ee056c9b9ab08c45a3ab"
+    },
+    {
+      "at": "2026-11-06T06:27:32+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
     }
   ],
   "approval": {
@@ -178,5 +193,5 @@
       "ice-translator": "main"
     }
   },
-  "plan_hash": "c96c3aa6b0b6755a5704845c4b42080b48e5cf882c0a413e337df15e27a59922"
+  "plan_hash": "4649648fb176bb14109fd7af3961dd911e2aaa588d89ee056c9b9ab08c45a3ab"
 }
