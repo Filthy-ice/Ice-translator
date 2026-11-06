@@ -58,8 +58,11 @@
         "REQ-005"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/state.rs",
+        "crates/ice-app/src/jobs.rs"
+      ]
     },
     {
       "id": "T-005",
@@ -71,8 +74,11 @@
         "REQ-011"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/jobs.rs",
+        "crates/ice-app/src/state.rs"
+      ]
     },
     {
       "id": "T-006",
