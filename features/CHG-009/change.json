@@ -3,7 +3,7 @@
   "id": "CHG-009",
   "title": "区域截图与钉屏贴图（FR-2.10 扩体）：框选 → 钉住 → 点一下才译",
   "version": "v0.6",
-  "status": "SPEC_REVIEW",
+  "status": "IMPLEMENTING",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -107,8 +107,66 @@
       "at": "2026-11-06T03:20:06+00:00",
       "action": "revise",
       "detail": "热键族由真机按键闭合（48 次派发全命中，事实 35）；撤回 v0.5 之前那批 FIRED=0 读数（EventTypeSpec 常量抄错，事实 7 作废）；handler 落点定死 dispatcher target（事实 36）；注入件与 CreateEvent 两条边界立为不可自证（事实 37）；停摆态送达 + 回调必须自己 request_repaint（104ms，事实 38）；裸 F1/F2/F3 按得响（事实 39）；落点审计三条（模块定名 global_hotkeys.rs、回调形状照抄 tray、真应用至今裸二进制与 H2 撞同一件事，事实 40~42）"
+    },
+    {
+      "at": "2026-11-06T03:50:10+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f",
+        "version": "v0.6",
+        "by": "filthy-ice",
+        "reference": "2026-11-06 Qoder Desktop 会话：用户看过待批 33/34 后批准 CHG-009@v0.6（热键族 48 次派发证毕、handler 落点与回调叫循环定死、打包按他的顺序延后）",
+        "at": "2026-11-06T03:50:10+00:00",
+        "snapshot": "approvals/v0.6-890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f.md",
+        "scope": "local-delivery",
+        "context_hash": "7f28f80273a46342ecec3e344ac14a70cd77a31e19044be8b44f19bd9251bb25",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-06T03:51:09+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-009",
+        "version": "v0.6",
+        "spec_hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f"
+      }
+    },
+    {
+      "at": "2026-11-06T03:51:50+00:00",
+      "action": "seal-plan",
+      "detail": "c96c3aa6b0b6755a5704845c4b42080b48e5cf882c0a413e337df15e27a59922"
+    },
+    {
+      "at": "2026-11-06T03:51:55+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-11-06T03:58:09+00:00",
+      "action": "task-done",
+      "detail": "T-002"
+    },
+    {
+      "at": "2026-11-06T03:58:09+00:00",
+      "action": "task-done",
+      "detail": "T-003"
     }
   ],
-  "approval": null,
-  "plan_hash": null
+  "approval": {
+    "hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f",
+    "version": "v0.6",
+    "by": "filthy-ice",
+    "reference": "2026-11-06 Qoder Desktop 会话：用户看过待批 33/34 后批准 CHG-009@v0.6（热键族 48 次派发证毕、handler 落点与回调叫循环定死、打包按他的顺序延后）",
+    "at": "2026-11-06T03:50:10+00:00",
+    "snapshot": "approvals/v0.6-890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f.md",
+    "scope": "local-delivery",
+    "context_hash": "7f28f80273a46342ecec3e344ac14a70cd77a31e19044be8b44f19bd9251bb25",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "c96c3aa6b0b6755a5704845c4b42080b48e5cf882c0a413e337df15e27a59922"
 }
