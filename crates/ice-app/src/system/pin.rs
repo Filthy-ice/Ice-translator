@@ -382,9 +382,10 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
         .with_transparent(false)
         .with_has_shadow(false)
         .with_always_on_top()
-        // 拖动这一档实测有效（事实 29/32）：按住无边框子窗的图本体就能拖着走，
-        // 拖到的位置 `outer_rect` 读得到。我们自己接住按下事件反而会让系统收不到那一下。
-        .with_movable_by_background(true)
+        // **不开 `movable_by_background`**。它看着是"实测能拖"的那条路，但无边框窗的整片
+        // 内容都算背景：每一次按下都被 AppKit 当成拖窗口吃掉，于是带子按钮收不到点击、
+        // 右键菜单弹不出来，窗口也从来没成为 key window——键盘事件（esc、空格）同样进不来。
+        // 用户报的"三个关法都不管用"就是这一个原因。拖动改按下面那一处 `StartDrag`。
         .with_title("贴图");
 
     let texture = visual.texture;
@@ -435,6 +436,16 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
             Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
             egui::Color32::WHITE,
         );
+        // 拖动：只在**图片本体上按下左键**的那一下交给系统去拖窗口。
+        // `StartDrag` 的约束是"必须紧接在左键按下之后"，所以判据用按下而不是抬起；
+        // 带子那几颗不在这块矩形里，它们的按下不会被抢走。
+        // `contains_pointer()` 是这一帧这块矩形上有没有指针（egui 自己算好的），
+        // 再配上当前的左键按下——两个条件同时成立才把这一次按下交给系统去拖窗口
+        let image_pressed = area.contains_pointer()
+            && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
+        if image_pressed {
+            child.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
         // 右键：恰好四项，与带子同一张表
         area.context_menu(|ui| image_menu(ui, &mut local));
 
@@ -785,21 +796,29 @@ mod tests {
         assert_ne!(name, default_save_name(8), "两张的默认名不该撞");
     }
 
-    /// **形状核查：一条拖动路。** 自己接按下算增量坐标那条（`StartDrag`）不许同时存在——
-    /// 两处各攒一份坐标迟早对不上（`outer_rect` 才是位置的唯一出处，事实 32）。
+    /// **形状核查：只有一条拖动路，而且不自己攒坐标。**
+    ///
+    /// 这一条改过一次，理由是实测：先前用的是 `with_movable_by_background(true)`，
+    /// 无边框窗整片内容都算"背景"，于是每一次按下都被 AppKit 当成拖窗口吃掉——带子按钮
+    /// 收不到点击、右键菜单弹不出来、窗口从没成为 key window 所以 esc 与空格也进不来
+    /// （用户报的"三个关法都不管用"就是这一个原因）。现在换成图片本体按下时发 `StartDrag`，
+    /// 只有一条路：另一条不许同时存在，位置也不许自己算（只从 `outer_rect` 读）。
     #[test]
     fn only_one_drag_path_exists_in_this_module() {
-        let source = include_str!("pin.rs");
-        // 只看代码：本文件的注释里就提到过 StartDrag（说为什么不用它），拿散文当证据会误报
-        let body = implementation_lines(source);
+        let body = implementation_lines(include_str!("pin.rs"));
         assert!(
-            !body.contains("StartDrag"),
-            "本模块的实现里出现了 StartDrag：两条拖动路会各攒一份坐标"
+            !body.contains("movable_by_background"),
+            "背景拖动不许回来：它会吞掉这一扇窗的所有点击与键盘"
         );
         assert_eq!(
-            body.matches("with_movable_by_background").count(),
+            body.matches("ViewportCommand::StartDrag").count(),
             1,
-            "系统那条拖动路只许出现一处（调用点），别在两个 builder 上各设一次"
+            "拖动只许有一处发起点"
+        );
+        // 位置不许有第二个来源：本模块既不发 OuterPosition，也不存坐标字段
+        assert!(
+            !body.contains("OuterPosition"),
+            "不许由我们往窗口发位置命令：位置只从 outer_rect 读"
         );
     }
 
