@@ -87,8 +87,12 @@
         "REQ-003"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/pin.rs",
+        "crates/ice-app/src/app.rs",
+        "crates/ice-app/src/state.rs"
+      ]
     },
     {
       "id": "T-007",

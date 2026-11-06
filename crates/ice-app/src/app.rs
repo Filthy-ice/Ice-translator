@@ -1195,6 +1195,47 @@ impl IceApp {
         }
     }
 
+    /// 把贴图那几扇窗画出来，并取走它们各自攒下的意图。
+    ///
+    /// 先 `clone` 一遍清单再遍历：处理一条意图会改 `state.pins`（关一张就摘一条），
+    /// 边遍历边改是借位检查器最爱抓的事；这里宁可多拷几份 `PathBuf`。
+    fn draw_pins(&mut self, ctx: &egui::Context) {
+        if self.state.pins.is_empty() {
+            return;
+        }
+        for pin in self.state.pins.clone() {
+            crate::system::pin::show(ctx, pin.id, &pin.path, pin.band_open);
+            for intent in crate::system::pin::take_intents(ctx, pin.id) {
+                self.apply_pin_intent(pin.id, intent);
+            }
+        }
+    }
+
+    /// 一张贴图发出来的意图，落到**既有**通道上（本包不开第二条实现）。
+    ///
+    /// 现在就生效的是两条纯窗口/状态的事：关这张（只摘状态与窗口，**不动历史文件**）、
+    /// 收放带子。翻译、复制图像、保存图像那三条分别归 T-007 与 T-008 接到既有链上
+    /// （识别→翻译→回填→成品、`clipboard::write_image`、`panel::request_save`）——
+    /// 在那之前入口那颗「框选贴图」也还没接（T-011），所以这三条在界面上到不了。
+    fn apply_pin_intent(&mut self, id: u64, intent: crate::system::pin::PinIntent) {
+        use crate::system::pin::PinIntent;
+        match intent {
+            PinIntent::Close => {
+                self.state.close_pin(id);
+            }
+            PinIntent::ToggleBand => {
+                let open = self
+                    .state
+                    .pins
+                    .iter()
+                    .find(|p| p.id == id)
+                    .is_some_and(|p| !p.band_open);
+                self.state.set_pin_band(id, open);
+            }
+            PinIntent::Translate | PinIntent::CopyImage | PinIntent::SaveImage => {}
+        }
+    }
+
     /// 帧末统一执行副作用：view 只改 `AppState`，碰系统的地方全在这里（REQ-005 的验证层次）
     fn run_effects(&mut self, ctx: &egui::Context, effects: Effects) {
         // 顺序有意义：术语与引擎重建要先于本帧的任务派发，否则新任务会用旧参数跑一遍
@@ -1632,6 +1673,11 @@ impl eframe::App for IceApp {
                 views::compact::show(ui, &mut self.state, &mut effects, ai_available, dim)
             }
         }
+
+        // 贴图窗（CHG-009 REQ-003/004）：**每帧为每一张活着的贴图各 show 一次**。
+        // 只在第一帧调一次的写法实测会翻车（事实 25）：窗口下一帧就被 egui 以
+        // `it was never used this pass` 删掉。反过来，"关掉一张"的实现就是这一帧起不再 show 它。
+        self.draw_pins(&ctx);
 
         self.run_effects(&ctx, effects);
         self.renew_repaints(&ctx);
