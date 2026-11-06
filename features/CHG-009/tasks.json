@@ -175,8 +175,13 @@
         "REQ-010"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/capture.rs",
+        "crates/ice-app/src/jobs.rs",
+        "crates/ice-app/src/app.rs",
+        "crates/ice-app/src/state.rs"
+      ]
     },
     {
       "id": "T-013",
