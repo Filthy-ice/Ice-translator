@@ -9,6 +9,7 @@ pub mod dock;
 pub mod hotkeys;
 pub mod mouse;
 pub mod panel;
+pub mod pin;
 pub mod screen;
 pub mod secrets;
 pub mod single_instance;
