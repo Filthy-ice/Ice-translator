@@ -384,6 +384,27 @@ pub fn show(ctx: &egui::Context, id: u64, path: &Path, band_open: bool) {
     });
 }
 
+/// 这张贴图**此刻屏上是什么，交出去的就是什么**：从它自己的文件读回像素。
+///
+/// 为什么现读而不是把 `RgbaImage` 长期留在内存里：一张 4K 区域的 RGBA 是几十 MB，六张
+/// 就是几百 MB（H7 剩下的正是这一格代价），而复制与保存都是用户显式点一下的动作，一次
+/// 读盘换不来"第四条任务 + 与成品换代赛跑"那套机制。顺带一条好处：**原图是唯一真相源**
+/// （Q-008），复制与保存出来的东西与历史目录里那张对得上。
+pub fn pixels_of(path: &Path) -> Option<image::RgbaImage> {
+    ice_vision::import::admit_path(path)
+        .map(|admitted| admitted.image)
+        .ok()
+}
+
+/// 保存面板的默认名：`贴图-N.png`，N 是这张贴图的号。
+///
+/// 这里刻意不做日期换算，也不引日期库（V-006 零依赖增量）：我试过一次手写公历换算，
+/// 结果在 1900 这个非闰年上算出了一个不存在的 `2 月 29 日`——为一个默认文件名养一份
+/// 自己错的日历不值得。号只往前走不复用，同一批里就不撞名。
+pub fn default_save_name(id: u64) -> String {
+    format!("\u{8d34}\u{56fe}-{id}.png")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,5 +678,20 @@ mod tests {
             show(ui.ctx(), 3, &missing, true);
         });
         assert!(take_intents(&ctx, 3).is_empty());
+    }
+
+    /// 保存面板的默认名**不许用历史目录里那个内部编号**当样子（那是我们的存储结构），
+    /// 也不能带用户可能截到的任何内容。
+    #[test]
+    fn the_save_name_is_a_readable_name_not_our_internal_id() {
+        let name = default_save_name(7);
+        assert!(name.ends_with("-7.png"), "默认名该带这张的号：{name}");
+        assert!(
+            name.starts_with("\u{8d34}\u{56fe}"),
+            "默认名该以「贴图」开头：{name}"
+        );
+        // 不带历史目录里那个内部编号形态（pid-自增-epoch），也不带文件名分隔符歧义
+        assert!(!name.contains("1730000000"), "把 epoch 当名字了");
+        assert_ne!(name, default_save_name(8), "两张的默认名不该撞");
     }
 }

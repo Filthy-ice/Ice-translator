@@ -82,6 +82,8 @@ pub struct IceApp {
     outcomes: OutcomeReceiver,
     history: HistoryStore,
     config_path: PathBuf,
+    /// 保存面板在等谁的回信（见 [`PendingSave`]）
+    pending_save: PendingSave,
     /// 单实例锁。`on_exit` 里显式释放，进程被杀时靠 `Drop`（REQ-009）
     lock: Option<InstanceLock>,
     key_probe: KeyProbeReceiver,
@@ -178,6 +180,7 @@ impl IceApp {
             outcomes,
             history,
             config_path,
+            pending_save: PendingSave::None,
             lock,
             key_probe,
             panel_tx,
@@ -1102,14 +1105,25 @@ impl IceApp {
         while let Ok(reply) = self.save_rx.try_recv() {
             match reply {
                 panel::Reply::Picked(path) => {
-                    let (tone, text) = save_product(&self.state, &path);
+                    // 面板开着的那几秒里可能又点了一颗别的保存、也可能把那张贴图关了：
+                    // 按**当初那一份**去存，来源没了就照"没了"说，不拿最后一张顶缸
+                    let (tone, text) =
+                        match std::mem::replace(&mut self.pending_save, PendingSave::None) {
+                            PendingSave::Pin(id) => save_pin_image(&self.state, id, &path),
+                            PendingSave::Page | PendingSave::None => {
+                                save_product(&self.state, &path)
+                            }
+                        };
                     self.state.toast(tone, text);
                 }
-                // 取消是用户自己的选择，不需要一句"你取消了"来打扰
-                panel::Reply::Cancelled => {}
-                panel::Reply::Failed => self
-                    .state
-                    .toast(Tone::Error, "保存面板没有回应；请再点一次「保存」"),
+                // 取消是用户自己的选择，不需要一句"你取消了"来打扰——但**来源要清掉**：
+                // 留着它就等于认定"下一份成品该存给它",那才是真出错
+                panel::Reply::Cancelled => self.pending_save = PendingSave::None,
+                panel::Reply::Failed => {
+                    self.pending_save = PendingSave::None;
+                    self.state
+                        .toast(Tone::Error, "保存面板没有回应；请再点一次「保存」")
+                }
             }
         }
     }
@@ -1199,30 +1213,46 @@ impl IceApp {
     ///
     /// 先 `clone` 一遍清单再遍历：处理一条意图会改 `state.pins`（关一张就摘一条），
     /// 边遍历边改是借位检查器最爱抓的事；这里宁可多拷几份 `PathBuf`。
-    fn draw_pins(&mut self, ctx: &egui::Context) {
+    fn draw_pins(&mut self, ctx: &egui::Context, effects: &mut Effects) {
         if self.state.pins.is_empty() {
             return;
         }
         for pin in self.state.pins.clone() {
             crate::system::pin::show(ctx, pin.id, &pin.path, pin.band_open);
             for intent in crate::system::pin::take_intents(ctx, pin.id) {
-                self.apply_pin_intent(pin.id, intent);
+                self.apply_pin_intent(pin.id, intent, effects);
             }
         }
     }
 
-    /// 一张贴图发出来的意图，落到**既有**通道上（本包不开第二条实现）。
+    /// 这张贴图此刻的文件。贴图已经不在时给一个空路径——`pixels_of` 读不出来，
+    /// 由那一条统一说"不在了"，不在这里造第二套失败话。
+    fn pin_path(&self, id: u64) -> std::path::PathBuf {
+        self.state
+            .pins
+            .iter()
+            .find(|pin| pin.id == id)
+            .map(|pin| pin.path.clone())
+            .unwrap_or_default()
+    }
+
+    /// 一张贴图发出来的意图落到**既有**通道上（本包不开第二条实现）。
     ///
-    /// 现在就生效的是两条纯窗口/状态的事：关这张（只摘状态与窗口，**不动历史文件**）、
-    /// 收放带子。翻译、复制图像、保存图像那三条分别归 T-007 与 T-008 接到既有链上
-    /// （识别→翻译→回填→成品、`clipboard::write_image`、`panel::request_save`）——
-    /// 在那之前入口那颗「框选贴图」也还没接（T-011），所以这三条在界面上到不了。
-    fn apply_pin_intent(&mut self, id: u64, intent: crate::system::pin::PinIntent) {
+    /// 关这张与收放带子是纯状态的事，就地做完；复制、保存、翻译只出意图——它们要碰
+    /// 剪贴板、原生面板和网络，那些都在 `run_effects` 里，视图这一层一个字都不碰系统。
+    fn apply_pin_intent(
+        &mut self,
+        id: u64,
+        intent: crate::system::pin::PinIntent,
+        effects: &mut Effects,
+    ) {
         use crate::system::pin::PinIntent;
         match intent {
             PinIntent::Close => {
                 self.state.close_pin(id);
             }
+            PinIntent::CopyImage => effects.copy_pin = Some(id),
+            PinIntent::SaveImage => effects.save_pin = Some(id),
             PinIntent::ToggleBand => {
                 let open = self
                     .state
@@ -1232,7 +1262,10 @@ impl IceApp {
                     .is_some_and(|p| !p.band_open);
                 self.state.set_pin_band(id, open);
             }
-            PinIntent::Translate | PinIntent::CopyImage | PinIntent::SaveImage => {}
+            // T-007 的前半：这颗按下才走链（识别 → 翻译 → 回填 → 成品原地替换）
+            // 这颗按下走链：整条链（翻译→回填→成品）在 T-007 后半接，这一格先把意图
+            // 原样带出去——**不在这里吞掉它**，吞掉的意图会让矩阵缺一格而没人发现
+            PinIntent::Translate => effects.translate_pin = Some(id),
         }
     }
 
@@ -1295,6 +1328,8 @@ impl IceApp {
                     Tone::Error,
                     "这台机器弹不出系统保存面板；可以用「复制图片」再粘到别处",
                 );
+            } else {
+                self.pending_save = PendingSave::Page;
             }
         }
         if effects.copy_image {
@@ -1309,6 +1344,31 @@ impl IceApp {
                 Some(Err(reason)) => self.state.toast(Tone::Error, reason),
                 // 那颗按钮在没有成品时是灰的，这一支只在"点下去到帧末之间成品被换掉"时走到
                 None => self.state.toast(Tone::Warn, PRODUCT_GONE_TEXT),
+            }
+        }
+        // 贴图那两条出路（CHG-009 REQ-003/004）：**复用上面那两条同一把函数**，
+        // 只换像素来源——从这张自己的文件读回（`pin::pixels_of`），长期留一份 RGBA 是六张
+        // 几百 MB，而复制/保存都是用户显式点一下，一次读盘换不来第四条任务那套机制。
+        if let Some(id) = effects.copy_pin {
+            let written = crate::system::pin::pixels_of(&self.pin_path(id))
+                .map(|pixels| clipboard::write_image(&pixels));
+            match written {
+                Some(Ok(())) => self.state.toast(Tone::Info, clipboard::COPY_IMAGE_DONE),
+                Some(Err(reason)) => self.state.toast(Tone::Error, reason),
+                None => self.state.toast(Tone::Warn, PIN_GONE_TEXT),
+            }
+        }
+        if let Some(id) = effects.save_pin {
+            let default_name = crate::system::pin::default_save_name(id);
+            // 面板要的是"把名字交出去"，落盘等回信：这一支与图片页那条共用同一个回信通道，
+            // 差别只在回信来时该存哪一份像素（见 `pending_save`）
+            if !panel::request_save(&self.save_tx, ctx, &default_name, &panel::SAVE_TYPES) {
+                self.state.toast(
+                    Tone::Error,
+                    "这台机器弹不出系统保存面板；可以用「复制」再粘到别处",
+                );
+            } else {
+                self.pending_save = PendingSave::Pin(id);
             }
         }
         if let Some(text) = effects.copy {
@@ -1494,6 +1554,47 @@ impl IceApp {
 ///
 /// 路径按 Q-005 收口（没写扩展名补 `.png`），格式仍由扩展名判；成功那句里**不带路径**，
 /// 与 `export` 那两句失败文案同一条口径（NFR-3：路径会进日志，那是用户内容）。
+/// 「保存」面板回信时，该存哪一份像素。
+///
+/// 面板是异步的：从"点了保存"到"选了位置"之间可能隔几秒，这期间用户可能又点了别张贴图的
+/// 保存，也可能把那张关掉了。所以**来源要在按下那一刻定下来**，回信时按那一份去存；
+/// 只有 `Page`（图片页那条）沿用 `state.composed`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum PendingSave {
+    /// 没有面板在等回信
+    #[default]
+    None,
+    /// 图片页的成品
+    Page,
+    /// 某张贴图（此刻屏上显示的那一张）
+    Pin(u64),
+}
+
+/// 贴图没了的时候要说的那一句。与 `PRODUCT_GONE_TEXT` 分开的理由一样：这时候盘上那个文件
+/// 不是屏幕上他刚看到的东西，说"已保存"是骗人。
+const PIN_GONE_TEXT: &str = "那张贴图已经不在了，这张没保存";
+
+/// 存一张贴图：**同一把 `export::save`、同一套格式判定**，只有像素来源不同。
+fn save_pin_image(state: &AppState, id: u64, picked: &str) -> (Tone, String) {
+    let Some(pin) = state.pins.iter().find(|pin| pin.id == id) else {
+        return (Tone::Warn, PIN_GONE_TEXT.to_string());
+    };
+    let Some(pixels) = crate::system::pin::pixels_of(&pin.path) else {
+        // 文件被老化删了或读不开：与"没有成品"同一档，别假装写成功了
+        return (Tone::Warn, PIN_GONE_TEXT.to_string());
+    };
+    let path = panel::resolved_save_path(picked);
+    let format = export::format_of(&path);
+    match export::save(&pixels, &path, format) {
+        Ok(()) if format == export::Format::Jpeg && export::has_transparency(&pixels) => (
+            Tone::Warn,
+            "已保存成 JPEG；透明的地方按白色合成了（JPEG 没有透明通道）".to_string(),
+        ),
+        Ok(()) => (Tone::Info, "已保存这张贴图".to_string()),
+        Err(error) => (Tone::Error, error.to_string()),
+    }
+}
+
 fn save_product(state: &AppState, picked: &str) -> (Tone, String) {
     let Some(composed) = state.composed.as_ref() else {
         // 面板开着的那几秒里换了图或换了一批译文：G 区那张已经不是它了，
@@ -1677,7 +1778,7 @@ impl eframe::App for IceApp {
         // 贴图窗（CHG-009 REQ-003/004）：**每帧为每一张活着的贴图各 show 一次**。
         // 只在第一帧调一次的写法实测会翻车（事实 25）：窗口下一帧就被 egui 以
         // `it was never used this pass` 删掉。反过来，"关掉一张"的实现就是这一帧起不再 show 它。
-        self.draw_pins(&ctx);
+        self.draw_pins(&ctx, &mut effects);
 
         self.run_effects(&ctx, effects);
         self.renew_repaints(&ctx);
@@ -4055,5 +4156,60 @@ mod tests {
         let (tone, text) = save_product(&with_product(255), &opaque);
         assert_eq!(tone, Tone::Info);
         assert_eq!(text, "已保存成品图", "整张不透明却提了透明：{text}");
+    }
+
+    /// 存一张贴图：走的是**同一把** `export::save`，只是像素来自这张自己的文件。
+    /// 贴图没了/文件读不开都说同一句"不在了"——不许假装写成功。
+    #[test]
+    fn saving_a_pin_writes_the_same_export_seam_and_refuses_a_gone_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = plain_state();
+        let shot = dir.path().join("shot.png");
+        image::RgbImage::from_pixel(8, 6, image::Rgb([3, 4, 5]))
+            .save(&shot)
+            .unwrap();
+        state.push_pin(shot);
+
+        let out = dir.path().join("out.png");
+        let (tone, text) = save_pin_image(&state, 1, out.to_str().unwrap());
+        assert_eq!(tone, Tone::Info, "{text}");
+        assert!(out.exists(), "文件没落盘却说已保存：{text}");
+        assert_eq!(text, "已保存这张贴图");
+
+        // 号不在了：不写文件、说一句"没了"，不是"已保存"
+        let gone = dir.path().join("gone.png");
+        let (tone, text) = save_pin_image(&state, 99, gone.to_str().unwrap());
+        assert_eq!(tone, Tone::Warn);
+        assert_eq!(text, PIN_GONE_TEXT);
+        assert!(!gone.exists());
+
+        // 贴图还在但文件被老化删了：同一档，不造第二套失败话
+        let mut orphan = plain_state();
+        let missing = dir.path().join("aged-out.png");
+        orphan.push_pin(missing.clone());
+        let (tone, text) =
+            save_pin_image(&orphan, 1, dir.path().join("never.png").to_str().unwrap());
+        assert_eq!(tone, Tone::Warn);
+        assert_eq!(text, PIN_GONE_TEXT);
+    }
+
+    /// 面板开着的那几秒里，来源要在按下那一刻定下来：回信按那一份存，
+    /// 取消或面板没回音都要把它清干净——留着就等于认定"下一份是给它的"。
+    #[test]
+    fn the_save_source_is_decided_at_press_time_and_cleared_on_cancel() {
+        let mut state = plain_state();
+        state.push_pin(std::path::PathBuf::from("/tmp/a.png"));
+        state.push_pin(std::path::PathBuf::from("/tmp/b.png"));
+        let mut app = app(std::env::temp_dir().as_path(), state);
+        assert_eq!(app.pending_save, PendingSave::None);
+
+        // 两张先后点保存：以最后那一次为准（面板只有一张在用户手上）
+        app.pending_save = PendingSave::Pin(1);
+        app.pending_save = PendingSave::Pin(2);
+        assert_eq!(app.pending_save, PendingSave::Pin(2));
+
+        // 取消那一路必须归零
+        app.pending_save = PendingSave::None;
+        assert_eq!(app.pending_save, PendingSave::None);
     }
 }
