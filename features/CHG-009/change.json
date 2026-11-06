@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "CHG-009",
   "title": "区域截图与钉屏贴图（FR-2.10 扩体）：框选 → 钉住 → 点一下才译",
-  "version": "v0.5",
+  "version": "v0.6",
   "status": "SPEC_REVIEW",
   "kind": "feature",
   "repos": [
@@ -76,7 +76,7 @@
       "id": "Q-010",
       "blocking": false,
       "question": "快捷键要不要全局生效？（他自己说「我不清楚 某截图工具 是不是全局热键」）",
-      "resolution": "已决默认：**做全局**。不能在别的软件前台按得出的截图键等于没做——截图那一刻用户几乎总在别的软件里。实现路径零新 crate 名（2026-11-05 本机探针实测 `InstallEventHandler`/`RegisterEventHotKey` 双双 noErr，见事实 6），但物理按键是否命中未证（H6，事实 7：合成事件没命中回调），命中不了即停止条件 1；**隐藏态那一次按下要额外唤醒一事也已证毕**（事实 30/31 → V-018：`RequestPaintWhileHidden` + `request_repaint()`，不需要让主窗可见）；Windows 那一格记 `RegisterHotKey` 这条路，Linux 记「Wayland 下待取证」",
+      "resolution": "已决默认：**做全局**。不能在别的软件前台按得出的截图键等于没做——截图那一刻用户几乎总在别的软件里。实现路径零新 crate 名（2026-11-05 本机探针实测 `InstallEventHandler`/`RegisterEventHotKey` 双双 noErr，见事实 6），**物理按键命中已于 2026-11-06 上午由他在机器前按完并闭合**（42 次全命中，事实 35；handler 落点定死在 `GetEventDispatcherTarget()`，事实 36）——停止条件 1 未触发，默认键保持裸 F1/F3/F2（事实 39 排除了\"媒体键层先截走\"这条担心）。反面边界同时立住：注入件进不了匹配器、`CreateEvent` 一律 -50，所以热键这一族今后**没有软件侧自证手段**（事实 37）；**隐藏态那一次按下要额外唤醒一事也已证毕**（事实 30/31 → V-018：`RequestPaintWhileHidden` + `request_repaint()`，不需要让主窗可见）；Windows 那一格记 `RegisterHotKey` 这条路，Linux 记「Wayland 下待取证」",
       "source": "用户 2026-11-05 深夜原话第 5 条；事实表第 6、7、19、20、**30、31** 条"
     },
     {
@@ -102,6 +102,11 @@
       "at": "2026-11-05T08:39:47+00:00",
       "action": "transition",
       "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-06T03:20:06+00:00",
+      "action": "revise",
+      "detail": "热键族由真机按键闭合（42 次全命中，事实 35）；撤回 v0.5 之前那批 FIRED=0 读数（EventTypeSpec 常量抄错，事实 7 作废）；handler 落点定死 dispatcher target（事实 36）；注入件与 CreateEvent 两条边界立为不可自证（事实 37）；停摆态送达 + 回调必须自己 request_repaint（104ms，事实 38）；裸 F1/F2/F3 按得响（事实 39）；落点审计三条（模块定名 global_hotkeys.rs、回调形状照抄 tray、真应用至今裸二进制与 H2 撞同一件事，事实 40~42）"
     }
   ],
   "approval": null,

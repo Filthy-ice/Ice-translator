@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": "T-001",
-      "title": "真机取证剩两条：**H6**（三个默认组合 F1/F3/F2 物理按下能不能命中回调——注册面本机实测 noErr，派发面用合成事件证不了，只有他按键）与 **H9**（Retina 缩放换算——本机上下两块屏都不是 HiDPI，量不出这条，需要他接一块内置屏或高 DPI 外接）。**H1/H5/H7 的「能不能」/H8/H10 已在本包批准前证毕，不再占这条任务**：H1（2026-11-05 当晚两条分支都跑了——esc 取消 → 退出码 0 且不写文件；拖完选区 → 退出码 0 且写出 281×251 PNG ⇒ 退出码没有区分能力，判据定死为「文件是否出现 + 能否解出图像」，见事实 14）；H8 与 H7「能不能同时钉」（仓库外 eframe 探针：纹理供得出来、几何按算出来的落、**8 张同时在屏且各自出图**，见事实 25~28 与 33；H7 只剩「攒到上限的代价」那一半，随 6 张上限进走查 W-5.3）；H5（同一命令同一坐标的**正负对照**：自家窗可见时那块像素 `#DC1E1E`/`#1EC81E`/`#080808`、隐藏时 `#161616`/`#A9AAAC`/`#1C1D1F`，隐藏窗 `layer=3` 与 bounds 都还在，见事实 32 ⇒ 自家窗不进图这件事我们自证了，不再要他那双眼睛）；H10（主窗隐藏时把第一张贴图钉出来 = 从循环外发一次 `RequestPaintWhileHidden` + `request_repaint()`，那一帧 `ui()` 跑了、贴图出图、主窗始终 `onscreen=false`；对照只发 `request_repaint()` 是 8 次 logic、0 次 ui、一张都没出，见事实 30/31）。热键 SHALL NOT 写成「已验证可用」",
+      "title": "真机取证只剩一条：**H9**（Retina 缩放换算——本机上下两块屏都不是 HiDPI，量不出这条，需要他接一块内置屏或高 DPI 外接）。**H6 已于 2026-11-06 上午由他在机器前按完并闭合（V-020）**：四轮共 42 次命中（`⌃⌥` 系列 15、`⌃⌥⌘` 系列 6、裸 `F1/F2/F3` 各 7），全部落在 `GetEventDispatcherTarget()` 那份 handler（装在 app target 的那份一次都没收到，事实 36），默认那三把裸键按得响（事实 39）⇒ **H6 那一格从\"待证\"改成\"已证 + 写法定死\"**，剩下的只是真应用里的 W-5.1 手感复核（探针不是真应用）。",
       "requirements": [
         "REQ-002",
         "REQ-006",
@@ -11,7 +11,8 @@
       ],
       "repo": "ice-translator",
       "status": "todo",
-      "code_refs": []
+      "code_refs": [],
+      "verify_note": "本轮新增的第二条不可自证边界（事实 37）：`CGEventPost` 的注入件在两种 tap × 两种前台归属下全 0 命中，`CreateEvent` 一律 `-50` ⇒ **热键这一族没有软件侧替代取证手段**，谁写\"日志里收到过键所以热键通了\"就是伪证据。"
     },
     {
       "id": "T-002",
@@ -106,7 +107,7 @@
     },
     {
       "id": "T-010",
-      "title": "快捷键可设置且全局生效：`config.rs` 新增 `[hotkey]` 三条（默认 F1 / F3 / F2，解析失败回默认并记一句不含原文的日志）、`hotkey.rs` 手声明 Carbon `InstallEventHandler` + `RegisterEventHotKey`（主线程注册、改键先 `UnregisterEventHotKey` 旧的、返回码非 0 翻译成「这个键没抢到，请换一个」而 SHALL NOT `let _ =` 吞掉）、命中回调只往主线程送一个既有 `Action`；**隐藏态那一次按下要多一步唤醒，写法已定死**（事实 30/31，H10 已闭合）：回调除了送意图还要从循环外发 `ctx.send_viewport_cmd_to(ROOT, ViewportCommand::RequestPaintWhileHidden)` **紧跟** `ctx.request_repaint()`——前者让被唤醒的那一帧真跑 `ui()`（贴图就在这一帧建出来），后者把停在 park 里的事件循环叫醒；**这条命令只保一帧**，需要多帧就再发一次；**SHALL NOT 用 `Visible(true)` 起贴图**（那是「让主窗闪一下」，探针已证明不需要，写成形状核查）、也 SHALL NOT 只发 `request_repaint()`（对照实测：8 次 logic tick、0 次 ui tick、贴图永远出不来）；这个「从循环外叫回一帧」的小工具与 T-012 的 `prepare()/restore()` 是**同一处函数、但不是同一个可见性切换**（这里不改可见，那里才改可见），各写一套就是第三个 D-21；设置页三条录入（按一次键采集 + 清除绑定）与那句媒体键提示（事实 8：本机 F1/F2/F3 默认是媒体键，标准功能键要配 Fn 或打开那条系统设置）；「固定」在没有待固定内容时什么都不做，「打开上一次截图」在无历史时说「还没有截图记录」",
+      "title": "快捷键可设置且全局生效：`config.rs` 新增 `[hotkey]` 三条（默认 F1 / F3 / F2，解析失败回默认并记一句不含原文的日志）、**新模块定名 `system/global_hotkeys.rs`（仓里已有 `system/hotkeys.rs` 是应用内分类器，只差一个字母会读成笔误，事实 40）**、手声明 Carbon `InstallEventHandler` + `RegisterEventHotKey`。四条写法是实测定死的，不是选项（事实 35/36/38）：① `EventTypeSpec` 用 `'keyb'` + 种 `5`、参数取 `'----'`/`'hkid'`（旧探针抄成 `'kkbd'`/`'hotp'`/`'dirt'`/`'hkey'` 导致 v0.5 之前那批 `FIRED=0` 全是假读数）；② handler **SHALL 装在 `GetEventDispatcherTarget()`**，只装 app target 的写法是\"注册得上、按下去永远没反应\"；③ 回调里送完意图 SHALL 立刻 `ctx.request_repaint()`（实测 104ms 叫起下一帧），形状照抄 `system/tray.rs` 那三件（`OnceLock<Context>` + 原子位 + `App::logic()` 里取，事实 41），**SHALL NOT 为热键立常驻心跳**（循环跑完自己会睡回去，NFR-2 不因此让步）；④ 改键 SHALL 先 `UnregisterEventHotKey` 旧的（同一 `(键码,掩码)` 重复注册实测返回 `-9878 eventHotKeyExistsErr`，注销不是可选优化）；`_DispatchEvent` 在 arm64 无符号，\"自己泵一次\"那套写法不许出现。",
       "requirements": [
         "REQ-006"
       ],

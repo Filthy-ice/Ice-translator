@@ -324,6 +324,40 @@
       ],
       "required": true,
       "note": "**两格一并闭合（事实 32/33）**：① **H5 / REQ-010「自家窗进不进图」有了正负对照**：同一条 `screencapture` 命令、同一块坐标，主窗与贴图**可见**时三点是 `#DC1E1E`/`#1EC81E`/`#080808`，**隐藏**时变成 `#161616`/`#A9AAAC`/`#1C1D1F`（桌面与另一扇窗）；隐藏期间 `layer=3` 与 bounds 都保留，从循环外发回可见后贴图落回拖动过的 (660,480)。⇒ Q-003 的 (a) 档「临时取消置顶并收起、结束原样回来」实测成立，**REQ-010 的真机那一半不再需要他那双眼睛**，W-5.8 只留「还原后回不回得来」；几何**不用自己记**——`ViewportInfo::outer_rect` 跟着拖动、系统搬窗、隐藏期都对得上（也解释了本轮那块第二屏插入后窗被挪走时它为何能跟上）。② **H7 的「能不能同时钉」闭合**：8 张贴图同时在屏、各自出现在请求位，逐张采样都命中自己的色 ⇒ 上限不是机制问题，只是代价问题；6 张上限（Q-007）与「攒到上限卡不卡、主窗掉不掉帧」仍归 W-5.3。**这两条都是仓库外探针读数，不进仓，也不代替真应用里的复验。**"
+    },
+    {
+      "id": "V-020",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "repo": "ice-translator",
+      "requirements": [
+        "REQ-006"
+      ],
+      "required": true,
+      "note": "**H6 闭合（事实 35/36/39），而且 v0.5 之前那批读数公开作废**：2026-11-06 上午由用户在机器前连按四轮，全部命中 handler——`⌃⌥F2`×8、`⌃⌥F3`×2、`⌃⌥F7`×3、`⌃⌥F8`×2（15 次，`/tmp/pin_poc/hk6.round1.log`）、`⌃⌥⌘G/H/J/K/L/;` 各 1 次（6 次，`hk7.log`）、**裸 `F1/F2/F3` 各 7 次 = 21 次**（`hk9.log`，相邻间隔 444ms～2.81s，排除了长按自动重复这一种读法）。⇒ ① **eframe/winit(AppKit) 的循环会派发 Carbon 热键事件**，H6 那半句「winit 会不会替我们 pump」不再悬着；② **全部 42 次都落在 `GetEventDispatcherTarget()` 那份 handler**，装在 app target 的那份一次都没收到，**连注册在 app target 上的键也是 dispatcher 那份收的** ⇒ 实现里 handler 落点是硬约束（已写进 REQ-006 验证层次的形状核查）；③ 默认三把裸键按得响 ⇒ 事实 8 那条「媒体键可能吃掉裸 F 键」在 Carbon 送达这一层被排除（亮度动作是否同时发生不属本次观测面，界面那句说明仍保留）。**作废的那一半同样重要**：旧探针的 `EventTypeSpec` 写的是 `'kkbd'`/`'hotp'`（不存在值），而 `InstallEventHandler` 对不存在的事件类型照样返回 0 ⇒ 之前所有 `FIRED=0` 从来不是「派发不通」的证据，事实 7 已标作废。**这一格不因为他按过了就算完**：真应用里那条链（注册发生在我们的循环、回调走我们的 `Action`、截图子进程随后起）仍归 W-5.1。"
+    },
+    {
+      "id": "V-021",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "repo": "ice-translator",
+      "requirements": [
+        "REQ-006",
+        "REQ-010"
+      ],
+      "required": true,
+      "note": "**停摆态送达 + 回调自己叫循环，两组对照一次做完（事实 38）**：同一枚仓外探针把窗口 `Visible(false)` 收起、此后**一帧心跳都不排**（连 `request_repaint` 都不发），跑两遍。**回调里没有 `request_repaint()` 的那遍**（`/tmp/pin_poc/hk10.log`）：`ui`/`logic` 双双停在 0.392s，122.580s 那一次物理按下**照样派发到 handler**，但派发之后 `ui`/`logic` 仍停在 0.392s，一直到 282.231s 用户手动点窗口才醒 ⇒ 送达不依赖帧循环，可状态改了没人看，用户读到的就是「按了没反应」。**回调里加一句 `ctx.request_repaint()` 的那遍**（`hk11.log`）：`FIRED` 于 122.580s、`logic` 122.683s、`ui` 122.684s ⇒ **104ms 就叫起下一帧**，跑完又睡回去（下一次 `logic` 停在 122.797s）。两条旁证一并记下：① 那 270 秒里后台线程每 15 秒一跳、一行不缺 ⇒ **不是 App Nap、进程没被冻**，停下的只有 egui 的帧循环（当场那句「进程被降频」的判读已纠正）；② 用户报的「数字反馈好慢，F3 最严重 1~2s」与这组读数同因——探针 `ui()` 一秒一跳而回调不叫循环，屏幕最多等一个心跳。**由此定死三条**：回调 SHALL 自己请求重绘（形状照抄 `system/tray.rs` 的 `OnceLock<Context>` + 原子位 + `logic()` 里取，事实 41）、SHALL NOT 为热键立常驻心跳（104ms 那组之后循环复睡，NFR-2 空闲承诺不受影响）、SHALL NOT 把「事件送到了」当成「用户看到反应了」。**与事实 30/31 不冲突**：那两条问的是「隐藏态起不起得了贴图」（要 `RequestPaintWhileHidden`），本条问的是「热键事件送不送得到、送完之后谁来画」。"
+    },
+    {
+      "id": "V-022",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "repo": "ice-translator",
+      "requirements": [
+        "REQ-006"
+      ],
+      "required": true,
+      "note": "**取证口径本身也立一条（事实 37/40/42）**：① **热键不许自证**——常量修对之后重测，`CGEventPost` 的注入件在 `kCGHIDEventTap` 与 `kCGSessionEventTap` 两种 tap、自己前台与别家前台两种归属下**全 0 次命中**，而同一次运行里 egui 确实收到了那颗注入键（`physical_key=Some(F1)` + `ctrl+alt`）⇒ 注入件进得了应用、进不了热键匹配器；`CreateEvent` 无论常量对错一律 `-50`，连「从队列上游塞一条事件」都做不到。⇒ 今后凡是「日志里出现过 received key 就当热键通了」的写法按伪证据处理，热键判据只有他在机器前按。**SDK 侧逐条核对**：`'keyb'`=`CarbonEvents.h:1339`、`kEventHotKeyPressed=5`=`:4693`、`'----'`=`CarbonEventsCore.h:178`、`'hkid'`=`CarbonEvents.h:376`；`GetEventParameter` 参数顺序=`CarbonEventsCore.h:893`；`_DispatchEvent` 在 arm64 HIToolbox 无符号（链接期 Undefined symbols）⇒ 旧 Carbon 书里「自己泵一次」那套写法不许出现在实现里。② **模块名冲突**：仓里已有 `system/hotkeys.rs`（应用内分类器，`:12-91`，十条单测），新模块定名 `system/global_hotkeys.rs`，两份共用同一个 `Action` 枚举、不开第二条执行路径。③ **打包与 H2 撞在同一条**：全仓无 `Info.plist`、无打包脚本，真应用今天也是裸二进制（D-27 验收记录里「根治那条没做」就是这笔账）⇒ 本轮空闲停摆的形状与真应用一致，而 H2（打包后屏幕录制授权归属）至今一次都没被量过，打包排期一到必须先取证。"
     }
   ]
 }
