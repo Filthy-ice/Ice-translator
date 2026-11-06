@@ -438,6 +438,18 @@ impl Config {
         Ok(Self::config_dir()?.join("config.toml"))
     }
 
+    /// 应用自己的数据目录（`~/Library/Application Support/IceTranslator` 那一档）。
+    ///
+    /// 为什么与 [`Self::config_dir`] 分开放而不是直接复用：截图历史里是**用户截到的内容**，
+    /// 而配置目录会被当成"我的设置"来备份与迁移。两者混在一处，等于让用户每次搬配置
+    /// 都顺带搬走一批报销单和屏幕截图（REQ-008 的边界）。目录名由调用方决定，
+    /// 领域层只负责"这台机器上属于本应用的数据目录在哪"。
+    pub fn app_data_dir() -> Result<PathBuf, CoreError> {
+        dirs::data_dir()
+            .map(|p| p.join(APP_ID))
+            .ok_or_else(|| CoreError::ConfigDir("系统找不到应用数据目录".into()))
+    }
+
     /// 读取配置。文件不存在时返回默认值；内容损坏时回退默认值并记录原因（FR-4.3）。
     pub fn load() -> Result<(Config, Option<String>), CoreError> {
         Self::load_at(&Self::config_path()?)
