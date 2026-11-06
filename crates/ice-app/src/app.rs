@@ -1218,7 +1218,8 @@ impl IceApp {
             return;
         }
         for pin in self.state.pins.clone() {
-            crate::system::pin::show(ctx, pin.id, &pin.path, pin.band_open);
+            // 进度话由状态算出来再传进去：贴图窗不读 `AppState`，也不存一份全局进度
+            crate::system::pin::show(ctx, &pin, pin_band_line(&pin));
             for intent in crate::system::pin::take_intents(ctx, pin.id) {
                 self.apply_pin_intent(pin.id, intent, effects);
             }
@@ -1278,7 +1279,21 @@ impl IceApp {
         if effects.rebuild_translator {
             self.rebuild_translator();
         }
-        if let Some(job) = effects.job {
+        // 带子里那颗「翻译」按下才走链（REQ-001 主干）。派发不出去时**不补一句空话**：
+        // 带子里那一格本来就在写这张自己的状态（识别中 / 未发现文字 / 翻好了几块），
+        // 再说一句"现在不能翻"只会与它对不上。
+        if let Some(pin) = effects.translate_pin {
+            if let Some(job) = self.state.submit_pin_translate(pin) {
+                self.runner.submit(&self.runtime, job, ctx);
+            }
+        }
+        // 一条派发口：图片页那一支的 Job 与贴图们"译文落好了、欠一张成品"的合成都走这里。
+        // 成品的派发不写在回信落地里，是为了让 `apply_outcome` 只做状态（REQ-005 分层）
+        for job in effects
+            .job
+            .into_iter()
+            .chain(self.state.take_due_pin_composes())
+        {
             self.runner.submit(&self.runtime, job, ctx);
         }
         // 图片页的三条入口：面板给的是"意图"，路径要等回调回来才有（REQ-001 的"不阻塞"）
@@ -1350,8 +1365,13 @@ impl IceApp {
         // 只换像素来源——从这张自己的文件读回（`pin::pixels_of`），长期留一份 RGBA 是六张
         // 几百 MB，而复制/保存都是用户显式点一下，一次读盘换不来第四条任务那套机制。
         if let Some(id) = effects.copy_pin {
-            let written = crate::system::pin::pixels_of(&self.pin_path(id))
-                .map(|pixels| clipboard::write_image(&pixels));
+            let written = self
+                .state
+                .pins
+                .iter()
+                .find(|pin| pin.id == id)
+                .and_then(crate::system::pin::displayed)
+                .map(|display| clipboard::write_image(display.image()));
             match written {
                 Some(Ok(())) => self.state.toast(Tone::Info, clipboard::COPY_IMAGE_DONE),
                 Some(Err(reason)) => self.state.toast(Tone::Error, reason),
@@ -1575,18 +1595,32 @@ enum PendingSave {
 const PIN_GONE_TEXT: &str = "那张贴图已经不在了，这张没保存";
 
 /// 存一张贴图：**同一把 `export::save`、同一套格式判定**，只有像素来源不同。
+/// 一张贴图带子里那一行该说的话：识别段优先（"识别中…"、"未发现文字"），
+/// 其次翻译段（"翻译中 3/7"、"翻好 5 块，失败 2 块"）。两段都空闲就不说——
+/// 带子本来就窄，没事的时候不许占着那一格说话。
+fn pin_band_line(pin: &crate::state::Pin) -> Option<String> {
+    match &pin.stage {
+        crate::state::RecognitionStage::Idle => {}
+        stage => return Some(stage.label()),
+    }
+    match &pin.translate_stage {
+        crate::state::TranslateStage::Idle => None,
+        stage => Some(stage.label()),
+    }
+}
+
 fn save_pin_image(state: &AppState, id: u64, picked: &str) -> (Tone, String) {
     let Some(pin) = state.pins.iter().find(|pin| pin.id == id) else {
         return (Tone::Warn, PIN_GONE_TEXT.to_string());
     };
-    let Some(pixels) = crate::system::pin::pixels_of(&pin.path) else {
+    let Some(display) = crate::system::pin::displayed(pin) else {
         // 文件被老化删了或读不开：与"没有成品"同一档，别假装写成功了
         return (Tone::Warn, PIN_GONE_TEXT.to_string());
     };
     let path = panel::resolved_save_path(picked);
     let format = export::format_of(&path);
-    match export::save(&pixels, &path, format) {
-        Ok(()) if format == export::Format::Jpeg && export::has_transparency(&pixels) => (
+    match export::save(display.image(), &path, format) {
+        Ok(()) if format == export::Format::Jpeg && export::has_transparency(display.image()) => (
             Tone::Warn,
             "已保存成 JPEG；透明的地方按白色合成了（JPEG 没有透明通道）".to_string(),
         ),

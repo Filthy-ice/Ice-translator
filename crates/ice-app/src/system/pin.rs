@@ -16,7 +16,7 @@
 //! `scale` 那一处除法是全局唯一出处（像素 → 点），窗口尺寸、带子重算、文字层坐标三处
 //! 都读同一个结果；各自再除一次或都忘了除，就是"贴图比用户框的大一倍"那种现场（H9）。
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use egui::{Id, Key, Modifiers, Pos2, Rect, Response, Sense, Ui, Vec2};
@@ -199,22 +199,54 @@ pub fn image_area(ui: &mut Ui, size: Vec2) -> Response {
     ui.allocate_rect(Rect::from_min_size(Pos2::ZERO, size), Sense::hover())
 }
 
-/// 一张贴图在 egui 里的"活着"证据：纹理 + 它的像素尺寸 + 是哪张文件。
+/// 一张贴图在 egui 里的"活着"证据：纹理 + 像素尺寸 + 是哪一个来源。
 ///
-/// 存进 `ctx.data` 而不是 `AppState`：状态层 SHALL NOT 拿着一张解好码的图（那是几 MB 到
-/// 几十 MB 的像素，且 `AppState` 要能在无头里构造与断言）。贴图内容归贴图模块自己缓存，
-/// 状态层只记"有这张、它开着带子、它的识别到哪一步了"。
+/// 存进 `ctx.data` 而不是 `AppState`：状态层 SHALL NOT 拿着一份解好码的图（那是几 MB 到
+/// 几十 MB 的像素，而 `AppState` 要能在无头里构造与断言）。贴图内容归本模块缓存，
+/// 状态层只记"有这张、带子开着、链走到哪一步了"。
 #[derive(Clone)]
 struct Visual {
     texture: egui::TextureHandle,
     /// PNG 的像素尺寸（点由它除以 ppp 得到，见 [`pin_layout`]）
     px: Vec2,
-    /// 缓存的是哪张文件。换了文件（成品替换）就得重建
+    /// 缓存的是哪一格：0=原图文件、1=识别带回来的底图、2=成品。换了格就要重建纹理
+    kind: u8,
+    /// `kind == 0` 时是哪一个文件（换文件要重建）
     source: PathBuf,
 }
 
-// `Id::NULL.with(..)` 而不是 `Id::new(..)`：后者在 0.37 已废弃（它会拿内容当键，
-// 而我们这两把键要的正是"跨帧稳定的名字"）。与 `views/image.rs` 那两把预览键同一个写法。
+/// 这张贴图**此刻屏上显示的是哪一份像素**。
+///
+/// 顺序是死的：成品优先（原地替换之后屏上就是它），其次识别带回的底图，最后才读文件。
+/// 复制与保存 MUST 用同一份——一边显示译文版、一边把原图交出去，用户下一步粘到别处的
+/// 东西和他刚看到的对不上，那比报错更糟。
+pub fn displayed(pin: &crate::state::Pin) -> Option<Display> {
+    if let Some(product) = pin.product.as_ref() {
+        return Some(Display::Owned(product.image.clone()));
+    }
+    if let Some(admitted) = pin.source.as_ref() {
+        return Some(Display::Borrowed(&admitted.image));
+    }
+    ice_vision::import::admit_path(&pin.path)
+        .map(|admitted| Display::Owned(admitted.image))
+        .ok()
+}
+
+/// 屏上那一份像素的两种来路：贴图自己的（借）或现读文件换来的（有）。
+pub enum Display<'a> {
+    Borrowed(&'a image::RgbaImage),
+    Owned(image::RgbaImage),
+}
+
+impl Display<'_> {
+    pub fn image(&self) -> &image::RgbaImage {
+        match self {
+            Display::Borrowed(image) => image,
+            Display::Owned(image) => image,
+        }
+    }
+}
+
 fn visual_key(id: u64) -> Id {
     Id::NULL.with("ice-translator.pin.visual").with(id)
 }
@@ -223,25 +255,33 @@ fn size_key(id: u64) -> Id {
     Id::NULL.with("ice-translator.pin.window_size").with(id)
 }
 
-/// 读一次盘、建一次纹理；同一张文件后续每帧都走缓存。
+/// 建/取这一帧要用的纹理。同一格（同来源、同文件）只解一次码。
 ///
-/// 解不开就返回 `None`：这一帧**不画**，而不是画一块白。贴图的存在与否由状态层说了算，
-/// 这里画不出来也不该把那张图从状态里抹掉（用户还能复制、保存、关）。
-fn visual_of(ctx: &egui::Context, id: u64, path: &Path) -> Option<Visual> {
-    let cached = ctx.data_mut(|d| d.get_temp::<Visual>(visual_key(id)));
+/// 解不开就返回 `None`：这一帧**什么都不画**，而不是画一块白——白块会被当成"图坏过"，
+/// 而贴图的存在与否由状态层说了算，这里画不出来也不该把那张从状态里抹掉。
+fn visual_of(ctx: &egui::Context, pin: &crate::state::Pin) -> Option<Visual> {
+    // 换了来源（原图 → 底图 → 成品）就要重建纹理，所以来源本身是缓存键的一部分
+    let kind = if pin.product.is_some() {
+        2
+    } else if pin.source.is_some() {
+        1
+    } else {
+        0
+    };
+    let cached = ctx.data_mut(|d| d.get_temp::<Visual>(visual_key(pin.id)));
     if let Some(visual) = cached {
-        if visual.source == path {
+        if visual.kind == kind && visual.source == pin.path {
             return Some(visual);
         }
     }
-    let rgba = image::open(path).map(|img| img.into_rgba8()).ok()?;
-    let px = Vec2::new(rgba.width() as f32, rgba.height() as f32);
+    let image = displayed(pin)?.image().clone();
+    let px = Vec2::new(image.width() as f32, image.height() as f32);
     let color = egui::ColorImage::from_rgba_unmultiplied(
-        [rgba.width() as usize, rgba.height() as usize],
-        rgba.as_raw(),
+        [image.width() as usize, image.height() as usize],
+        image.as_raw(),
     );
     let texture = ctx.load_texture(
-        format!("ice-translator-pin-{id}"),
+        format!("ice-translator-pin-{}-{kind}", pin.id),
         color,
         // LINEAR：这张 PNG 是物理像素，落在 2 倍屏上要按点缩小显示，NEAREST 会把文字
         // 边缘啃出锯齿；1:1 那一档两种取样看不出差别，所以不必为它分两套路径
@@ -250,9 +290,10 @@ fn visual_of(ctx: &egui::Context, id: u64, path: &Path) -> Option<Visual> {
     let visual = Visual {
         texture,
         px,
-        source: path.to_path_buf(),
+        kind,
+        source: pin.path.clone(),
     };
-    ctx.data_mut(|d| d.insert_temp(visual_key(id), visual.clone()));
+    ctx.data_mut(|d| d.insert_temp(visual_key(pin.id), visual.clone()));
     Some(visual)
 }
 
@@ -296,11 +337,17 @@ pub fn take_intents(ctx: &egui::Context, id: u64) -> Vec<PinIntent> {
 /// 以 `it was never used this pass` 删掉——症状是"贴图闪一下就没了"。所以调用方 SHALL
 /// 每帧为集合里每一张活着的贴图各调一次本函数，关闭的实现是**那一帧起不再调它**。
 ///
+/// `band_line` 是这一帧带子里那一行进度话（"识别中…" / "翻译中 3/7"），由帧循环从状态里
+/// 算好传进来：**贴图不自己去读 `AppState`**，也不留一份全局可变的"当前进度"——
+/// 六张贴图各有自己的进度，靠键去查迟早查错对象。
+///
 /// 首张落在哪儿没有判据：`screencapture` 只交回一个文件，不交回用户框的那块矩形。
 /// 这里因此不给 `position`，让系统按默认位摆放，**用户靠拖动定位**（实测拖得动、
 /// 位置读 `outer_rect` 跟得上，事实 29/32）。攒一份"我们以为它在哪"的坐标是禁止的。
-pub fn show(ctx: &egui::Context, id: u64, path: &Path, band_open: bool) {
-    let Some(visual) = visual_of(ctx, id, path) else {
+pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<String>) {
+    let id = pin.id;
+    let band_open = pin.band_open;
+    let Some(visual) = visual_of(ctx, pin) else {
         return;
     };
     // ppp 取当前这一帧的：挪到另一块屏上时会跟着变，下一帧的 `InnerSize` 就自纠
@@ -372,7 +419,15 @@ pub fn show(ctx: &egui::Context, id: u64, path: &Path, band_open: bool) {
             ui.allocate_ui_with_layout(
                 Vec2::new(layout.window_size.x, BAND_H),
                 egui::Layout::left_to_right(egui::Align::Center),
-                |ui| band_buttons(ui, &mut local),
+                |ui| {
+                    band_buttons(ui, &mut local);
+                    if let Some(line) = band_line.as_deref() {
+                        // 同一行的右半边：这张自己的进度。六张贴图各说各的，不共用一条
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(line);
+                        });
+                    }
+                },
             );
             if !local.is_empty() {
                 if let Ok(mut queue) = slot.lock() {
@@ -382,18 +437,6 @@ pub fn show(ctx: &egui::Context, id: u64, path: &Path, band_open: bool) {
             }
         }
     });
-}
-
-/// 这张贴图**此刻屏上是什么，交出去的就是什么**：从它自己的文件读回像素。
-///
-/// 为什么现读而不是把 `RgbaImage` 长期留在内存里：一张 4K 区域的 RGBA 是几十 MB，六张
-/// 就是几百 MB（H7 剩下的正是这一格代价），而复制与保存都是用户显式点一下的动作，一次
-/// 读盘换不来"第四条任务 + 与成品换代赛跑"那套机制。顺带一条好处：**原图是唯一真相源**
-/// （Q-008），复制与保存出来的东西与历史目录里那张对得上。
-pub fn pixels_of(path: &Path) -> Option<image::RgbaImage> {
-    ice_vision::import::admit_path(path)
-        .map(|admitted| admitted.image)
-        .ok()
 }
 
 /// 保存面板的默认名：`贴图-N.png`，N 是这张贴图的号。
@@ -634,7 +677,9 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         });
-        pass(&ctx, input, |ui| show(ui.ctx(), 1, &png, true));
+        pass(&ctx, input, |ui| {
+            show(ui.ctx(), &crate::state::Pin::for_test(1, png.clone()), None);
+        });
 
         assert_eq!(take_intents(&ctx, 1), vec![PinIntent::Close]);
         // 取过一次就该空：同一条 esc 不许被处理两遍
@@ -662,7 +707,11 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         });
-        pass(&ctx, input, |ui| show(ui.ctx(), 2, &png, false));
+        pass(&ctx, input, |ui| {
+            let mut pin = crate::state::Pin::for_test(2, png.clone());
+            pin.band_open = false;
+            show(ui.ctx(), &pin, Some("识别中…".to_string()));
+        });
         assert_eq!(take_intents(&ctx, 2), vec![PinIntent::ToggleBand]);
     }
 
@@ -675,7 +724,11 @@ mod tests {
         ctx.set_embed_viewports(true);
         let missing = std::path::PathBuf::from("/tmp/definitely-not-a-screenshot.png");
         pass(&ctx, egui::RawInput::default(), |ui| {
-            show(ui.ctx(), 3, &missing, true);
+            show(
+                ui.ctx(),
+                &crate::state::Pin::for_test(3, missing.clone()),
+                None,
+            );
         });
         assert!(take_intents(&ctx, 3).is_empty());
     }

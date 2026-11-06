@@ -266,6 +266,8 @@ pub enum Job {
     /// 否则"重试这一块"的块号会和界面上那行对不上。
     ImageTranslate {
         id: RequestId,
+        /// 这批译文落在哪一份文档上（图片页 vs 某张贴图）
+        owner: ChainOwner,
         engine: EngineKind,
         blocks: Vec<(u32, TranslationRequest)>,
         /// 块边界停止的哨兵：界面置真，工作循环在**下一块请求之前**看到它就收手。
@@ -290,6 +292,8 @@ pub enum Job {
     /// 合成一张成品（REQ-003~REQ-006）。整段是一次同步的 CPU 活，走 `spawn_blocking`。
     ImageCompose {
         id: RequestId,
+        /// 成品画进哪一份；图片页那条落 `state.composed`，贴图那条落 `Pin::product`
+        owner: ChainOwner,
         source: RgbaImage,
         document: OcrDocument,
         mode: CompositeMode,
@@ -308,6 +312,20 @@ pub struct ImageRecognition {
     pub elapsed_ms: u64,
 }
 
+/// 一段图片链（翻译 / 合成）这次是为谁跑的。
+///
+/// **为什么不是给贴图另开一对 Job/Outcome**：那样就有两份逐块翻译的循环、两份"块号→译文"
+/// 的落地代码，两份迟早不一样（图钉那次就是这个教训）。加一个归属标记，工作循环与落地函数
+/// 各只有一份，贴图与图片页差的是"结果落在哪个文档上"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChainOwner {
+    /// 图片页那一份工作区（`state.image` / `state.ocr` / `state.composed`）
+    #[default]
+    Page,
+    /// 某张贴图自己的那一份（`Pin::document` / `Pin::product`）
+    Pin(u64),
+}
+
 /// 任务回来的结果。带 `id` 用于丢弃过期结果，带 `engine` 用于错误动作判定。
 /// 不派生 `Clone`：`ProviderError` 不是 `Clone`，而结果本来也只该被消费一次。
 #[derive(Debug)]
@@ -324,6 +342,7 @@ pub enum Outcome {
     /// 逐块翻译的一段推进（REQ-009 的"N/M 块"）：20 个块要等十几秒，用户得看见它在走。
     ImageTranslateProgress {
         id: RequestId,
+        owner: ChainOwner,
         done: usize,
         total: usize,
     },
@@ -332,12 +351,14 @@ pub enum Outcome {
     /// 已翻好的那些照样有效、不是半成品（Q-006 裁定"留"）。
     ImageTranslated {
         id: RequestId,
+        owner: ChainOwner,
         results: Vec<(u32, Result<String, ProviderError>)>,
         cancelled: bool,
         elapsed_ms: u64,
     },
     ImageComposed {
         id: RequestId,
+        owner: ChainOwner,
         result: Result<Composed, VisionError>,
         elapsed_ms: u64,
     },
@@ -346,11 +367,13 @@ pub enum Outcome {
         id: RequestId,
         outcome: crate::system::capture::Outcome,
     },
-    /// 某张贴图的识别回来了，带着它那一代的序号
+    /// 某张贴图的识别回来了，带着它那一代的序号。
+    /// `admitted` 一起带回来：合成要有底图，而**底图必须是入场缩放之后的那一份**——
+    /// 现读文件会拿到未缩放的原始像素，回填的坐标就整体错位（CHG-005 那条同量纲规则）
     PinRecognized {
         pin: RequestId,
         generation: u64,
-        result: Result<ice_core::document::OcrDocument, VisionError>,
+        result: Result<(Admitted, ice_core::document::OcrDocument), VisionError>,
         elapsed_ms: u64,
     },
 }
@@ -397,7 +420,7 @@ impl CaptureStage {
 /// **状态层只存"它存在、它现在在做什么"**：窗口的建/销、几何、带子开合都在 `system::pin`，
 /// 这里存的是视图与派发要读的东西。`document` 为 `None` 时拖选**不产生任何选中**
 /// （REQ-005：没长出来就不许假装能选，而不是"选中了一个空字符串"）。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Pin {
     /// 贴图自己的号（与请求序号分开：窗口关掉之后这个号不再复用）
     pub id: RequestId,
@@ -415,9 +438,50 @@ pub struct Pin {
     pub band_open: bool,
     /// 图片本体上有没有正被按住拖动（REQ-004，走查要看的那一件）
     pub dragging: bool,
+    /// 这张的像素（识别回信带回来的那一份，与图片页的 `AppState::image` 同一种东西）。
+    /// 合成要有底图，而底图**必须是屏上正在显示的那一张**——现读文件会读到没换成品之前的旧图。
+    pub source: Option<Admitted>,
+    /// 这张自己的翻译段与合成段。**与图片页那两条分开**：借图片页的在飞标记会出
+    /// "贴图在翻，图片页的按钮因此变灰"这种隔空互相干扰。
+    pub translate_stage: TranslateStage,
+    pub translate_in_flight: Option<RequestId>,
+    pub failed_blocks: Vec<u32>,
+    pub compose_in_flight: Option<RequestId>,
+    /// 成品。有它就显示它（REQ-003「原地替换」），没有就显示 `source`。
+    pub product: Option<Composed>,
+    /// 译文落好了、等着合成那一版成品。翻译回信里置真，派发后清。
+    ///
+    /// 为什么要一格"欠着合成"而不是让回信直接派：`apply_outcome` 只做状态，发任务是帧循环
+    /// 的事（REQ-005 那条分层纪律）。
+    pub compose_due: bool,
 }
 
 impl Pin {
+    /// 这份文档里已经带着译文的块数。合成画砸了要把"翻好了几块"如实说回去，
+    /// 不能顺手报个 0——那等于抹掉已经花出去的请求。
+    pub fn translate_ok_count(&self) -> usize {
+        self.document
+            .as_ref()
+            .map(|document| {
+                document
+                    .blocks
+                    .iter()
+                    .filter(|block| block.translation.is_some())
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// 这张贴图此刻该显示哪一份：有成品用成品，否则用原图。
+    pub fn displayed(&self) -> Option<&Admitted> {
+        self.source.as_ref()
+    }
+
+    /// 测试与本模块内部构造用（贴图窗的端到端用例要造一张真贴图）
+    pub fn for_test(id: RequestId, path: PathBuf) -> Self {
+        Self::new(id, path)
+    }
+
     fn new(id: RequestId, path: PathBuf) -> Self {
         Self {
             id,
@@ -427,6 +491,13 @@ impl Pin {
             document: None,
             band_open: true,
             dragging: false,
+            source: None,
+            translate_stage: TranslateStage::Idle,
+            translate_in_flight: None,
+            failed_blocks: Vec::new(),
+            compose_in_flight: None,
+            product: None,
+            compose_due: false,
         }
     }
 }
@@ -965,20 +1036,46 @@ impl AppState {
                 self.apply_translation(id, engine, result)
             }
             Outcome::Image { id, result } => self.apply_image(id, result),
-            Outcome::ImageTranslateProgress { id, done, total } => {
-                self.apply_translate_progress(id, done, total)
-            }
+            // 进度也按归属落地：贴图在翻的时候，图片页那格进度条不该跟着跳
+            Outcome::ImageTranslateProgress {
+                id,
+                owner,
+                done,
+                total,
+            } => match owner {
+                ChainOwner::Page => self.apply_translate_progress(id, done, total),
+                ChainOwner::Pin(pin) => {
+                    if let Some(target) = self.pins.iter_mut().find(|p| p.id == pin) {
+                        if target.translate_in_flight == Some(id) {
+                            target.translate_stage = TranslateStage::Running { done, total };
+                        }
+                    }
+                    true
+                }
+            },
+            // 同一份回信按归属落地：图片页那一份工作区，还是某张贴图自己那一份。
+            // 这是"一条实现、两个落点"的另一半——派发出去的是同一批 Job 变体。
             Outcome::ImageTranslated {
                 id,
+                owner,
                 results,
                 cancelled,
                 elapsed_ms,
-            } => self.apply_image_translated(id, results, cancelled, elapsed_ms),
+            } => match owner {
+                ChainOwner::Page => self.apply_image_translated(id, results, cancelled, elapsed_ms),
+                ChainOwner::Pin(pin) => {
+                    self.apply_pin_translated(pin, id, results, cancelled, elapsed_ms)
+                }
+            },
             Outcome::ImageComposed {
                 id,
+                owner,
                 result,
                 elapsed_ms,
-            } => self.apply_image_composed(id, result, elapsed_ms),
+            } => match owner {
+                ChainOwner::Page => self.apply_image_composed(id, result, elapsed_ms),
+                ChainOwner::Pin(pin) => self.apply_pin_composed(pin, id, result),
+            },
             // 截图与贴图那两条：回信**只改状态**，开窗与派识别发生在帧循环里
             Outcome::ScreenCaptured { id, outcome } => {
                 self.capture_applied = Some(self.apply_capture(id, outcome));
@@ -1151,6 +1248,7 @@ impl AppState {
         self.composed = None;
         Some(Job::ImageTranslate {
             id,
+            owner: ChainOwner::Page,
             engine: self.engine,
             blocks,
             cancel: Arc::clone(&self.image_cancel),
@@ -1198,6 +1296,7 @@ impl AppState {
         self.compose_elapsed_ms = 0;
         Some(Job::ImageCompose {
             id,
+            owner: ChainOwner::Page,
             source: image.image.clone(),
             document: document.clone(),
             mode: self.compose_mode,
@@ -1347,7 +1446,7 @@ impl AppState {
         &mut self,
         pin: RequestId,
         generation: u64,
-        result: Result<OcrDocument, VisionError>,
+        result: Result<(Admitted, OcrDocument), VisionError>,
     ) -> bool {
         let Some(pin) = self.pins.iter_mut().find(|p| p.id == pin) else {
             return false;
@@ -1356,10 +1455,11 @@ impl AppState {
             return false;
         }
         match result {
-            Ok(document) => {
+            Ok((admitted, document)) => {
                 pin.stage = RecognitionStage::Done {
                     blocks: document.blocks.len(),
                 };
+                pin.source = Some(admitted);
                 pin.document = Some(document);
             }
             // "这张图上真没有可读的字"不是失败：沿用 CHG-005 那一档，不新造（REQ-002）
@@ -1554,19 +1654,7 @@ impl AppState {
         self.translate_elapsed_ms = elapsed_ms;
         let mut ok = 0;
         if let Some(document) = self.ocr.as_mut() {
-            for (block_id, result) in results {
-                self.failed_blocks.retain(|failed| *failed != block_id);
-                match result {
-                    // 块不在了 = 用户在这一批还在网上跑的时候把它删了，结果无处落，丢掉
-                    Ok(text) => {
-                        if let Some(block) = document.blocks.iter_mut().find(|b| b.id == block_id) {
-                            block.translation = Some(text);
-                            ok += 1;
-                        }
-                    }
-                    Err(_) => self.failed_blocks.push(block_id),
-                }
-            }
+            ok = land_translations(document, results, &mut self.failed_blocks);
         }
         let failed = self.failed_blocks.len();
         self.translate_stage = if cancelled {
@@ -1574,6 +1662,157 @@ impl AppState {
         } else {
             TranslateStage::Done { ok, failed }
         };
+        true
+    }
+
+    /// 一张贴图按下「翻译」：走的是**同一条链**（识别 → 翻译 → 回填 → 成品原地替换），
+    /// 只是文档、在飞标记与成品都存在这张自己身上。
+    ///
+    /// 前置门与图片页那条一样三道（没在飞、有可翻的块、定得出方向）；第三道不过要把话留在
+    /// **这张的**翻译段上，不是图片页的状态行——他正看着的是屏上那张。
+    pub fn submit_pin_translate(&mut self, pin: RequestId) -> Option<Job> {
+        // 顺序要紧：先在不_mut_借那一张的情况下把方向与号算出来，再回头写它自己的状态
+        let position = self.pins.iter().position(|p| p.id == pin)?;
+        if self.pins[position].translate_in_flight.is_some() {
+            return None;
+        }
+        let pending: Vec<(u32, String)> = self.pins[position]
+            .document
+            .as_ref()?
+            .enabled_blocks()
+            .map(|block| (block.id, block.text.clone()))
+            .collect();
+        if pending.is_empty() {
+            return None;
+        }
+        let sample = pending
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let engine = self.engine;
+        let cancel = Arc::clone(&self.image_cancel);
+        let pair = match self.image_direction(&sample) {
+            Some(pair) => pair,
+            None => {
+                self.pins[position].translate_stage =
+                    TranslateStage::Failed(NO_DIRECTION_TEXT.to_string());
+                return None;
+            }
+        };
+        let blocks = pending
+            .into_iter()
+            .map(|(id, text)| (id, TranslationRequest::new(text, pair)))
+            .collect::<Vec<_>>();
+        self.translate_request_id += 1;
+        let id = self.translate_request_id;
+        let target = &mut self.pins[position];
+        target.translate_in_flight = Some(id);
+        target.translate_stage = TranslateStage::Running {
+            done: 0,
+            total: blocks.len(),
+        };
+        target.failed_blocks.clear();
+        // 重翻一次，上一版成品当场作废：留着它就是"旧图配新译文"
+        target.product = None;
+        target.compose_due = false;
+        Some(Job::ImageTranslate {
+            id,
+            owner: ChainOwner::Pin(pin),
+            engine,
+            blocks,
+            cancel,
+        })
+    }
+
+    /// 落地一张贴图的译文。`false` = 这一批已经不是它了（贴图被关掉或又重派过）。
+    fn apply_pin_translated(
+        &mut self,
+        pin: RequestId,
+        id: RequestId,
+        results: Vec<(u32, Result<String, ProviderError>)>,
+        cancelled: bool,
+        // 耗时这一格留给贴图带子的完整版（T-009 那格要说"识别中/翻好 5 块"，
+        // 秒数与它同列）；现在不存进 `Pin` 是为了不出现"存了但没人画"的字段
+        _elapsed_ms: u64,
+    ) -> bool {
+        let Some(target) = self.pins.iter_mut().find(|p| p.id == pin) else {
+            return false;
+        };
+        if target.translate_in_flight != Some(id) {
+            return false;
+        }
+        target.translate_in_flight = None;
+        let mut ok = 0;
+        if let Some(document) = target.document.as_mut() {
+            ok = land_translations(document, results, &mut target.failed_blocks);
+        }
+        let failed = target.failed_blocks.len();
+        target.translate_stage = if cancelled {
+            TranslateStage::Stopped { ok, failed }
+        } else {
+            TranslateStage::Done { ok, failed }
+        };
+        // 翻成了哪怕一块才欠一次合成：全失败时屏上该留着原图，不是去画一张没有字的成品
+        target.compose_due = ok > 0;
+        true
+    }
+
+    /// 帧循环取走"该合成成品的贴图"。译文落好不等于当场画图——发任务是这一层之外的事。
+    pub fn take_due_pin_composes(&mut self) -> Vec<Job> {
+        let mut jobs = Vec::new();
+        let mut serial = self.translate_request_id;
+        for target in self.pins.iter_mut() {
+            if !target.compose_due {
+                continue;
+            }
+            target.compose_due = false;
+            let (Some(source), Some(document)) = (target.source.as_ref(), target.document.as_ref())
+            else {
+                continue;
+            };
+            serial += 1;
+            target.compose_in_flight = Some(serial);
+            jobs.push(Job::ImageCompose {
+                id: serial,
+                owner: ChainOwner::Pin(target.id),
+                source: source.image.clone(),
+                document: document.clone(),
+                mode: CompositeMode::default(),
+            });
+        }
+        self.translate_request_id = serial;
+        jobs
+    }
+
+    /// 成画即换：只换这一张贴图显示的那一个，历史里的原图一个字都不动（Q-008）。
+    /// 失败保留原图 + 一句原因（REQ-003 末句）——**贴图不许变没**。
+    fn apply_pin_composed(
+        &mut self,
+        pin: RequestId,
+        id: RequestId,
+        result: Result<Composed, VisionError>,
+    ) -> bool {
+        // 耗时不进 `Pin`：贴图那一格的进度只写"到哪一步"，秒数是状态行那一列的事
+        let Some(target) = self.pins.iter_mut().find(|p| p.id == pin) else {
+            return false;
+        };
+        if target.compose_in_flight != Some(id) {
+            return false;
+        }
+        target.compose_in_flight = None;
+        match result {
+            Ok(composed) => target.product = Some(composed),
+            // 画砸了：屏上还是原来那张，失败原因挂在这张的翻译段旁边那一格
+            Err(err) => {
+                target.translate_stage = TranslateStage::Done {
+                    ok: target.translate_ok_count(),
+                    failed: target.failed_blocks.len(),
+                };
+                target.product = None;
+                tracing::warn!(pin, error = image_failure_text(&err), "贴图成品没画成");
+            }
+        }
         true
     }
 
@@ -2010,6 +2249,219 @@ mod tests {
         )
     }
 
+    /// 贴图那一支的识别回信同时带底图与文档（合成用的底图必须是入场那一份）
+    fn pin_doc() -> OcrDocument {
+        let mut document = OcrDocument::empty(600, 400);
+        document.blocks = vec![TextBlock::new(
+            0,
+            "hello world",
+            PixelRect::new(10.0, 10.0, 200.0, 18.0),
+            0.9,
+        )];
+        document
+    }
+
+    /// 让一张贴图走到"识别已回来"的状态
+    fn recognized_pin(st: &mut AppState) -> u64 {
+        st.push_pin(PathBuf::from("/tmp/history/pin.png"))
+            .expect("能钉一张")
+    }
+
+    /// 贴图与图片页各有一套链上状态：**贴图在翻，图片页的按钮不许因此变灰**；
+    /// 反过来图片页在飞也不该让贴图这批派不出去。这是"借一份工作区"最直接的后果。
+    #[test]
+    fn the_pin_chain_and_the_page_chain_do_not_block_each_other() {
+        let mut st = capture_state();
+        let pin = recognized_pin(&mut st);
+        st.pins[0].document = Some(pin_doc());
+        let (admitted, _) = pixels_and_doc(600, 400);
+        st.pins[0].source = Some(admitted);
+
+        // 图片页先占住它自己那一段
+        st.ocr = Some(pin_doc());
+        let page_job = st.submit_image_translate(&[]).expect("图片页该能派一批");
+        assert!(st.translate_in_flight.is_some());
+
+        let pin_job = st.submit_pin_translate(pin).expect("贴图那一份该照派得出");
+        match (&page_job, &pin_job) {
+            (
+                Job::ImageTranslate {
+                    id: page_id,
+                    owner: page_owner,
+                    ..
+                },
+                Job::ImageTranslate {
+                    id: pin_id,
+                    owner: pin_owner,
+                    ..
+                },
+            ) => {
+                assert_eq!(*page_owner, ChainOwner::Page);
+                assert_eq!(*pin_owner, ChainOwner::Pin(pin));
+                assert_ne!(page_id, pin_id, "两条链共用一个号，回信就分不开是谁的");
+            }
+            other => panic!("派发的必须是逐块翻译：{other:?}"),
+        }
+
+        // 图片页那一批没在飞了（贴图这批仍在），互不影响
+        assert!(st.pins[0].translate_in_flight.is_some());
+        let page_id = match page_job {
+            Job::ImageTranslate { id, .. } => id,
+            _ => unreachable!(),
+        };
+        assert!(st.apply_outcome(Outcome::ImageTranslated {
+            id: page_id,
+            owner: ChainOwner::Page,
+            results: vec![(0, Ok("你好世界".to_string()))],
+            cancelled: false,
+            elapsed_ms: 3,
+        }));
+        assert_eq!(
+            st.pins[0].translate_stage,
+            TranslateStage::Running { done: 0, total: 1 },
+            "图片页的回信把贴图的段状态改了"
+        );
+    }
+
+    /// 整条链走完：译文落进这张自己的文档 → 欠一次合成 → 成品**原地替换**。
+    /// 历史目录里那张原图一个字节都不动（Q-008：原图是唯一真相源）。
+    #[test]
+    fn the_pin_chain_replaces_the_picture_in_place_and_owes_one_compose() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("1-1-1.png");
+        image::RgbImage::from_pixel(60, 40, image::Rgb([1, 2, 3]))
+            .save(&file)
+            .unwrap();
+        let before = std::fs::read(&file).unwrap();
+
+        let mut st = capture_state();
+        let pin = st.push_pin(file.clone()).unwrap();
+        let (admitted, document) = pixels_and_doc(60, 40);
+        let mut document = document;
+        document.blocks = pin_doc().blocks;
+        st.pins[0].source = Some(admitted);
+        st.pins[0].document = Some(document);
+
+        let job = st.submit_pin_translate(pin).expect("该派出一批翻译");
+        let batch = match job {
+            Job::ImageTranslate { id, .. } => id,
+            other => panic!("{other:?}"),
+        };
+        assert!(st.apply_outcome(Outcome::ImageTranslated {
+            id: batch,
+            owner: ChainOwner::Pin(pin),
+            results: vec![(0, Ok("你好世界".to_string()))],
+            cancelled: false,
+            elapsed_ms: 4,
+        }));
+        assert_eq!(
+            st.pins[0].translate_stage,
+            TranslateStage::Done { ok: 1, failed: 0 }
+        );
+        assert_eq!(
+            st.pins[0].document.as_ref().unwrap().blocks[0]
+                .translation
+                .as_deref(),
+            Some("你好世界"),
+            "译文该落在这张贴图自己的文档上"
+        );
+
+        // 译文落好 → 欠一次合成，且带的是这张的底图与文档
+        let due = st.take_due_pin_composes();
+        assert_eq!(due.len(), 1, "该派一次成品合成");
+        let compose_id = match &due[0] {
+            Job::ImageCompose { id, owner, .. } => {
+                assert_eq!(*owner, ChainOwner::Pin(pin));
+                *id
+            }
+            other => panic!("{other:?}"),
+        };
+        assert!(!st.pins[0].compose_due, "派过就该销账，不许每帧重复派");
+
+        let product = a_composed(1);
+        assert!(st.apply_outcome(Outcome::ImageComposed {
+            id: compose_id,
+            owner: ChainOwner::Pin(pin),
+            result: Ok(product),
+            elapsed_ms: 5,
+        }));
+        assert!(st.pins[0].product.is_some(), "成品没换上");
+        assert!(
+            matches!(
+                crate::system::pin::displayed(&st.pins[0]),
+                Some(crate::system::pin::Display::Owned(_))
+            ),
+            "屏上该是成品"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), before, "原图被动过了");
+    }
+
+    /// 成品画砸了：**屏上还是原来那张**，加一句原因——不许把图变没（REQ-003 末句）。
+    #[test]
+    fn a_failed_product_keeps_the_picture_instead_of_blanking_it() {
+        let mut st = capture_state();
+        let pin = recognized_pin(&mut st);
+        let (admitted, document) = pixels_and_doc(60, 40);
+        st.pins[0].source = Some(admitted);
+        st.pins[0].document = Some(document);
+        st.pins[0].compose_due = true;
+        let compose_id = match st.take_due_pin_composes().remove(0) {
+            Job::ImageCompose { id, .. } => id,
+            other => panic!("{other:?}"),
+        };
+        assert!(st.apply_outcome(Outcome::ImageComposed {
+            id: compose_id,
+            owner: ChainOwner::Pin(pin),
+            result: Err(ice_vision::error::VisionError::Composite(
+                "测试：画不出来".into()
+            )),
+            elapsed_ms: 2,
+        }));
+        assert!(st.pins[0].product.is_none());
+        // 底图还在，屏上就还有东西
+        assert!(matches!(
+            crate::system::pin::displayed(&st.pins[0]),
+            Some(crate::system::pin::Display::Borrowed(_))
+        ));
+    }
+
+    /// 贴图关掉之后，它那些还在飞的回信一律丢弃——尤其不许落到"后来那张"上
+    /// （号只往前走不复用，这一条是它的对偶：拿旧号来找也不会找到新图）。
+    #[test]
+    fn replies_for_a_closed_pin_are_dropped() {
+        let mut st = capture_state();
+        let pin = recognized_pin(&mut st);
+        let (admitted, _) = pixels_and_doc(60, 40);
+        st.pins[0].source = Some(admitted);
+        // 得给一份**有字**的文档：空文档本来就该派不出翻译，那样这条用例什么也没锁
+        st.pins[0].document = Some(pin_doc());
+        let batch = match st.submit_pin_translate(pin).unwrap() {
+            Job::ImageTranslate { id, .. } => id,
+            other => panic!("{other:?}"),
+        };
+        assert!(st.close_pin(pin));
+        assert!(!st.apply_outcome(Outcome::ImageTranslated {
+            id: batch,
+            owner: ChainOwner::Pin(pin),
+            results: vec![(0, Ok("没了对象".to_string()))],
+            cancelled: false,
+            elapsed_ms: 1,
+        }));
+        // 派一次翻译，不会凭空造出一张贴图
+        assert!(st.pins.is_empty());
+        assert!(st.submit_pin_translate(pin).is_none());
+    }
+
+    fn pixels_and_doc(width: u32, height: u32) -> (ice_vision::import::Admitted, OcrDocument) {
+        (
+            ice_vision::import::admit_rgba(
+                image::RgbaImage::from_pixel(width, height, image::Rgba([1, 2, 3, 255])),
+                "测试",
+            ),
+            OcrDocument::empty(width, height),
+        )
+    }
+
     // ---- CHG-009 第四条通道（T-004/T-005 的无头判据） ----
 
     /// 回信只改状态：成功那一支建一张贴图、派一次"只识别"，**一条翻译任务都不许出现**。
@@ -2151,7 +2603,7 @@ mod tests {
             Some(Job::PinRecognize { generation, .. }) => generation,
             other => panic!("刚钉上的贴图该能派一次只识别：{other:?}"),
         };
-        assert!(st.apply_pin_recognized(1, gen1, Ok(OcrDocument::empty(8, 8))));
+        assert!(st.apply_pin_recognized(1, gen1, Ok(pixels_and_doc(8, 8))));
         assert_eq!(st.pins[0].document.as_ref().unwrap().width, 8);
 
         // 第二代：同一张再派一次，换代
@@ -2165,20 +2617,20 @@ mod tests {
 
         // 上一代那条晚到的回信（20×20）：整条丢弃，界面那一格还是第一代那份 8×8
         assert!(
-            !st.apply_pin_recognized(1, gen1, Ok(OcrDocument::empty(20, 20))),
+            !st.apply_pin_recognized(1, gen1, Ok(pixels_and_doc(20, 20))),
             "上一代的回信不许盖掉这一代"
         );
         assert_eq!(st.pins[0].document.as_ref().unwrap().width, 8);
         assert_eq!(st.pins[0].stage, RecognitionStage::Recognizing);
 
         // 这一代的回信回来才落地
-        assert!(st.apply_pin_recognized(1, gen2, Ok(OcrDocument::empty(20, 20))));
+        assert!(st.apply_pin_recognized(1, gen2, Ok(pixels_and_doc(20, 20))));
         assert_eq!(st.pins[0].document.as_ref().unwrap().width, 20);
         assert_eq!(st.pins[0].stage, RecognitionStage::Done { blocks: 0 });
 
         // 贴图关掉之后，任何一代的回信都落不下去（号不复用，落不到新贴图上）
         assert!(st.close_pin(1));
-        assert!(!st.apply_pin_recognized(1, gen2, Ok(OcrDocument::empty(30, 30))));
+        assert!(!st.apply_pin_recognized(1, gen2, Ok(pixels_and_doc(30, 30))));
     }
 
     /// "这张图上真没有可读的字"沿用 CHG-005 那一档，**不当失败**（REQ-002 末句）。
@@ -2966,6 +3418,7 @@ mod tests {
 
         // 成品先回来：只摘合成段那一个标记，翻译段照旧在飞
         assert!(state.apply_outcome(Outcome::ImageComposed {
+            owner: ChainOwner::Page,
             id: compose_id,
             result: Ok(a_composed(2)),
             elapsed_ms: 5,
@@ -2983,6 +3436,7 @@ mod tests {
 
         // 译文再回来：只销翻译段那一个标记，已经换上的成品一张都不许动
         assert!(state.apply_outcome(Outcome::ImageTranslated {
+            owner: ChainOwner::Page,
             id: translate_id,
             results: vec![(0, Ok("新一批译文".to_string()))],
             cancelled: false,
@@ -2998,6 +3452,7 @@ mod tests {
         // 两段都落地之后，同一次派发的两条迟到结果都该丢掉（号子已经作废旧了）
         assert!(
             !state.apply_outcome(Outcome::ImageTranslated {
+                owner: ChainOwner::Page,
                 id: translate_id,
                 results: vec![(0, Ok("更晚的译文".to_string()))],
                 cancelled: false,
@@ -3007,6 +3462,7 @@ mod tests {
         );
         assert!(
             !state.apply_outcome(Outcome::ImageComposed {
+                owner: ChainOwner::Page,
                 id: compose_id,
                 result: Ok(a_composed(9)),
                 elapsed_ms: 5,
@@ -3044,6 +3500,7 @@ mod tests {
         let mut state = translated_state(&["第一块"]);
         let first = job_id(&state.submit_image_compose().unwrap());
         assert!(state.apply_outcome(Outcome::ImageComposed {
+            owner: ChainOwner::Page,
             id: first,
             result: Ok(a_composed(3)),
             elapsed_ms: 20,
@@ -3054,6 +3511,7 @@ mod tests {
         state.ocr.as_mut().unwrap().blocks[0].translation = Some("第二版".to_string());
         let second = job_id(&state.submit_image_compose().unwrap());
         assert!(state.apply_outcome(Outcome::ImageComposed {
+            owner: ChainOwner::Page,
             id: second,
             result: Err(ice_vision::VisionError::Composite("画不出来".to_string())),
             elapsed_ms: 8,
@@ -3089,6 +3547,7 @@ mod tests {
 
         // 哨兵立起来之后结果回来了：落地成 Stopped 而不是 Done
         assert!(state.apply_outcome(Outcome::ImageTranslated {
+            owner: ChainOwner::Page,
             id: job_id(&job),
             results: vec![(0, Ok("你好".to_string()))],
             cancelled: true,
@@ -3127,12 +3586,14 @@ mod tests {
 
         // 两次在飞的晚到结果都该丢掉
         assert!(!state.apply_outcome(Outcome::ImageTranslated {
+            owner: ChainOwner::Page,
             id: job_id(&translate),
             results: vec![(0, Ok("旧批次".to_string()))],
             cancelled: false,
             elapsed_ms: 10,
         }));
         assert!(!state.apply_outcome(Outcome::ImageComposed {
+            owner: ChainOwner::Page,
             id: job_id(&compose),
             result: Ok(a_composed(9)),
             elapsed_ms: 5,
@@ -3220,4 +3681,30 @@ mod tests {
         );
         assert!(matches!(state.image_stage, RecognitionStage::Done { .. }));
     }
+}
+
+/// 把一批"块号 → 译文"落到某一份文档上，顺手销账失败台账。
+///
+/// **图片页与贴图共用这一条**：两份"块不在了就丢掉、失败要进台账"的写法各写一遍，
+/// 迟早一份严格一份宽松。丢的那一支尤其容易写歪：块不在了 = 用户在这批请求还在网上跑
+/// 的时候把它删了，结果无处落，只能丢，**不许**因此说"已翻好"。
+fn land_translations(
+    document: &mut OcrDocument,
+    results: Vec<(u32, Result<String, ProviderError>)>,
+    failed: &mut Vec<u32>,
+) -> usize {
+    let mut ok = 0;
+    for (block_id, result) in results {
+        failed.retain(|kept| *kept != block_id);
+        match result {
+            Ok(text) => {
+                if let Some(block) = document.blocks.iter_mut().find(|b| b.id == block_id) {
+                    block.translation = Some(text);
+                    ok += 1;
+                }
+            }
+            Err(_) => failed.push(block_id),
+        }
+    }
+    ok
 }

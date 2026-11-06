@@ -31,7 +31,7 @@ use image::RgbaImage;
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, mpsc};
 
-use crate::state::{AppState, ImageInput, ImageRecognition, Job, Outcome, RequestId};
+use crate::state::{AppState, ChainOwner, ImageInput, ImageRecognition, Job, Outcome, RequestId};
 use crate::system::capture;
 
 /// 通道容量：界面上同一时刻只允许一个请求在飞，留一点余量给切换语言时的重译
@@ -94,10 +94,11 @@ impl JobRunner {
             Job::ImageOcr { id, input } => self.submit_image(runtime, id, input, ctx),
             Job::ImageTranslate {
                 id,
+                owner,
                 engine,
                 blocks,
                 cancel,
-            } => self.submit_image_translate(runtime, id, engine, blocks, cancel, ctx),
+            } => self.submit_image_translate(runtime, id, owner, engine, blocks, cancel, ctx),
             Job::ScreenCapture { id, seq } => self.submit_screen_capture(runtime, id, seq, ctx),
             Job::PinRecognize {
                 pin,
@@ -106,10 +107,11 @@ impl JobRunner {
             } => self.submit_pin_recognize(runtime, pin, generation, path, ctx),
             Job::ImageCompose {
                 id,
+                owner,
                 source,
                 document,
                 mode,
-            } => self.submit_image_compose(runtime, id, source, document, mode, ctx),
+            } => self.submit_image_compose(runtime, id, owner, source, document, mode, ctx),
         }
     }
 
@@ -187,10 +189,14 @@ impl JobRunner {
     ///    （D-20 那条：换通道是业务决定，交回用户）。
     /// 3. **停止只在块边界生效**。在飞的那一次请求撤不回，所以点停止最少还要等一块的时间——
     ///    界面因此不许说"已撤回"，只许说"已停止这次处理，译文还在"。
+    // 参数比七多一些：这批要发给谁的引擎、块、停止哨兵，加上 CHG-009 的路由归属
+    // `owner`——把五个入参打包成一个结构体只会让调用点多一层噪音
+    #[allow(clippy::too_many_arguments)]
     fn submit_image_translate(
         &mut self,
         runtime: &Runtime,
         id: RequestId,
+        owner: ChainOwner,
         engine: EngineKind,
         blocks: Vec<(u32, TranslationRequest)>,
         cancel: Arc<AtomicBool>,
@@ -227,6 +233,7 @@ impl JobRunner {
                 if tx
                     .try_send(Outcome::ImageTranslateProgress {
                         id,
+                        owner,
                         done: results.len(),
                         total,
                     })
@@ -242,6 +249,7 @@ impl JobRunner {
             let sent = tx
                 .try_send(Outcome::ImageTranslated {
                     id,
+                    owner,
                     results,
                     cancelled,
                     elapsed_ms,
@@ -259,10 +267,12 @@ impl JobRunner {
     /// 判据的一部分，不是用户偏好，`config.toml` 里没有它们（docs/04 §3）。
     /// 成品只有一个结局：整张图画完（`Ok`）或者什么都没有（`Err`）。中间态不往外发，
     /// 所以界面上永远不会出现画了一半的那张图（REQ-009 第四条）。
+    #[allow(clippy::too_many_arguments)] // 同上：合成段的入参与路由归属
     fn submit_image_compose(
         &mut self,
         runtime: &Runtime,
         id: RequestId,
+        owner: ChainOwner,
         source: RgbaImage,
         document: OcrDocument,
         mode: CompositeMode,
@@ -278,6 +288,7 @@ impl JobRunner {
             let sent = tx
                 .try_send(Outcome::ImageComposed {
                     id,
+                    owner,
                     result,
                     elapsed_ms,
                 })
@@ -336,14 +347,15 @@ impl JobRunner {
 
         runtime.spawn_blocking(move || {
             let started = Instant::now();
+            // 底图与文档一起交回：合成那一步要用同一份（未二次缩放的）像素当底
             let result = admit_path(&path).and_then(|admitted| {
                 let (_rows, document, _progress) =
                     ice_vision::recognize_with_rows(&admitted.image)?;
-                Ok(document)
+                Ok((admitted, document))
             });
             let elapsed_ms = started.elapsed().as_millis() as u64;
             match &result {
-                Ok(document) => tracing::info!(
+                Ok((_admitted, document)) => tracing::info!(
                     pin,
                     generation,
                     blocks = document.blocks.len(),
@@ -470,6 +482,7 @@ fn log_outcome(outcome: &Outcome) {
         Outcome::ImageTranslateProgress { .. } => {}
         Outcome::ImageTranslated {
             id,
+            owner: _,
             results,
             cancelled,
             elapsed_ms,
@@ -486,6 +499,7 @@ fn log_outcome(outcome: &Outcome) {
         }
         Outcome::ImageComposed {
             id,
+            owner: _,
             result,
             elapsed_ms,
         } => match result {
@@ -520,7 +534,7 @@ fn log_outcome(outcome: &Outcome) {
             result,
             elapsed_ms,
         } => match result {
-            Ok(document) => tracing::info!(
+            Ok((_admitted, document)) => tracing::info!(
                 pin,
                 generation,
                 blocks = document.blocks.len(),
@@ -1068,6 +1082,7 @@ mod tests {
         harness.with_blocks(&["第一块"]);
         harness.state.ocr.as_mut().unwrap().blocks[0].translation = Some("你好".to_string());
         let stale = Outcome::ImageComposed {
+            owner: ChainOwner::Page,
             id: harness.state.compose_request_id + 99,
             result: Ok(Composed {
                 image: RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 0, 255])),
