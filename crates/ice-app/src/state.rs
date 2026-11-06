@@ -173,7 +173,10 @@ impl Toast {
 }
 
 /// 破坏性操作的二次确认（`03-ui-design.md` §1）
+/// 三个变体都叫 `Clear*` 是有意的：它们对应界面上三颗"清除"类操作，
+/// 名字与按钮文案一一对上比避开前缀更重要
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum Confirm {
     ClearHistory,
     ClearKey,
@@ -285,6 +288,9 @@ pub enum Job {
         id: RequestId,
         /// 历史文件名的第三段（同 pid 同秒的两次连点靠它分开）
         seq: u64,
+        /// 发起前被收起的那些窗（含主窗）。**子进程结束时由那条线程放回来**——
+        /// 挂在帧循环上不行：窗收起时帧循环根本不跑，还原就永远不会执行
+        hidden: capture::Hidden,
     },
     /// 一张贴图自己的"只识别"（REQ-005）。**不带翻译**：那颗「翻译」是人按的。
     /// `gen` 是派发那一刻的代序号，回信原样带回来，对不上就丢弃。
@@ -458,8 +464,6 @@ pub struct Pin {
     pub document: Option<ice_core::document::OcrDocument>,
     /// 带子开着还是收着（REQ-003：收起 = 窗口缩到图片本身）
     pub band_open: bool,
-    /// 图片本体上有没有正被按住拖动（REQ-004，走查要看的那一件）
-    pub dragging: bool,
     /// 这张的像素（识别回信带回来的那一份，与图片页的 `AppState::image` 同一种东西）。
     /// 合成要有底图，而底图**必须是屏上正在显示的那一张**——现读文件会读到没换成品之前的旧图。
     pub source: Option<Admitted>,
@@ -494,12 +498,8 @@ impl Pin {
             .unwrap_or(0)
     }
 
-    /// 这张贴图此刻该显示哪一份：有成品用成品，否则用原图。
-    pub fn displayed(&self) -> Option<&Admitted> {
-        self.source.as_ref()
-    }
-
     /// 测试与本模块内部构造用（贴图窗的端到端用例要造一张真贴图）
+    #[cfg(test)]
     pub fn for_test(id: RequestId, path: PathBuf) -> Self {
         Self::new(id, path)
     }
@@ -512,7 +512,6 @@ impl Pin {
             stage: RecognitionStage::Idle,
             document: None,
             band_open: true,
-            dragging: false,
             source: None,
             translate_stage: TranslateStage::Idle,
             translate_in_flight: None,
@@ -1357,12 +1356,32 @@ impl AppState {
         Some(Job::ScreenCapture {
             id,
             seq: self.capture_seq,
+            // 发起前要收起哪些窗，账跟着任务走：子进程结束时由**那条线程**放回来
+            hidden: self.capture_hidden_record(),
         })
     }
 
     /// 那颗按钮灰不灰与状态行说哪句话，**读同一个来源**（与 `translate_gate` /
     /// `compose_gate` 同形）。三道门从上往下依次是：这台机器没这件事、上一次还在画、
     /// 屏幕上钉满了。
+    /// 这次框选要临时收起哪些窗，以及主窗本来是不是收着的。
+    ///
+    /// 主窗 + 每一张贴图，一个都不能漏：系统的框选界面把屏幕原样拍进去，任何一扇还开着
+    /// 的自家窗都会进图（事实 32）。`root_was_hidden` 只有托盘那一档才为真，它决定还原时
+    /// 要不要多买一帧（见 `capture::wake_commands`）。
+    pub fn capture_hidden_record(&self) -> capture::Hidden {
+        capture::Hidden {
+            viewports: std::iter::once(egui::ViewportId::ROOT)
+                .chain(
+                    self.pins
+                        .iter()
+                        .map(|pin| crate::system::pin::viewport_id(pin.id)),
+                )
+                .collect(),
+            root_was_hidden: self.hidden,
+        }
+    }
+
     pub fn capture_gate(&self) -> Option<&'static str> {
         if !crate::system::capture::capability().capture {
             return Some("这台机器没有可用的框选截图；可先用系统截图再点「粘贴」");
@@ -1468,12 +1487,6 @@ impl AppState {
         self.pins_new.push(id);
         self.capture_stage = CaptureStage::Pinned;
         Some(id)
-    }
-
-    /// 「打开上一次截图」（F2 那一格）要的那张：**与老化共用同一个排序**，
-    /// 所以"最近"在这条链上只有一个定义。没有历史时返回 `None`，界面给"还没有截图记录"。
-    pub fn newest_pin_source(&self) -> Option<&Pin> {
-        self.pins.last()
     }
 
     /// 关掉一张：从状态里摘掉，返回是否真摘掉了（`false` = 那个号本来就不在，
@@ -2299,6 +2312,33 @@ impl AppState {
     }
 }
 
+/// 把一批"块号 → 译文"落到某一份文档上，顺手销账失败台账。
+///
+/// **图片页与贴图共用这一条**：两份"块不在了就丢掉、失败要进台账"的写法各写一遍，
+/// 迟早一份严格一份宽松。丢的那一支尤其容易写歪：块不在了 = 用户在这批请求还在网上跑
+/// 的时候把它删了，结果无处落，只能丢，**不许**因此说"已翻好"。
+fn land_translations(
+    document: &mut OcrDocument,
+    results: Vec<(u32, Result<String, ProviderError>)>,
+    failed: &mut Vec<u32>,
+) -> usize {
+    let mut ok = 0;
+    for (block_id, result) in results {
+        failed.retain(|kept| *kept != block_id);
+        match result {
+            Ok(text) => {
+                if let Some(block) = document.blocks.iter_mut().find(|b| b.id == block_id) {
+                    block.translation = Some(text);
+                    ok += 1;
+                }
+            }
+            Err(_) => failed.push(block_id),
+        }
+    }
+
+    ok
+}
+
 #[cfg(test)]
 mod tests {
     /// 截图这十条用例共用的一个干净状态（构造与 `app_with_source` 同一份，只是不塞源文）。
@@ -2514,6 +2554,41 @@ mod tests {
         assert!(st.submit_pin_translate(pin).is_none());
     }
 
+    /// 收起哪些窗这份账**跟着任务走**，不是留在状态里等帧循环去做：窗收起时帧循环根本
+    /// 不跑，挂在帧末的还原永远不会执行（那就是"截完图界面再也没回来"）。
+    #[test]
+    fn the_capture_job_carries_which_windows_to_put_back() {
+        fn id_of(job: &Job) -> RequestId {
+            match job {
+                Job::ScreenCapture { id, .. } => *id,
+                other => panic!("派出的必须是截图任务：{other:?}"),
+            }
+        }
+
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/a.png"));
+        st.push_pin(PathBuf::from("/tmp/history/b.png"));
+        let job = st.submit_capture().expect("空闲时该发得出");
+        let Job::ScreenCapture { hidden, .. } = &job else {
+            panic!("派出的必须是截图任务：{job:?}");
+        };
+        // 主窗 + 两张贴图，一个都不能漏
+        assert_eq!(hidden.viewports.len(), 3);
+        assert!(hidden.viewports.contains(&egui::ViewportId::ROOT));
+        assert!(!hidden.root_was_hidden, "主窗开着时不用买那一帧");
+
+        // 收进托盘的那一档：同一份账要标出"主窗本来就收着"，还原时才知道要多发一次
+        // `RequestPaintWhileHidden`（事实 30/31）。先让上一次取消落地——在飞时本来就该拒
+        let first = st.apply_capture(id_of(&job), capture::Outcome::Cancelled);
+        assert!(matches!(first, CaptureApplied::Cancelled));
+        st.hidden = true;
+        let job = st.submit_capture().expect("上一次落地之后该再发得出");
+        let Job::ScreenCapture { hidden, .. } = &job else {
+            unreachable!()
+        };
+        assert!(hidden.root_was_hidden);
+    }
+
     fn pixels_and_doc(width: u32, height: u32) -> (ice_vision::import::Admitted, OcrDocument) {
         (
             ice_vision::import::admit_rgba(
@@ -2535,7 +2610,7 @@ mod tests {
         let path = PathBuf::from("/tmp/history/1-1-100.png");
         // 先真派发一次：回信带的是那一刻的序号，凭空喂一个 1 会被判过期
         let job = st.submit_capture().expect("空闲时该发得出框选任务");
-        assert!(matches!(job, Job::ScreenCapture { id: 1, seq: 1 }));
+        assert!(matches!(job, Job::ScreenCapture { id: 1, seq: 1, .. }));
         let applied = st.apply_capture(1, capture::Outcome::Captured(path.clone()));
         assert_eq!(applied, CaptureApplied::Pinned { pin: 1 });
         assert_eq!(st.pins.len(), 1);
@@ -3743,30 +3818,4 @@ mod tests {
         );
         assert!(matches!(state.image_stage, RecognitionStage::Done { .. }));
     }
-}
-
-/// 把一批"块号 → 译文"落到某一份文档上，顺手销账失败台账。
-///
-/// **图片页与贴图共用这一条**：两份"块不在了就丢掉、失败要进台账"的写法各写一遍，
-/// 迟早一份严格一份宽松。丢的那一支尤其容易写歪：块不在了 = 用户在这批请求还在网上跑
-/// 的时候把它删了，结果无处落，只能丢，**不许**因此说"已翻好"。
-fn land_translations(
-    document: &mut OcrDocument,
-    results: Vec<(u32, Result<String, ProviderError>)>,
-    failed: &mut Vec<u32>,
-) -> usize {
-    let mut ok = 0;
-    for (block_id, result) in results {
-        failed.retain(|kept| *kept != block_id);
-        match result {
-            Ok(text) => {
-                if let Some(block) = document.blocks.iter_mut().find(|b| b.id == block_id) {
-                    block.translation = Some(text);
-                    ok += 1;
-                }
-            }
-            Err(_) => failed.push(block_id),
-        }
-    }
-    ok
 }

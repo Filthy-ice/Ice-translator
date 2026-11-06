@@ -39,19 +39,39 @@ const CHANNEL_CAPACITY: usize = 8;
 
 pub type OutcomeReceiver = mpsc::Receiver<Outcome>;
 
+/// 一次框选的执行体。默认是 `capture::capture`（真去起那个交互工具）。
+///
+/// **测试必须把它换掉**：`screencapture -i` 会把全屏选区直接拍到屏幕上并阻塞等人画完——
+/// 那不只是慢，那是"跑一次测试就操作一次你的屏幕"。这个格子存在就是为了这件事
+/// 不需要靠每个测试记得绕开。
+pub type CaptureRun = dyn Fn(&std::path::Path, u64) -> capture::Outcome + Send + Sync;
+
 pub struct JobRunner {
     shared: Arc<Mutex<Translator>>,
+    capture_run: Arc<CaptureRun>,
     tx: mpsc::Sender<Outcome>,
     pending_glossary: Option<Glossary>,
     pending_translator: Option<Translator>,
 }
 
 impl JobRunner {
+    /// 测试用：把框选的执行体换成桩，**任何测试都不该真去起那个全屏交互工具**
+    #[cfg(test)]
+    pub fn set_capture_runner<F>(&mut self, f: F)
+    where
+        F: Fn(&std::path::Path, u64) -> capture::Outcome + Send + Sync + 'static,
+    {
+        self.capture_run = Arc::new(f);
+    }
+
     pub fn new(translator: Translator) -> (Self, OutcomeReceiver) {
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+        // 默认就是真工具。换成桩是测试的责任，见 `CaptureRun` 上面那段
+        let capture_run: Arc<CaptureRun> = Arc::new(capture::capture);
         (
             Self {
                 shared: Arc::new(Mutex::new(translator)),
+                capture_run,
                 tx,
                 pending_glossary: None,
                 pending_translator: None,
@@ -99,7 +119,9 @@ impl JobRunner {
                 blocks,
                 cancel,
             } => self.submit_image_translate(runtime, id, owner, engine, blocks, cancel, ctx),
-            Job::ScreenCapture { id, seq } => self.submit_screen_capture(runtime, id, seq, ctx),
+            Job::ScreenCapture { id, seq, hidden } => {
+                self.submit_screen_capture(runtime, id, seq, hidden, ctx)
+            }
             Job::PinRecognize {
                 pin,
                 generation,
@@ -305,17 +327,29 @@ impl JobRunner {
     ///
     /// 落点目录与文件名都在这条线程上算——状态层不知道文件系统的事。日志只记结局与耗时：
     /// 那张图的文件名本身就可能是用户内容（REQ-008 的白名单：尺寸、耗时、张数、类别）。
-    fn submit_screen_capture(&mut self, runtime: &Runtime, id: RequestId, seq: u64, ctx: &Context) {
+    fn submit_screen_capture(
+        &mut self,
+        runtime: &Runtime,
+        id: RequestId,
+        seq: u64,
+        hidden: capture::Hidden,
+        ctx: &Context,
+    ) {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
+        // 执行体整个换成共享的：`spawn_blocking` 的闭包必须是 'static，借不动 &self
+        let capture_run = Arc::clone(&self.capture_run);
 
         runtime.spawn_blocking(move || {
             let started = Instant::now();
             let outcome = match capture::shots_dir() {
-                Ok(dir) => capture::capture(&dir, seq),
+                Ok(dir) => (capture_run)(&dir, seq),
                 Err(kind) => capture::Outcome::Failed(kind),
             };
             let elapsed_ms = started.elapsed().as_millis() as u64;
+            // 先把窗放回来并买那一帧，再发回信。反过来的话，回信落帧循环去建贴图窗时
+            // 主窗还收着（隐藏态那一次按下正是这一格，事实 30/31）
+            capture::show_again(&ctx, &hidden);
             tracing::info!(
                 request_id = id,
                 result = outcome_name(&outcome),
@@ -638,7 +672,9 @@ mod tests {
             for engine in engines {
                 translator.register(engine);
             }
-            let (runner, rx) = JobRunner::new(translator);
+            let (mut runner, rx) = JobRunner::new(translator);
+            // 测试用的执行体：真工具会把全屏选区拍到屏幕上并等人画完（见 `CaptureRun`）
+            runner.set_capture_runner(|_path, _seq| capture::Outcome::Cancelled);
             let dir = tempfile::tempdir().unwrap();
             let mut state = AppState::new(
                 Config::default(),

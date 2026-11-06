@@ -268,6 +268,7 @@ fn main() {
                 config_path,
                 Some(lock),
                 key_probe,
+                crate::system::capture::shots_dir().ok(),
             )))
         }),
     ) {

@@ -158,6 +158,10 @@ pub struct IceApp {
 }
 
 impl IceApp {
+    // 参数就是这么多：装配根本来就要把引擎、运行时、历史、配置路径、锁、Key 探测、
+    // 截图目录一起交进来（NFR-6 的依赖方向要求这些都在外面造好再注入）。
+    // 包成一个 struct 只会多一层没有信息量的中间类型。
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mut state: AppState,
         runtime: Runtime,
@@ -166,6 +170,9 @@ impl IceApp {
         config_path: PathBuf,
         lock: Option<InstanceLock>,
         key_probe: KeyProbeReceiver,
+        // 截图历史目录。**由调用方给**而不是在这里现问系统：老化和一键清除都会真删文件，
+        // 只要有一次忘记注入，测试就会删掉用户真的截图历史——参数化之后这种事编译不过
+        shots_dir: Option<PathBuf>,
     ) -> Self {
         let (mut runner, outcomes) = JobRunner::new(translator);
         let (panel_tx, panel_rx) = panel::channel();
@@ -191,7 +198,7 @@ impl IceApp {
             config_path,
             pending_save: PendingSave::None,
             hotkeys_started: false,
-            shots_dir: capture::shots_dir().ok(),
+            shots_dir,
             lock,
             key_probe,
             panel_tx,
@@ -305,21 +312,6 @@ impl IceApp {
         mode::reveal(ctx, &mut self.state, &mut self.pending_geometry, tray);
     }
 
-    /// 菜单栏托盘的泵：定档、核对、把 `outcome` 交回**既有**的 `run` 分派。
-    /// 只由 `App::logic` 调（见那里的注释）——那是可见与收起两条路都会跑到的钩子。
-    ///
-    /// `scale` 与 `outcome` 由调用方给：真机那一次来自 `eframe::Frame` 与
-    /// `tray::take_outcome()`，测试给一份固定的，才不必去碰进程级那个意图槽——那个槽被两个
-    /// 并行测试踩到就是随机红。
-    ///
-    /// 三个决定各有一条理由：
-    /// - **只在没定档时装**（`Unknown`）。装上之后每帧只做核对；装不上之后就停在
-    ///   `Unavailable`，不再每帧重造状态项——反复造会在菜单栏里长出第二枚图标（REQ-001）。
-    /// - **结果变了才说话**（与 `apply_zoom_hook`、`apply_dblclick_hook` 同一手法）：
-    ///   逐帧记会把日志刷满。macOS 上装不上要给用户一条提示条，因为那一档的关窗语义
-    ///   跟着换回"收进后台"，界面得说实话（REQ-005、REQ-006）。
-    /// - **意图走 `run(action)`**，不在这外面另写一套兑现。四条意图与快捷键、设置页、
-    ///   绿键落在同一批动作上，`Action::Quit` 必须是既有的那一条（TC-5.4-b）。
     /// 全局热键：装上 handler、按需注册、把命中的那一下送进**既有的 `Action` 分派**。
     ///
     /// 挂在 `logic()` 而不是 `ui()`：窗口收起时 `ui()` 一帧都不跑，挂在那儿等于"只有窗口
@@ -342,6 +334,21 @@ impl IceApp {
         }
     }
 
+    /// 菜单栏托盘的泵：定档、核对、把 `outcome` 交回**既有**的 `run` 分派。
+    /// 只由 `App::logic` 调（见那里的注释）——那是可见与收起两条路都会跑到的钩子。
+    ///
+    /// `scale` 与 `outcome` 由调用方给：真机那一次来自 `eframe::Frame` 与
+    /// `tray::take_outcome()`，测试给一份固定的，才不必去碰进程级那个意图槽——那个槽被两个
+    /// 并行测试踩到就是随机红。
+    ///
+    /// 三个决定各有一条理由：
+    /// - **只在没定档时装**（`Unknown`）。装上之后每帧只做核对；装不上之后就停在
+    ///   `Unavailable`，不再每帧重造状态项——反复造会在菜单栏里长出第二枚图标（REQ-001）。
+    /// - **结果变了才说话**（与 `apply_zoom_hook`、`apply_dblclick_hook` 同一手法）：
+    ///   逐帧记会把日志刷满。macOS 上装不上要给用户一条提示条，因为那一档的关窗语义
+    ///   跟着换回"收进后台"，界面得说实话（REQ-005、REQ-006）。
+    /// - **意图走 `run(action)`**，不在这外面另写一套兑现。四条意图与快捷键、设置页、
+    ///   绿键落在同一批动作上，`Action::Quit` 必须是既有的那一条（TC-5.4-b）。
     fn pump_tray(
         &mut self,
         scale: f64,
@@ -1353,6 +1360,83 @@ impl IceApp {
                 self.runner.submit(&self.runtime, job, ctx);
             }
         }
+        // 图片页的三条入口：面板给的是"意图"，路径要等回调回来才有（REQ-001 的"不阻塞"）
+        if effects.open_panel && !panel::request_open(&self.panel_tx, ctx) {
+            self.state.toast(
+                Tone::Error,
+                "这台机器弹不出系统文件面板；请在图片页的「路径」那一格里手输",
+            );
+        }
+        if effects.paste_image {
+            match clipboard::read_image() {
+                Some((bytes, width, height)) => {
+                    self.dispatch_image(
+                        ctx,
+                        ImageInput::Clipboard {
+                            bytes,
+                            width,
+                            height,
+                        },
+                    );
+                }
+                None => self
+                    .state
+                    .toast(Tone::Warn, "剪贴板里没有图片；请先 Cmd+C 复制一张"),
+            }
+        }
+        if effects.stop_image {
+            // 那一句由状态层给（REQ-009）：只有翻译段说"已停止"，识别段与合成段说的是
+            // "已忽略这次结果"——那两次计算还在跑，说撤回了是撒谎。三段都不在飞时什么都不说。
+            if let Some(text) = self.state.stop_image_stage().label() {
+                self.state.toast(Tone::Info, text);
+            }
+        }
+        // 图片页的两条出路（REQ-008）：面板给的是"意图"，位置要等回调回来才有；
+        // 剪贴板那一条是当场写，所以它的结果当场就有话说
+        if effects.save_image {
+            let label = self
+                .state
+                .image
+                .as_ref()
+                .map(|admitted| admitted.label.clone())
+                .unwrap_or_default();
+            let default_name = panel::default_save_name(&label);
+            if !panel::request_save(&self.save_tx, ctx, &default_name, &panel::SAVE_TYPES) {
+                // 那台机器上没有原生面板：说清还有一条路能走，别让用户以为成品出不去（NFR-7）
+                self.state.toast(
+                    Tone::Error,
+                    "这台机器弹不出系统保存面板；可以用「复制图片」再粘到别处",
+                );
+            } else {
+                self.pending_save = PendingSave::Page;
+            }
+        }
+        if effects.copy_image {
+            let written = self
+                .state
+                .composed
+                .as_ref()
+                .map(|composed| clipboard::write_image(&composed.image));
+            match written {
+                // Q-004 那一句在点之前是 hover，点完再确认一次：用户下一步多半是 Cmd+V
+                Some(Ok(())) => self.state.toast(Tone::Info, clipboard::COPY_IMAGE_DONE),
+                Some(Err(reason)) => self.state.toast(Tone::Error, reason),
+                // 那颗按钮在没有成品时是灰的，这一支只在"点下去到帧末之间成品被换掉"时走到
+                None => self.state.toast(Tone::Warn, PRODUCT_GONE_TEXT),
+            }
+        }
+        // 「框选贴图」那颗与全局截图热键**落同一格**（形状核查也锁这一条：派发只这一处）。
+        // 发起前先把自家窗收起——系统的框选界面会把屏幕原样拍进去，我们任何一扇还开着的窗
+        // 都会进图（事实 32 的正负对照）。**还原不在这里做**：窗收起时帧循环根本不跑，挂在
+        // 帧末的还原永远不会执行；那份账跟着任务走，由子进程结束那条线程去放（REQ-010）。
+        if effects.capture {
+            if let Some(job) = self.state.submit_capture() {
+                if let crate::state::Job::ScreenCapture { hidden, .. } = &job {
+                    capture::hide(ctx, hidden.viewports.clone());
+                }
+                self.runner.submit(&self.runtime, job, ctx);
+            }
+        }
         // 一条派发口：图片页那一支的 Job 与贴图们"译文落好了、欠一张成品"的合成都走这里。
         // 成品的派发不写在回信落地里，是为了让 `apply_outcome` 只做状态（REQ-005 分层）
         for job in effects
@@ -1434,18 +1518,13 @@ impl IceApp {
                 self.state.toast(Tone::Error, failure.explain());
             }
         }
-        if effects.capture {
-            if let Some(job) = self.state.submit_capture() {
-                self.runner.submit(&self.runtime, job, ctx);
-            }
-        }
         // 回信那三件事的另外两件：跑一次历史老化（截图真的回来了才跑，不开定时器）
         if self.state.capture_applied.take().is_some() {
             self.age_shots();
         }
         // 第三件：给"刚建好的每张贴图"派一次**只识别**。三种来源（截图回信、「固定」、
         // 「打开上一次」）都汇到这同一个出口，所以"钉上去之后做什么"只有一份代码
-        for pin in self.state.pins_new.drain(..).collect::<Vec<_>>() {
+        for pin in std::mem::take(&mut self.state.pins_new) {
             if let Some(job) = self.state.submit_pin_recognize(pin) {
                 self.runner.submit(&self.runtime, job, ctx);
             }
@@ -2259,7 +2338,7 @@ mod tests {
             .build()
             .unwrap();
         let translator = build_translator(&state.config, None);
-        let mut app = IceApp::new(
+        let mut app = without_real_capture(IceApp::new(
             state,
             runtime,
             translator,
@@ -2267,7 +2346,8 @@ mod tests {
             dir.path().join("config.toml"),
             Some(lock),
             idle_key_probe(),
-        );
+            Some(dir.path().join("shots")),
+        ));
 
         app.shutdown();
 
@@ -2340,9 +2420,23 @@ mod tests {
         assert_eq!(app.state.tab, Tab::Text);
     }
 
+    /// 每个测试构造出来的 `IceApp` 都过这一手：框选的执行体换成桩。
+    ///
+    /// `screencapture -i` 会把全屏选区拍到屏幕上并**阻塞等人画完**——我引进过一条断言
+    /// 让它真跑起来了，全量测试从 4 秒变成 348 秒，还可能在你屏幕上闪过一次选区。
+    /// 所以这不是"测试想要快"，而是测试不该有权限操作你的屏幕。
+    fn without_real_capture(mut app: IceApp) -> IceApp {
+        app.runner
+            .set_capture_runner(|_path, _seq| capture::Outcome::Cancelled);
+        app
+    }
+
     fn app_with_history(dir: &std::path::Path, state: AppState, history: HistoryStore) -> IceApp {
         let translator = build_translator(&state.config, None);
-        let mut app = IceApp::new(
+        // 测试构造出的每一个 `IceApp` 都过这一手：截图目录指到临时目录、框选执行体换成桩。
+        // 老化与清除都会**真删文件**，指到系统里那个真实目录就等于跑一条断言删掉用户截过的图；
+        // 而真框选会把全屏选区拍到屏幕上等人画完（见 `JobRunner::set_capture_runner`）
+        without_real_capture(IceApp::new(
             state,
             runtime(),
             translator,
@@ -2350,11 +2444,8 @@ mod tests {
             dir.join("config.toml"),
             None,
             idle_key_probe(),
-        );
-        // 测试一律把截图目录挪进临时目录：老化与「清除所有截图」都会**真删文件**，
-        // 让它们指到系统里那个真实目录就等于跑一条断言删掉用户截过的图
-        app.shots_dir = Some(dir.join("shots"));
-        app
+            Some(dir.join("shots")),
+        ))
     }
 
     /// FR-4.5：config.toml 里的术语在**第一次**派发前就要进引擎，
@@ -2379,7 +2470,7 @@ mod tests {
         let mut translator = Translator::new();
         translator.register(std::sync::Arc::new(stub.clone()));
 
-        let mut app = IceApp::new(
+        let mut app = without_real_capture(IceApp::new(
             state,
             runtime(),
             translator,
@@ -2387,7 +2478,8 @@ mod tests {
             dir.path().join("config.toml"),
             None,
             idle_key_probe(),
-        );
+            Some(dir.path().join("shots")),
+        ));
 
         let ctx = ctx();
         let job = app.state.submit().expect("有源文就该能提交");
@@ -2407,7 +2499,7 @@ mod tests {
     fn app_with_stub(dir: &std::path::Path, state: AppState, stub: &StubEngine) -> IceApp {
         let mut translator = Translator::new();
         translator.register(std::sync::Arc::new(stub.clone()));
-        IceApp::new(
+        without_real_capture(IceApp::new(
             state,
             runtime(),
             translator,
@@ -2415,7 +2507,8 @@ mod tests {
             dir.join("config.toml"),
             None,
             idle_key_probe(),
-        )
+            Some(dir.join("shots")),
+        ))
     }
 
     fn watch_state() -> AppState {
@@ -2631,7 +2724,7 @@ mod tests {
         let mut translator = Translator::new();
         translator.register(std::sync::Arc::new(stub.clone()));
 
-        let mut app = IceApp::new(
+        let mut app = without_real_capture(IceApp::new(
             state,
             runtime(),
             translator,
@@ -2639,7 +2732,8 @@ mod tests {
             dir.path().join("config.toml"),
             None,
             idle_key_probe(),
-        );
+            Some(dir.path().join("shots")),
+        ));
         app.state.glossary = Glossary::from_config(&config);
         let mut replacement = Translator::new();
         replacement.register(std::sync::Arc::new(stub.clone()));
@@ -4421,8 +4515,10 @@ mod tests {
         std::fs::write(&text_history, b"some record").unwrap();
 
         let mut app = app(dir.path(), plain_state());
-        let mut effects = Effects::default();
-        effects.clear_shots = true;
+        let effects = Effects {
+            clear_shots: true,
+            ..Default::default()
+        };
         let ctx = ctx();
         app.run_effects(&ctx, effects);
 
@@ -4451,8 +4547,10 @@ mod tests {
         let shots = dir.path().join("shots");
         std::fs::create_dir_all(&shots).unwrap();
         let mut app = app(dir.path(), plain_state());
-        let mut effects = Effects::default();
-        effects.clear_shots = true;
+        let effects = Effects {
+            clear_shots: true,
+            ..Default::default()
+        };
         app.run_effects(&ctx(), effects);
         let lines: Vec<String> = app
             .state
@@ -4463,6 +4561,44 @@ mod tests {
         assert!(
             lines.iter().any(|line| line.contains("空的")),
             "一张都没有时也要回一句：{lines:?}"
+        );
+    }
+
+    /// 帧末**没有截图意图**时一家窗都不许收。这条是给一个我自己引进的错误锁门的：
+    /// 重写那段时把 `if effects.capture` 的守卫写丢了，于是每一帧末都发起一次框选——
+    /// 症状是界面不停闪、窗不停收起，而它不会编译失败，只会在真机上被发现。
+    #[test]
+    fn a_frame_without_the_capture_intent_hides_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        app.state.push_pin(dir.path().join("a.png"));
+        let c = ctx();
+
+        app.run_effects(&c, Effects::default());
+        assert_eq!(app.state.capture_stage, crate::state::CaptureStage::Idle);
+        assert!(
+            !queued(&c)
+                .iter()
+                .any(|command| matches!(command, ViewportCommand::Visible(false))),
+            "没有意图却收起了窗：{:?}",
+            queued(&c)
+        );
+
+        // 真有意图时才收：主窗在其中（贴图那一扇是发给子视口的，不在这份队列里）
+        let effects = Effects {
+            capture: true,
+            ..Default::default()
+        };
+        app.run_effects(&c, effects);
+        assert!(
+            queued(&c)
+                .iter()
+                .any(|command| matches!(command, ViewportCommand::Visible(false))),
+            "点了那颗却没收起主窗：截图就会把我们自己的界面拍进去"
+        );
+        assert_eq!(
+            app.state.capture_stage,
+            crate::state::CaptureStage::Capturing
         );
     }
 }

@@ -233,7 +233,7 @@ struct Visual {
 /// 顺序是死的：成品优先（原地替换之后屏上就是它），其次识别带回的底图，最后才读文件。
 /// 复制与保存 MUST 用同一份——一边显示译文版、一边把原图交出去，用户下一步粘到别处的
 /// 东西和他刚看到的对不上，那比报错更糟。
-pub fn displayed(pin: &crate::state::Pin) -> Option<Display> {
+pub fn displayed(pin: &crate::state::Pin) -> Option<Display<'_>> {
     if let Some(product) = pin.product.as_ref() {
         return Some(Display::Owned(product.image.clone()));
     }
@@ -258,6 +258,12 @@ impl Display<'_> {
             Display::Owned(image) => image,
         }
     }
+}
+
+/// 这张贴图的视口号。**唯一一处构造点**：`show` 用它、发起截图前收起窗也用它——
+/// 两边各算一次 hash，一旦算法改动就会"收起了另一扇窗"，而那在测试里看不出来
+pub fn viewport_id(id: u64) -> egui::ViewportId {
+    egui::ViewportId::from_hash_of(Id::NULL.with("ice-translator.pin").with(id))
 }
 
 fn visual_key(id: u64) -> Id {
@@ -369,7 +375,7 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
     let previous = ctx.data_mut(|d| d.get_temp::<Vec2>(size_key(id)));
     let resize = inner_size_command(previous, layout.window_size);
 
-    let viewport = egui::ViewportId::from_hash_of(Id::NULL.with("ice-translator.pin").with(id));
+    let viewport = viewport_id(id);
     let builder = egui::ViewportBuilder::default()
         .with_inner_size(layout.window_size)
         .with_decorations(false)

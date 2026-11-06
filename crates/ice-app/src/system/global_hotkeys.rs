@@ -124,7 +124,7 @@ struct HandleList(std::vec::Vec<*mut c_void>);
 // SAFETY: 句柄只在主线程 `apply()` 与 `unregister_all()` 里读写，跨线程搬运没有实际发生
 unsafe impl Send for HandleList {}
 
-static HANDLER_ARMED: OnceLock<Option<()>> = OnceLock::new();
+static HANDLER_ARMED: OnceLock<()> = OnceLock::new();
 
 static HANDLES: OnceLock<std::sync::Mutex<HandleList>> = OnceLock::new();
 
@@ -213,10 +213,9 @@ pub fn arm(ctx: &egui::Context) {
     let _ = CONTEXT.set(ctx.clone());
     // handler 只装一次：重复装会攒出多份回调，一次按下派发多遍（`PENDING` 是覆盖式的，
     // 症状反而是"只响一次"，更难查）
-    let Some(once) = HANDLER_ARMED.get_or_init(|| Some(())).clone() else {
+    if HANDLER_ARMED.set(()).is_err() {
         return;
-    };
-    let _ = once;
+    }
     let types = [EventTypeSpec {
         event_class: K_EVENT_CLASS_KEYBOARD,
         event_kind: K_EVENT_HOT_KEY_PRESSED,
@@ -367,11 +366,6 @@ fn action_of_code(code: u8) -> Option<Action> {
     }
 }
 
-/// 有没有待处理的热键命中（隐藏态那一帧用它决定要不要买回一帧）
-pub fn has_pending() -> bool {
-    PENDING.load(Ordering::SeqCst) != CODE_NONE
-}
-
 /// Carbon 的修饰键掩码。
 pub fn carbon_mods(combo: &Combo) -> u32 {
     let mut mods = 0;
@@ -495,6 +489,12 @@ mod tests {
         assert_eq!(TYPE_EVENT_HOT_KEY_ID, u32::from_be_bytes(*b"hkid"));
     }
 
+    /// 有没有待处理的热键命中。测试用它确认"取走即清空"，生产路径不查它（取的时候顺手清空）
+    #[cfg(test)]
+    pub fn has_pending() -> bool {
+        PENDING.load(Ordering::SeqCst) != CODE_NONE
+    }
+
     /// 三个号各对一条 `Action`；没有命中时什么都不给
     #[test]
     fn each_registered_id_maps_to_its_own_action() {
@@ -579,9 +579,10 @@ mod tests {
             pin_last: "F3".into(),
             reopen: "ctrl+alt+k".into(),
         };
-        let (slot, other) = registration_plan(&clash)
-            .err()
-            .expect("撞车该在计划里就发现");
+        let (slot, other) = match registration_plan(&clash) {
+            Err(pair) => pair,
+            Ok(plan) => panic!("撞车该在计划里就发现，却给出了 {plan:?}"),
+        };
         assert_eq!(slot, "pin_last");
         assert_eq!(other, "capture");
     }

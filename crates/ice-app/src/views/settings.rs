@@ -590,7 +590,7 @@ fn hotkey_group(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) 
             if *name != slot {
                 continue;
             }
-            if let Some(text) = ui.input(|i| pressed_combo(i)) {
+            if let Some(text) = ui.input(pressed_combo) {
                 captured = Some((*name, text));
             }
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {

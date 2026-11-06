@@ -87,7 +87,9 @@ pub enum Outcome {
     Captured(PathBuf),
     Cancelled,
     Failed(Failure),
-    /// 这台机器没有这件事（非 mac），调用方 SHALL 连子进程都不起
+    /// 这台机器没有这件事（非 mac），调用方 SHALL 连子进程都不起。
+    /// mac 构建里它永远不被构造——那是 `capture()` 非 mac 那一支的返回值，不是漏了分支
+    #[allow(dead_code)]
     Unsupported,
 }
 
@@ -310,6 +312,69 @@ fn now_secs() -> u64 {
         .unwrap_or_default()
 }
 
+// ---- 发起前后的"把自家窗收起来"这一对（CHG-009 REQ-010） ----
+
+/// 一次框选期间的可见性账：谁被我们收起来了、主窗**本来**是不是收着的。
+///
+/// 只记这两样是量出来的：`prepare()` 原本还打算记下几何好"原样放回去"，实测隐藏期间
+/// `layer=3` 与 bounds 一字不变、还原后落回用户拖到的位置（事实 32），所以记几何是
+/// 多余的第二份坐标源——那一格只会与真实位置漂移，正是 `pin.rs` 里禁止的东西。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Hidden {
+    /// 被这次框选临时收起来的窗口（含主窗与每一张贴图）
+    pub viewports: Vec<egui::ViewportId>,
+    /// 主窗在发起前就已经收着（托盘那一档）。这一条决定还原时要不要"买回一帧"
+    pub root_was_hidden: bool,
+}
+
+/// 还原那一步要发哪两条命令，**按顺序**。抽成纯函数是因为隐藏态那一次是量出来的：
+/// 只喊重画唤不出 UI 帧，得再对主窗发一次"隐藏中也画一帧"（事实 30/31）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wake {
+    /// 让停摆的帧循环跑一帧（隐藏中也画）
+    PaintWhileHidden,
+    /// 叫一次普通重绘
+    Repaint,
+}
+
+/// 隐藏态那一次按下之后，贴图要能在**主窗仍然收起**的情况下起得来：两条命令缺一不可，
+/// 而且 `PaintWhileHidden` 只管一帧，所以顺序是"先买一帧、再叫重绘"。
+/// 主窗本来就开着时不需要买那一帧。
+pub fn wake_commands(root_was_hidden: bool) -> Vec<Wake> {
+    if root_was_hidden {
+        vec![Wake::PaintWhileHidden, Wake::Repaint]
+    } else {
+        vec![Wake::Repaint]
+    }
+}
+
+/// 发起前：把这些窗收起。**必须在子进程起来之前调用**——系统的框选界面会把屏幕内容
+/// 原样拍进去，我们自己任何一扇还开着的窗都会出现在图上（事实 32 的正负对照量过）。
+pub fn hide(ctx: &egui::Context, viewports: Vec<egui::ViewportId>) {
+    for id in viewports {
+        ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Visible(false));
+    }
+}
+
+/// 结束后：原样放回来 + 按 `wake_commands` 把那一帧买回来。
+///
+/// 由**子进程完成那条线程**调用（不是帧循环）：窗收起时帧循环根本不跑，挂在帧循环上
+/// 的还原永远不会被执行——那就是"截完图界面再也没回来"。
+pub fn show_again(ctx: &egui::Context, hidden: &Hidden) {
+    for id in hidden.viewports.iter() {
+        ctx.send_viewport_cmd_to(*id, egui::ViewportCommand::Visible(true));
+    }
+    for command in wake_commands(hidden.root_was_hidden) {
+        match command {
+            Wake::PaintWhileHidden => ctx.send_viewport_cmd_to(
+                egui::ViewportId::ROOT,
+                egui::ViewportCommand::RequestPaintWhileHidden,
+            ),
+            Wake::Repaint => ctx.request_repaint(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,6 +541,35 @@ mod tests {
             path: PathBuf::from(name),
             mtime,
         }
+    }
+
+    /// 还原要发的命令按顺序来，而且**只有主窗本来就收着时**才去买那一帧：
+    /// 主窗开着的时候发它没意义，还会让人以为"隐藏态那套写法"是通用的。
+    #[test]
+    fn waking_the_loop_from_hidden_buys_exactly_one_painted_frame() {
+        assert_eq!(
+            wake_commands(true),
+            vec![Wake::PaintWhileHidden, Wake::Repaint]
+        );
+        assert_eq!(wake_commands(false), vec![Wake::Repaint]);
+    }
+
+    /// 收起的账只记两样：哪些窗、主窗本来是不是收着。**不记几何**（事实 32：隐藏期间
+    /// bounds 与层级都不变，记了就变成第二份坐标源，与真实位置漂移）
+    #[test]
+    fn the_hidden_record_carries_no_geometry() {
+        let hidden = Hidden {
+            viewports: vec![egui::ViewportId::ROOT],
+            root_was_hidden: true,
+        };
+        assert_eq!(hidden.viewports.len(), 1);
+        assert!(hidden.root_was_hidden);
+        // 类型上就只有这两个字段：加第三个（坐标）会让这条断言红
+        let fields = std::mem::size_of::<Hidden>();
+        assert!(
+            fields < 64,
+            "Hidden 长大了：把不该存的坐标也记进来了（{fields} 字节）"
+        );
     }
 
     /// 老化的第一条边界：**恰好第 7 天那一条不删**（"7 天内"按字面读），过一秒才删。
