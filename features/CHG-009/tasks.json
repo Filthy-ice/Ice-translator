@@ -154,8 +154,13 @@
         "REQ-006"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/views/image.rs",
+        "crates/ice-app/src/views/settings.rs",
+        "crates/ice-app/src/app.rs",
+        "crates/ice-app/src/state.rs"
+      ]
     },
     {
       "id": "T-012",
