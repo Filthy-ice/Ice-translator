@@ -881,6 +881,9 @@ pub struct AppState {
     /// 那一格、以及「打开上一次」——帧循环在这一处统一派识别，"钉上去之后做什么"
     /// 就只有一份代码
     pub pins_new: Vec<RequestId>,
+    /// 设置页里"正在等你按一个键"的那一格（capture / pin_last / reopen 之一）。
+    /// `None` = 没在采集。这是运行态、不进配置：采集态是界面的临时状态，重启后不该还开着
+    pub hotkey_capture: Option<&'static str>,
     /// 因为"钉满了"而没钉上的那一张：它**已经在盘上**了，用户关掉一张之后按「固定」
     /// 还能补钉上，不必重截（REQ-006 那条"固定"的语义）
     pub unpinned_capture: Option<PathBuf>,
@@ -954,6 +957,7 @@ impl AppState {
             capture_applied: None,
             pins_new: Vec::new(),
             unpinned_capture: None,
+            hotkey_capture: None,
         }
     }
 

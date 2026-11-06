@@ -36,6 +36,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, ai_a
             ai_group(ui, state, effects, ai_available);
             window_group(ui, state, effects);
             defaults_group(ui, state, effects);
+            hotkey_group(ui, state, effects);
             appearance_group(ui, state);
             data_group(ui, state, effects);
         });
@@ -565,6 +566,227 @@ pub const fn theme_label(theme: Theme) -> &'static str {
 }
 
 // ---- 4. 数据（术语 F-12 + 历史入口） ----
+
+/// 全局快捷键那三条的录入（CHG-009 REQ-006）。
+///
+/// 交互只有三种：**按一次键设定**（进入采集态，下一次按键就是新组合）、**不绑**（这把
+/// 全局键取消，动作还能从界面走）、**恢复默认**。没有手输框：一个能打出任意字符串的
+/// 输入框会把"这条不合法"这件事变成运行时才发现的错误，而按一次键就能给出一定合法的输入。
+fn hotkey_group(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
+    ui.label(RichText::new("快捷键").strong());
+    ui.label(RichText::new(HOTKEY_NOTE).color(theme::MUTED).small());
+    let defaults = ice_core::config::HotkeyConfig::default();
+    let slots: [(&str, &str, String); 3] = [
+        ("capture", "截图", state.config.hotkey.capture.clone()),
+        ("pin_last", "固定", state.config.hotkey.pin_last.clone()),
+        ("reopen", "打开上一次", state.config.hotkey.reopen.clone()),
+    ];
+    // 采集态：这一帧有按键进来就把它写成新组合。**esc 是取消采集**，不是"绑成 esc"——
+    // 把 esc 设成全局键几乎一定是误按，而"取消"是这个界面必然要有的出口
+    let mut captured: Option<(&'static str, String)> = None;
+    let mut cancelled = false;
+    if let Some(slot) = state.hotkey_capture {
+        for (name, _, _) in slots.iter() {
+            if *name != slot {
+                continue;
+            }
+            if let Some(text) = ui.input(|i| pressed_combo(i)) {
+                captured = Some((*name, text));
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                cancelled = true;
+            }
+        }
+    }
+    if let Some((name, text)) = captured {
+        set_hotkey(state, name, text);
+        state.hotkey_capture = None;
+        effects.rebind_hotkeys = true;
+    } else if cancelled {
+        state.hotkey_capture = None;
+    }
+    for (name, label, value) in slots {
+        row(ui, label, |ui| {
+            let bound = !ice_core::config::is_unbound(&value);
+            let shown = if bound {
+                value.clone()
+            } else {
+                "未绑定".to_string()
+            };
+            ui.label(shown);
+            let capturing = state.hotkey_capture == Some(name);
+            let hint = if capturing {
+                "按任意组合键设定；esc 取消"
+            } else {
+                "点一下，然后按下想要的组合"
+            };
+            if ui
+                .button(if capturing {
+                    "请按键…"
+                } else {
+                    "按一次键设定"
+                })
+                .on_hover_text(hint)
+                .clicked()
+            {
+                state.hotkey_capture = if capturing { None } else { Some(name) };
+            }
+            if ui
+                .button("不绑")
+                .on_hover_text("取消这把全局键；动作仍能从界面里走")
+                .clicked()
+            {
+                set_hotkey(state, name, ice_core::config::UNBOUND.to_string());
+                state.hotkey_capture = None;
+                effects.rebind_hotkeys = true;
+            }
+            if ui.button("默认").clicked() {
+                let fallback = match name {
+                    "capture" => defaults.capture.clone(),
+                    "pin_last" => defaults.pin_last.clone(),
+                    _ => defaults.reopen.clone(),
+                };
+                set_hotkey(state, name, fallback);
+                state.hotkey_capture = None;
+                effects.rebind_hotkeys = true;
+            }
+            // 撞车要说在这里，而不是等到注册失败才弹一句"请换一个"
+            if bound && conflicts_with_other_slot(state, name) {
+                ui.colored_label(theme::WARN, "与另一条用了同一个组合");
+            }
+        });
+    }
+}
+
+/// 那句必须出现在界面上的说明：裸 F 键在默认设置下可能是亮度/调度键，而这件事
+/// **我们改不了**（是系统设置里的一个开关，不是应用偏好）。不写这一句，用户只会以为
+/// "设置里改了没用"。
+const HOTKEY_NOTE: &str = "默认是 F1 / F3 / F2。如果这三把在你机器上是亮度键或调度键，\
+可以在系统设置里把 F 键改成标准功能键，或者在这里换成带修饰的组合。";
+
+fn set_hotkey(state: &mut AppState, slot: &str, value: String) {
+    match slot {
+        "capture" => state.config.hotkey.capture = value,
+        "pin_last" => state.config.hotkey.pin_last = value,
+        "reopen" => state.config.hotkey.reopen = value,
+        other => tracing::warn!(slot = other, "未知的快捷键格子"),
+    }
+}
+
+fn slot_value(state: &AppState, slot: &str) -> String {
+    match slot {
+        "capture" => state.config.hotkey.capture.clone(),
+        "pin_last" => state.config.hotkey.pin_last.clone(),
+        "reopen" => state.config.hotkey.reopen.clone(),
+        _ => String::new(),
+    }
+}
+
+fn conflicts_with_other_slot(state: &AppState, slot: &str) -> bool {
+    let mine = slot_value(state, slot);
+    if ice_core::config::is_unbound(&mine) {
+        return false;
+    }
+    ["capture", "pin_last", "reopen"]
+        .into_iter()
+        .filter(|other| *other != slot)
+        .map(|other| slot_value(state, other))
+        .any(|other| !ice_core::config::is_unbound(&other) && other == mine)
+}
+
+/// 采集这一帧里按下的那一个键，写成配置文件里那种字符串。
+///
+/// 顺序固定 `cmd+ctrl+alt+shift+主键`（与解析端认的别名一致；解析端大小写不敏感，
+/// 这里统一写小写，免得同一个组合在文件里出现三种写法）。按住修饰键不放时
+/// **egui 的 `press_overrides` 不算按键**，所以这里只看 `Event::Key` 的 `pressed`。
+fn pressed_combo(input: &egui::InputState) -> Option<String> {
+    for event in &input.events {
+        if let egui::Event::Key {
+            key,
+            pressed: true,
+            repeat: false,
+            modifiers,
+            ..
+        } = event
+        {
+            if let Some(text) = combo_text(*key, *modifiers) {
+                return Some(text);
+            }
+        }
+    }
+    None
+}
+
+/// 一个键 + 一组修饰 → 组合字符串。认不出的键返回 `None`（不写进配置，也就不会
+/// 出现"存了个注册不了的组合"这种第二天才发现的问题）。
+fn combo_text(key: egui::Key, modifiers: egui::Modifiers) -> Option<String> {
+    let base = match key {
+        egui::Key::F1 => "f1",
+        egui::Key::F2 => "f2",
+        egui::Key::F3 => "f3",
+        egui::Key::F4 => "f4",
+        egui::Key::F5 => "f5",
+        egui::Key::F6 => "f6",
+        egui::Key::F7 => "f7",
+        egui::Key::F8 => "f8",
+        egui::Key::F9 => "f9",
+        egui::Key::F10 => "f10",
+        egui::Key::F11 => "f11",
+        egui::Key::F12 => "f12",
+        egui::Key::A => "a",
+        egui::Key::B => "b",
+        egui::Key::C => "c",
+        egui::Key::D => "d",
+        egui::Key::E => "e",
+        egui::Key::F => "f",
+        egui::Key::G => "g",
+        egui::Key::H => "h",
+        egui::Key::I => "i",
+        egui::Key::J => "j",
+        egui::Key::K => "k",
+        egui::Key::L => "l",
+        egui::Key::M => "m",
+        egui::Key::N => "n",
+        egui::Key::O => "o",
+        egui::Key::P => "p",
+        egui::Key::Q => "q",
+        egui::Key::R => "r",
+        egui::Key::S => "s",
+        egui::Key::T => "t",
+        egui::Key::U => "u",
+        egui::Key::V => "v",
+        egui::Key::W => "w",
+        egui::Key::X => "x",
+        egui::Key::Y => "y",
+        egui::Key::Z => "z",
+        egui::Key::Num0 => "0",
+        egui::Key::Num1 => "1",
+        egui::Key::Num2 => "2",
+        egui::Key::Num3 => "3",
+        egui::Key::Num4 => "4",
+        egui::Key::Num5 => "5",
+        egui::Key::Num6 => "6",
+        egui::Key::Num7 => "7",
+        egui::Key::Num8 => "8",
+        egui::Key::Num9 => "9",
+        _ => return None,
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    if modifiers.command {
+        parts.push("cmd");
+    }
+    if modifiers.ctrl {
+        parts.push("ctrl");
+    }
+    if modifiers.alt {
+        parts.push("option");
+    }
+    if modifiers.shift {
+        parts.push("shift");
+    }
+    parts.push(base);
+    Some(parts.join("+"))
+}
 
 fn data_group(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
     group(ui, "术语表", |ui| {
@@ -1097,5 +1319,119 @@ mod tests {
         let mut effects = Effects::default();
         render(&mut state, &mut effects, true);
         assert_eq!(state.glossary.terms.len(), 2, "渲染不该改术语表");
+    }
+
+    /// 把 `InputState` 喂成只有那一条按键事件（与 `system::hotkeys` 的测试同一个手法：
+    /// 借 Context 建一份，省得手搓 egui 的帧循环）
+    fn input_with(events: Vec<egui::Event>) -> egui::InputState {
+        let ctx = egui::Context::default();
+        ctx.input_mut(|i| i.events = events);
+        ctx.input(|i| i.clone())
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    /// 采集出来的字符串**必须能被解析、能注册**：写的人（这里）和读的人
+    /// （`ice_core::config::parse_combo`）对不上，用户就会第二天发现昨天设的键没生效。
+    #[test]
+    fn every_captured_combo_is_reparseable() {
+        let cases = [
+            (egui::Key::F1, egui::Modifiers::NONE, "f1"),
+            (egui::Key::Num4, cmd_shift(), "cmd+shift+4"),
+            (egui::Key::G, cmd_only(), "cmd+g"),
+            (egui::Key::K, ctrl_alt_shift(), "ctrl+option+shift+k"),
+        ];
+        for (key, modifiers, want) in cases {
+            let text = combo_text(key, modifiers).unwrap_or_else(|| panic!("{key:?} 该能写出来"));
+            assert_eq!(text, want, "顺序或别名与解析端不一致");
+            assert!(
+                ice_core::config::parse_combo(&text).is_some(),
+                "采集出来却解析不了：{text}"
+            );
+        }
+    }
+
+    fn cmd_only() -> egui::Modifiers {
+        egui::Modifiers {
+            command: true,
+            ..egui::Modifiers::NONE
+        }
+    }
+
+    fn cmd_shift() -> egui::Modifiers {
+        egui::Modifiers {
+            command: true,
+            shift: true,
+            ..egui::Modifiers::NONE
+        }
+    }
+
+    fn ctrl_alt_shift() -> egui::Modifiers {
+        egui::Modifiers {
+            ctrl: true,
+            alt: true,
+            shift: true,
+            ..egui::Modifiers::NONE
+        }
+    }
+
+    /// 采集那一帧：只认按下，不认松开、不认长按重复（按住不放会刷出一串"改键"）
+    #[test]
+    fn capture_reads_one_press_and_ignores_repeats_and_releases() {
+        let text = pressed_combo(&input_with(vec![key(egui::Key::F7, egui::Modifiers::NONE)]));
+        assert_eq!(text.as_deref(), Some("f7"));
+        // 长按重复：repeat=true
+        let repeated = input_with(vec![egui::Event::Key {
+            key: egui::Key::F7,
+            physical_key: None,
+            pressed: true,
+            repeat: true,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert_eq!(pressed_combo(&repeated), None);
+        // 松开不算按下
+        let released = input_with(vec![egui::Event::Key {
+            key: egui::Key::F7,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert_eq!(pressed_combo(&released), None);
+        // 认不出的键（这里是 Esc）不给字符串——它不会被写进配置，采集那一帧把它当"取消"
+        assert_eq!(combo_text(egui::Key::Escape, egui::Modifiers::NONE), None);
+    }
+
+    /// 「不绑」是一条有意的设置，不能被"配错了回默认"那一条顺手盖掉
+    #[test]
+    fn unbinding_a_slot_is_not_treated_as_a_broken_value() {
+        let mut state = state();
+        state.config.hotkey.pin_last = "f3".into();
+        set_hotkey(
+            &mut state,
+            "pin_last",
+            ice_core::config::UNBOUND.to_string(),
+        );
+        assert_eq!(state.config.hotkey.pin_last, ice_core::config::UNBOUND);
+        let clean = state.config.clone().sanitized();
+        assert_eq!(
+            clean.hotkey.pin_last,
+            ice_core::config::UNBOUND,
+            "不绑被当成配错了"
+        );
+        // 撞车判定只在两条都真绑着时成立
+        set_hotkey(&mut state, "capture", "f9".into());
+        assert!(!conflicts_with_other_slot(&state, "capture"));
+        set_hotkey(&mut state, "reopen", "f9".into());
+        assert!(conflicts_with_other_slot(&state, "capture"));
+        assert!(conflicts_with_other_slot(&state, "reopen"));
     }
 }

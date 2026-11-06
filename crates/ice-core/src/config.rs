@@ -457,8 +457,27 @@ impl Default for HotkeyConfig {
     }
 }
 
-/// 一条组合坏掉时的处置：回默认值 + 一句只说"哪一条"不说"原文是什么"的日志。
+/// 「这一把不设全局键」的写法。规格里那句"清除绑定"落到这里：
+/// **留空或写 `none` 是有意不注册**，不是配错了——垃圾值才回默认，两者不许混。
+/// 少了这一格，用户唯一能"关掉"某把全局键的办法就是把它改成一个肯定撞车的怪组合。
+pub const UNBOUND: &str = "none";
+
+/// 这一格是不是"故意不绑"。大小写与几种同义写法都认（他会手改这个文件）。
+pub fn is_unbound(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_lowercase().as_str(),
+        "" | "none" | "off" | "no" | "无"
+    )
+}
+
+/// 一条组合坏掉时的处置：认不出又不是"故意不绑"才回默认值，并记一句**不含原文**的日志。
 fn restore_combo(value: &mut String, fallback: &str, name: &'static str) {
+    if is_unbound(value) {
+        // 统一写成 `none`：留空和写 "off" 是同一件事，存成一种样子免得比较时漏一种
+        value.clear();
+        value.push_str(UNBOUND);
+        return;
+    }
     if value == fallback {
         return;
     }
@@ -1036,6 +1055,25 @@ mod tests {
             None,
             "命名键里只承诺功能键/字母/数字三类"
         );
+    }
+
+    /// 「故意不绑」与「配错了」是两件事：前者原样留着，后者才回默认。
+    #[test]
+    fn an_intentional_unbind_survives_sanitizing_while_garbage_does_not() {
+        let cfg = Config {
+            hotkey: HotkeyConfig {
+                capture: "".into(),
+                pin_last: "OFF".into(),
+                reopen: "asdf".into(),
+            },
+            ..Config::default()
+        }
+        .sanitized();
+        assert_eq!(cfg.hotkey.capture, UNBOUND, "留空是不绑，不许被当成配错");
+        assert_eq!(cfg.hotkey.pin_last, UNBOUND, "off 同义，且统一写成一种样子");
+        assert_eq!(cfg.hotkey.reopen, "f2", "垃圾值才回默认");
+        assert!(is_unbound(" none "));
+        assert!(!is_unbound("f1"));
     }
 
     #[test]

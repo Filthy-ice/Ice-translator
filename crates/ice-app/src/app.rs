@@ -22,9 +22,7 @@ use tokio::sync::mpsc;
 
 use crate::jobs::{self, JobRunner, OutcomeReceiver};
 use crate::mode;
-use crate::state::{
-    self, AppState, CaptureApplied, ImageInput, KeyState, PRODUCT_GONE_TEXT, Tab, Tone, TrayState,
-};
+use crate::state::{self, AppState, ImageInput, KeyState, PRODUCT_GONE_TEXT, Tab, Tone, TrayState};
 use crate::system::alpha;
 use crate::system::background;
 use crate::system::capture::{self, HISTORY_DAYS, HISTORY_MAX};

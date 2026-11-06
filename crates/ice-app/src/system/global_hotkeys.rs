@@ -184,6 +184,9 @@ pub enum HotkeyFailure {
     Taken,
     /// 这一格根本注册不上（平台不支持、Carbon 报错但没有"被占"那种形状）
     Unavailable,
+    /// 我们自己那三条撞了同一个组合。跟"被别的软件占了"分开说是必要的：那句"换一个组合"
+    /// 里"换哪个、为什么"完全不同（一个是去跟外部软件抢，一个是我们内部两条动作重合）
+    SelfConflict,
 }
 
 impl HotkeyFailure {
@@ -192,6 +195,7 @@ impl HotkeyFailure {
         match self {
             HotkeyFailure::Taken => "这个键被别的软件占用了，换一个组合",
             HotkeyFailure::Unavailable => "这台机器上没能注册全局热键，只能用图片页那颗按钮",
+            HotkeyFailure::SelfConflict => "两条动作用了同一个组合，请改掉其中一个",
         }
     }
 }
@@ -233,31 +237,71 @@ pub fn arm(ctx: &egui::Context) {
     }
 }
 
+/// 一条要注册出去的键：号、虚拟键码、Carbon 掩码，以及它是哪一格（撞车时报得出名字）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Binding {
+    pub id: u32,
+    pub name: &'static str,
+    pub key_code: u16,
+    pub modifiers: u32,
+}
+
+/// 从配置算出"要注册哪几把"。**纯函数**，所以三件事能被无头断言：故意不绑的跳过、
+/// 认不出的跳过（不猜）、两条撞同一个组合在这里就发现——不然到 Carbon 那一步只会收到
+/// 一个 `-9878`，而它分不清"被外部软件占了"和"被我们自己另一条占了"。
+pub fn registration_plan(
+    config: &HotkeyConfig,
+) -> Result<Vec<Binding>, (&'static str, &'static str)> {
+    let mut plan: Vec<Binding> = Vec::new();
+    for (id, name, raw) in [
+        (ID_CAPTURE, "capture", &config.capture),
+        (ID_PIN_LAST, "pin_last", &config.pin_last),
+        (ID_REOPEN, "reopen", &config.reopen),
+    ] {
+        if ice_core::config::is_unbound(raw) {
+            continue;
+        }
+        let Some(combo) = ice_core::config::parse_combo(raw) else {
+            tracing::warn!("快捷键 {name} 认不出来，这一把不注册");
+            continue;
+        };
+        let Some(key_code) = virtual_key(&combo.base) else {
+            tracing::warn!("快捷键 {name} 用的键我们不支持，这一把不注册");
+            continue;
+        };
+        let modifiers = carbon_mods(&combo);
+        if let Some(taken) = plan
+            .iter()
+            .find(|bound| bound.key_code == key_code && bound.modifiers == modifiers)
+        {
+            return Err((name, taken.name));
+        }
+        plan.push(Binding {
+            id,
+            name,
+            key_code,
+            modifiers,
+        });
+    }
+    Ok(plan)
+}
+
 /// 把配置里那三条注册（或**换键时先注销旧的**再注册）。返回 `Err` 由界面说那句能行动的话。
 pub fn apply(config: &HotkeyConfig) -> Result<(), HotkeyFailure> {
     if !SUPPORTED {
         return Err(HotkeyFailure::Unavailable);
     }
+    // 先注销旧的：同一把键重复注册返回 -9878，所以"改键"不是"再注册一次"就完事
     unregister_all();
-    let plan = [
-        (ID_CAPTURE, &config.capture),
-        (ID_PIN_LAST, &config.pin_last),
-        (ID_REOPEN, &config.reopen),
-    ];
-    for (id, raw) in plan {
-        let Some(combo) = ice_core::config::parse_combo(raw) else {
-            // sanitized() 已经把解析不了的换回默认值；走到这里说明有人绕过了那道门
-            tracing::warn!("快捷键配置里有一条认不出来，跳过注册");
-            continue;
-        };
-        let Some(key_code) = virtual_key(&combo.base) else {
-            tracing::warn!(key = raw.as_str(), "这一格用的键我们不支持");
-            return Err(HotkeyFailure::Unavailable);
-        };
-        let handle = match register(key_code, carbon_mods(&combo), id) {
+    let plan = registration_plan(config).map_err(|(name, other)| {
+        tracing::warn!(hotkey = name, conflicts = other, "两条动作撞在同一个组合上");
+        HotkeyFailure::SelfConflict
+    })?;
+    for binding in plan {
+        let handle = match register(binding.key_code, binding.modifiers, binding.id) {
             Ok(handle) => handle,
             Err(status) => {
-                tracing::warn!(code = status, "全局热键注册失败");
+                tracing::warn!(code = status, hotkey = binding.name, "全局热键注册失败");
                 unregister_all();
                 return Err(if status == EVENT_HOT_KEY_EXISTS {
                     HotkeyFailure::Taken
@@ -507,5 +551,38 @@ mod tests {
             code.contains("GetEventDispatcherTarget()"),
             "handler 与注册的落点就是 dispatcher target，这一处不许换"
         );
+    }
+
+    /// 注册计划：三条默认给三把；「不绑」的那条**跳过而不是回默认**；两条撞了就在这里报，
+    /// 而不是丢一个 `-9878` 让界面去猜是谁占的。
+    #[test]
+    fn the_plan_skips_unbound_and_flags_our_own_conflicts() {
+        let defaults = HotkeyConfig::default();
+        let plan = registration_plan(&defaults).expect("默认值该全都能注册");
+        assert_eq!(plan.len(), 3);
+        assert_eq!(
+            plan.iter().map(|b| b.id).collect::<Vec<_>>(),
+            vec![ID_CAPTURE, ID_PIN_LAST, ID_REOPEN]
+        );
+
+        let two_off = HotkeyConfig {
+            capture: ice_core::config::UNBOUND.to_string(),
+            reopen: "none".to_string(),
+            ..HotkeyConfig::default()
+        };
+        let plan = registration_plan(&two_off).unwrap();
+        assert_eq!(plan.len(), 1, "两格不绑就只剩一把");
+        assert_eq!(plan[0].name, "pin_last");
+
+        let clash = HotkeyConfig {
+            capture: "f3".into(),
+            pin_last: "F3".into(),
+            reopen: "ctrl+alt+k".into(),
+        };
+        let (slot, other) = registration_plan(&clash)
+            .err()
+            .expect("撞车该在计划里就发现");
+        assert_eq!(slot, "pin_last");
+        assert_eq!(other, "capture");
     }
 }
