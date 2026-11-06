@@ -15,6 +15,7 @@ use ice_core::history::HistoryStore;
 use ice_core::language::{EngineKind, Language};
 
 use crate::state::{AppState, Confirm, KeyState, Tone};
+use crate::system::capture;
 use crate::theme::{self, MAX_FONT_SCALE, MIN_FONT_SCALE};
 
 use super::Effects;
@@ -597,6 +598,22 @@ fn data_group(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
                 .clicked()
             {
                 state.confirm = Some(Confirm::ClearHistory);
+            }
+        });
+        // 截图历史那一格（CHG-009 REQ-008）：**与第一颗能截图的入口同批出现**。
+        // 先开始往盘上落、过几天才补上"一键清除"，中间那一段就是收不回的暴露期
+        row(ui, "截图历史", |ui| {
+            ui.label(format!(
+                "截好的图存在应用自己的目录里，保留 {} 天或 {} 张（到哪个数就先清哪个），不上传、不同步。",
+                capture::HISTORY_DAYS,
+                capture::HISTORY_MAX
+            ));
+            if ui
+                .button("清除所有截图")
+                .on_hover_text("只删截图，不动文本历史；会先要你确认")
+                .clicked()
+            {
+                state.confirm = Some(Confirm::ClearShots);
             }
         });
     });

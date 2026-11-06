@@ -177,12 +177,15 @@ impl Toast {
 pub enum Confirm {
     ClearHistory,
     ClearKey,
+    /// 「清除所有截图」也要二次确认：那是用户截到的东西，一键就删是另一种事故
+    ClearShots,
 }
 
 impl Confirm {
     pub const fn prompt(self) -> &'static str {
         match self {
             Confirm::ClearHistory => "清空全部历史？此操作不可撤销。",
+            Confirm::ClearShots => "清空全部截图历史？截图里可能有你的账号、单据或聊天内容。",
             Confirm::ClearKey => "清除钥匙串里的 API Key？清除后 AI 通道不可用。",
         }
     }
@@ -190,6 +193,7 @@ impl Confirm {
     pub const fn confirm_label(self) -> &'static str {
         match self {
             Confirm::ClearHistory => "确认清空",
+            Confirm::ClearShots => "确认清除截图",
             Confirm::ClearKey => "确认清除",
         }
     }
@@ -411,6 +415,24 @@ impl CaptureStage {
             // 失败那句已经在 `Failed` 里带着了，这一层不再造第二句
             CaptureStage::Failed(_) => Some("截不出来"),
             CaptureStage::Cancelled => Some("已取消"),
+        }
+    }
+
+    /// 状态行那一格的颜色档（与另外三段同口径：取消不算坏，只是这一次没往下走）
+    pub const fn phase(&self) -> Phase {
+        match self {
+            CaptureStage::Capturing => Phase::Busy,
+            CaptureStage::Pinned => Phase::Done,
+            CaptureStage::Failed(_) => Phase::Bad,
+            CaptureStage::Idle | CaptureStage::Cancelled => Phase::Idle,
+        }
+    }
+
+    /// I 区那一格的完整说法：`Failed` 装的是一句能行动的话，要原样露出来
+    pub fn line(&self) -> String {
+        match self {
+            CaptureStage::Failed(reason) => reason.clone(),
+            stage => stage.label().unwrap_or("空闲").to_string(),
         }
     }
 }

@@ -75,6 +75,11 @@ pub enum Failure {
     Unknown,
 }
 
+/// 历史的两条上限（Q-007 默认档，7 天 + 200 张双上限）：**这两个数只在这一处定义**，
+/// 老化、设置页那句说明、清除那一颗都读它们，写两处就会有一天一边说 7 天一边说 30 天。
+pub const HISTORY_DAYS: u64 = 7;
+pub const HISTORY_MAX: usize = 200;
+
 /// 一次框选的三种真实结局。**取消是独立一档，不是失败**：`Cancelled` 那一支不建贴图、
 /// 不改图片页任何内容、不落提示条（与 `system::panel` 的 `Reply::Cancelled` 同一条纪律）。
 #[derive(Debug, Clone, PartialEq, Eq)]

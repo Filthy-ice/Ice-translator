@@ -22,9 +22,12 @@ use tokio::sync::mpsc;
 
 use crate::jobs::{self, JobRunner, OutcomeReceiver};
 use crate::mode;
-use crate::state::{self, AppState, ImageInput, KeyState, PRODUCT_GONE_TEXT, Tab, Tone, TrayState};
+use crate::state::{
+    self, AppState, CaptureApplied, ImageInput, KeyState, PRODUCT_GONE_TEXT, Tab, Tone, TrayState,
+};
 use crate::system::alpha;
 use crate::system::background;
+use crate::system::capture::{self, HISTORY_DAYS, HISTORY_MAX};
 use crate::system::clipboard::{self, CopyKind};
 use crate::system::dblclick;
 use crate::system::hotkeys::{self, Action};
@@ -146,6 +149,12 @@ pub struct IceApp {
     zoom_outcome: Option<titlebar::Outcome>,
     /// 上一帧标题栏双击监视器的装载结果（见 `apply_dblclick_hook`）。`None` = 还没下过。
     dblclick_outcome: Option<dblclick::Outcome>,
+    /// 截图历史目录，启动时解析一次。
+    ///
+    /// **为什么留成一份值而不是每次现问系统**：老化和「清除所有截图」都会**真删文件**。
+    /// 无头测试必须能把它换到一个临时目录里去——不然跑一条断言就顺手删了用户截过的图。
+    /// 这与剪贴板、面板、钥匙串那三条注入口是同一条纪律（`app_with_history` 就是同一手法）。
+    shots_dir: Option<std::path::PathBuf>,
 }
 
 impl IceApp {
@@ -181,6 +190,7 @@ impl IceApp {
             history,
             config_path,
             pending_save: PendingSave::None,
+            shots_dir: capture::shots_dir().ok(),
             lock,
             key_probe,
             panel_tx,
@@ -1209,6 +1219,26 @@ impl IceApp {
         }
     }
 
+    /// 历史老化：一次截图之后顺带跑一遍，**不开定时器**（REQ-008：没人看的时候不需要老化，
+    /// 帧循环里少一件常驻的事也是好的）。删的是真删，不标记。
+    fn age_shots(&mut self) {
+        let Some(dir) = self.shots_dir.clone() else {
+            return;
+        };
+        let shots = capture::list(&dir);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        for path in capture::retain(&shots, now, HISTORY_DAYS, HISTORY_MAX) {
+            // 删不掉就说一句：悄悄留着会让用户以为"清除"没生效
+            if let Err(error) = std::fs::remove_file(&path) {
+                // 只记错误类别：io::Error 的 Display 可能带路径，而那个路径就是用户内容
+                tracing::warn!(kind = ?error.kind(), "截图历史有一条没删掉");
+            }
+        }
+    }
+
     /// 把贴图那几扇窗画出来，并取走它们各自攒下的意图。
     ///
     /// 先 `clone` 一遍清单再遍历：处理一条意图会改 `state.pins`（关一张就摘一条），
@@ -1350,6 +1380,22 @@ impl IceApp {
                 None => self.state.toast(Tone::Warn, PRODUCT_GONE_TEXT),
             }
         }
+        // 「框选贴图」那颗与全局截图热键**落这一格**（同一个 `Effects::capture`）：
+        // 派发只在这一处，两条入口不可能走偏成两套行为。
+        if effects.capture {
+            if let Some(job) = self.state.submit_capture() {
+                self.runner.submit(&self.runtime, job, ctx);
+            }
+        }
+        // 截图回来之后：建贴图、跑一次历史老化、派"只识别"——三件事，**没有翻译**
+        if let Some(CaptureApplied::Pinned { pin }) = self.state.capture_applied.take() {
+            self.age_shots();
+            if let Some(job) = self.state.submit_pin_recognize(pin) {
+                self.runner.submit(&self.runtime, job, ctx);
+            }
+        } else if self.state.capture_applied.take().is_some() {
+            self.age_shots();
+        }
         // 贴图那两条出路（CHG-009 REQ-003/004）：**复用上面那两条同一把函数**，
         // 只换像素来源——从这张自己的文件读回（`pin::pixels_of`），长期留一份 RGBA 是六张
         // 几百 MB，而复制/保存都是用户显式点一下，一次读盘换不来第四条任务那套机制。
@@ -1415,6 +1461,24 @@ impl IceApp {
         }
         if effects.toggle_fill {
             self.toggle_fill(ctx);
+        }
+        if effects.clear_shots {
+            // 只删截图，不动文本历史；返回的是**真删掉的张数**——提示条说"清了 37 张"
+            // 比"已清除"有用得多（用户由此知道原来攒了多少）
+            match self.shots_dir.clone() {
+                Some(dir) => {
+                    let removed = capture::clear_all(&dir);
+                    let line = if removed == 0 {
+                        "截图历史已经是空的".to_string()
+                    } else {
+                        format!("已清除 {removed} 张截图")
+                    };
+                    self.state.toast(Tone::Info, line);
+                }
+                None => self
+                    .state
+                    .toast(Tone::Error, "找不到截图历史所在的位置，没能清除"),
+            }
         }
         if effects.clear_history {
             self.state.clear_history(&self.history);
@@ -2223,7 +2287,7 @@ mod tests {
 
     fn app_with_history(dir: &std::path::Path, state: AppState, history: HistoryStore) -> IceApp {
         let translator = build_translator(&state.config, None);
-        IceApp::new(
+        let mut app = IceApp::new(
             state,
             runtime(),
             translator,
@@ -2231,7 +2295,11 @@ mod tests {
             dir.join("config.toml"),
             None,
             idle_key_probe(),
-        )
+        );
+        // 测试一律把截图目录挪进临时目录：老化与「清除所有截图」都会**真删文件**，
+        // 让它们指到系统里那个真实目录就等于跑一条断言删掉用户截过的图
+        app.shots_dir = Some(dir.join("shots"));
+        app
     }
 
     /// FR-4.5：config.toml 里的术语在**第一次**派发前就要进引擎，
@@ -4282,5 +4350,64 @@ mod tests {
         app.apply_pin_intent(2, crate::system::pin::PinIntent::ToggleBand, &mut effects);
         assert!(!app.state.pins[1].band_open, "第二张的带子没收起来");
         assert!(app.state.pins[0].band_open, "第一张被牵连了");
+    }
+
+    /// 「清除所有截图」删的是真的文件，报的是**真删掉的张数**，而且**不动文本历史**
+    /// （两个"历史"是两个东西，一键误删另一个是事故）。
+    #[test]
+    fn clearing_shots_removes_the_files_and_leaves_the_text_history_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let shots = dir.path().join("shots");
+        std::fs::create_dir_all(&shots).unwrap();
+        for name in ["1.png", "2.png", "3.png"] {
+            std::fs::File::create(shots.join(name)).unwrap();
+        }
+        let text_history = dir.path().join("history.jsonl");
+        std::fs::write(&text_history, b"some record").unwrap();
+
+        let mut app = app(dir.path(), plain_state());
+        let mut effects = Effects::default();
+        effects.clear_shots = true;
+        let ctx = ctx();
+        app.run_effects(&ctx, effects);
+
+        assert_eq!(
+            std::fs::read_dir(&shots).unwrap().count(),
+            0,
+            "三张截图没被清掉"
+        );
+        assert!(std::fs::exists(&text_history).unwrap(), "文本历史被牵连了");
+        let toasts: Vec<String> = app
+            .state
+            .toasts
+            .iter()
+            .map(|toast| toast.text.clone())
+            .collect();
+        assert!(
+            toasts.iter().any(|line| line.contains("3 张")),
+            "提示条要说清删了几张：{toasts:?}"
+        );
+    }
+
+    /// 空历史也要有话说（"已经是空的"），而不是静悄悄——静悄悄会被当成"清除没生效"。
+    #[test]
+    fn an_empty_shot_history_says_so_instead_of_staying_silent() {
+        let dir = tempfile::tempdir().unwrap();
+        let shots = dir.path().join("shots");
+        std::fs::create_dir_all(&shots).unwrap();
+        let mut app = app(dir.path(), plain_state());
+        let mut effects = Effects::default();
+        effects.clear_shots = true;
+        app.run_effects(&ctx(), effects);
+        let lines: Vec<String> = app
+            .state
+            .toasts
+            .iter()
+            .map(|toast| toast.text.clone())
+            .collect();
+        assert!(
+            lines.iter().any(|line| line.contains("空的")),
+            "一张都没有时也要回一句：{lines:?}"
+        );
     }
 }

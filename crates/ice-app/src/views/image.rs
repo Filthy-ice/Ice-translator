@@ -72,6 +72,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, supp
 /// 说清是"这台机器不行"而不是"这个版本没做"——入口置灰还在原地的全部意义就在这里。
 const UNSUPPORTED_HINT: &str = "当前平台没有本地文字识别；文本翻译不受影响";
 
+/// 「框选贴图」这颗的解释。三件事都得说：用户按下之前就该知道会弹什么、怎么撤、
+/// 以及**截完不会自动翻**（那是他深夜改判的那一条，藏起来等于没说）
+const CAPTURE_HOVER: &str =
+    "框选一块屏幕区域；esc 取消；截完先钉在屏幕上，翻不翻由你按那颗「翻译」";
+
 /// E 区：四条入口汇进同一次派发（REQ-001）。
 ///
 /// 「拖拽」那一格不是按钮——整个窗口都是拖放区，落地在 `app.rs` 的帧循环里读
@@ -102,6 +107,27 @@ fn import_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects, su
                     UNSUPPORTED_HINT
                 });
                 ui.colored_label(theme::MUTED, "或把图片直接拖到窗口里");
+                // 「框选贴图」钉在这一排（CHG-009 REQ-001）：FR-2.1「禁用而不是消失」，
+                // 所以非 mac 它也在原地，只是灰着并说清为什么
+                let gate = crate::system::capture::capability()
+                    .capture
+                    .then(|| state.capture_gate())
+                    .flatten();
+                let capture = ui.add_enabled(
+                    crate::system::capture::capability().capture && gate.is_none(),
+                    egui::Button::new("框选贴图"),
+                );
+                record(ui.ctx(), "capture", capture.rect);
+                if capture.clicked() {
+                    effects.capture = true;
+                }
+                // 灰着的时候说的是"为什么现在不能按"，能按的时候说的是"按下会弹什么"。
+                // 两个都得挂上，顺序反了就只剩后一个（这两个方法都吃掉 Response）
+                let capture = match gate {
+                    Some(reason) => capture.on_disabled_hover_text(reason),
+                    None => capture,
+                };
+                capture.on_hover_text(CAPTURE_HOVER);
             });
             ui.horizontal(|ui| {
                 ui.colored_label(theme::MUTED, "路径");
@@ -687,6 +713,14 @@ pub(crate) fn status_bar(ui: &mut egui::Ui, state: &mut AppState, effects: &mut 
     super::window_bar("image_status", egui::Margin::symmetric(8, 6), ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             caption(ui, "I 处理");
+            stage_cell(
+                ui,
+                "截图",
+                &state.capture_stage.line(),
+                state.capture_stage.phase(),
+                0,
+            );
+            ui.separator();
             stage_cell(
                 ui,
                 "识别",
@@ -1840,6 +1874,76 @@ mod tests {
         assert!(
             UNSUPPORTED_HINT.contains("文本翻译"),
             "顺手要说一句文本功能不受影响（REQ-007）"
+        );
+    }
+
+    /// 「框选贴图」那颗只给意图：**不给路径、不派任务**（派发在 `app.rs` 一处做）。
+    /// 这条锁的是"入口只表达想做，怎么做与做在哪都归状态层"——按钮里自己 spawn 子进程
+    /// 是这条链最容易走歪的方向（那一来 esc/取消/失败三态就没人统一判了）。
+    #[test]
+    fn the_capture_button_gives_only_the_intent() {
+        let mut state = new_state();
+        let mut effects = Effects::default();
+        let ctx = run(&mut state, &mut effects, true, &[]);
+        let at = recorded_entry(&ctx, "capture").center();
+        assert!(at.x > 0.0 && at.y > 0.0, "那颗没被画出来，记录不到位置");
+
+        let mut effects = Effects::default();
+        run(&mut state, &mut effects, true, &[at]);
+        assert!(effects.capture, "点那颗该给出截图意图");
+        assert!(effects.job.is_none(), "入口不该自己派发任务：{effects:?}");
+        assert!(
+            !effects.open_panel && !effects.paste_image,
+            "点一颗不该带出别颗"
+        );
+    }
+
+    /// 非 mac：那颗**在原地但灰着**（FR-2.1「禁用而不是消失」），而且点不出意图。
+    #[test]
+    fn on_an_unsupported_platform_the_button_stays_but_refuses_the_click() {
+        let mut state = new_state();
+        let mut effects = Effects::default();
+        let ctx = egui::Context::default();
+        let shapes = run_with(&ctx, &mut state, &mut effects, false, &[]);
+        let text = painted_text(&shapes);
+        assert!(text.contains("框选贴图"), "那颗不许消失：{text}");
+        assert!(text.contains("截图"), "I 区那一格也要在：{text}");
+
+        let ctx = run(&mut state, &mut effects, false, &[]);
+        let at = recorded_entry(&ctx, "capture").center();
+        let mut effects = Effects::default();
+        run(&mut state, &mut effects, false, &[at]);
+        if !crate::system::capture::capability().capture {
+            assert!(!effects.capture, "这台机器上没有框选，点下去不该给出意图");
+        }
+    }
+
+    /// 按下之前就该说清的三件事：会弹框选、esc 能撤、**截完先钉住不由我们替你翻**。
+    /// 第三件是他深夜改判的那一条，藏在 hover 里也得钉住文字，不许哪次重构给吞了。
+    #[test]
+    fn the_capture_hover_promises_three_things() {
+        assert!(CAPTURE_HOVER.contains("框选"), "少了『会框选』");
+        assert!(CAPTURE_HOVER.contains("esc"), "少了『esc 取消』");
+        assert!(
+            CAPTURE_HOVER.contains("翻不翻由你"),
+            "少了『截完不自动翻译』这一件：{CAPTURE_HOVER}"
+        );
+        assert!(
+            !CAPTURE_HOVER.contains("自动"),
+            "这句话不该出现『自动』两个字：{CAPTURE_HOVER}"
+        );
+    }
+
+    /// **派发只有一处**：`submit_capture` 的调用点只能有一个（`app.rs` 的帧末）。
+    /// 那颗按钮与将来的全局热键都只写 `Effects::capture`——两条路各派一次就会有
+    /// "热键那一下不建贴图/按钮那一下不老化"这种只对一半的行为（图钉那次同族）。
+    #[test]
+    fn there_is_exactly_one_place_that_dispatches_a_capture() {
+        let source = include_str!("../app.rs");
+        assert_eq!(
+            source.matches("state.submit_capture()").count(),
+            1,
+            "submit_capture 出现了第二个调用点"
         );
     }
 }

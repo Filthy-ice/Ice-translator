@@ -113,6 +113,9 @@ pub struct Effects {
     /// 切到简洁模式（F-05）
     pub toggle_mode: bool,
     /// 二次确认后清空历史
+    /// 「清除所有截图」（CHG-009 REQ-008）。它与**第一颗能截图的入口同批**落地：
+    /// 先落盘、过几天才补上清除，中间那段就是收不回的暴露期
+    pub clear_shots: bool,
     pub clear_history: bool,
     /// 简洁窗把手被按下：交原生窗口拖拽（`ViewportCommand::StartDrag`，REQ-002）
     pub start_drag: bool,
@@ -155,6 +158,9 @@ pub struct Effects {
     /// 回填 → 成品原地替换）。这一格先存在，是为了让**意图矩阵是完整的**：四条意图都有
     /// 落点，不出现"某一条按下后被悄悄吞掉"。
     pub translate_pin: Option<u64>,
+    /// 「框选贴图」那颗与全局截图热键**落同一格**（CHG-009 REQ-001/006）：两条入口一份意图，
+    /// 派发的活儿在 `app.rs` 里做一处，视图只给意图、不碰子进程也不碰路径
+    pub capture: bool,
     pub save_image: bool,
     /// 「复制图片」：帧末把成品那张 RGBA 写进剪贴板（REQ-008 的第二条出路）。
     /// 与 `copy`（写文本）分开两个字段，是因为写图会**抹掉剪贴板里的文本**（Q-004），
@@ -754,6 +760,7 @@ fn confirm(ctx: &egui::Context, state: &mut AppState, effects: &mut Effects) {
             state.confirm = None;
             match kind {
                 Confirm::ClearHistory => effects.clear_history = true,
+                Confirm::ClearShots => effects.clear_shots = true,
                 Confirm::ClearKey => effects.delete_key = true,
             }
         }
