@@ -418,6 +418,8 @@ impl AiConfig {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// 全局快捷键（CHG-009）。放在 `terms` 之前：TOML 的 array-of-tables 之后不许再有别的键
+    pub hotkey: HotkeyConfig,
     pub ui: UiConfig,
     pub translation: TranslationConfig,
     pub ai: AiConfig,
@@ -425,6 +427,122 @@ pub struct Config {
     /// 必须是最后一个字段：TOML 的 array-of-tables 之后的键都会归属到它，放在中间会把配置写坏。
     #[serde(rename = "term")]
     pub terms: Vec<Term>,
+}
+
+/// 全局快捷键的三条组合（CHG-009 REQ-006，本包唯一的配置面改动）。
+///
+/// 存的是**字符串**（"f1"、"cmd+shift+4" 这两种都收），不是平台掩码：一份配置文件要能被
+/// 人看懂、能手改，而 Carbon 的 `controlKey=1<<12` 这类值一写进配置就把平台钉死了。
+/// 掩码换算在 `ice-app/src/system/global_hotkeys.rs` 那一处做。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HotkeyConfig {
+    /// 区域截图（默认 F1）
+    pub capture: String,
+    /// 把最近一次"框选但还没钉住"的那块钉住（默认 F3）
+    pub pin_last: String,
+    /// 打开上一次截图（默认 F2）
+    pub reopen: String,
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        // 默认值就是他报的三个（用户 2026-11-05 原话"快捷键改成可设置的，默认 F1 F3 F2"）。
+        // **不许因为"我们怕裸 F 键撞上系统媒体键"就自作主张换组合**：那是他的习惯，
+        // 而且本机实测这三把裸键都按得响（事实 35/39）
+        Self {
+            capture: "f1".to_string(),
+            pin_last: "f3".to_string(),
+            reopen: "f2".to_string(),
+        }
+    }
+}
+
+/// 一条组合坏掉时的处置：回默认值 + 一句只说"哪一条"不说"原文是什么"的日志。
+fn restore_combo(value: &mut String, fallback: &str, name: &'static str) {
+    if value == fallback {
+        return;
+    }
+    if parse_combo(value).is_none() {
+        tracing::warn!("快捷键 {name} 无法解析，本次用默认组合");
+        value.clone_from(&fallback.to_string());
+    }
+}
+
+/// 一条组合解析后的结果：一个主键 + 四个修饰键的开关。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Combo {
+    pub base: BaseKey,
+    pub cmd: bool,
+    pub shift: bool,
+    pub option: bool,
+    pub control: bool,
+}
+
+/// 组合里的主键。只收这三类，别的都是打错。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseKey {
+    /// F1…F12
+    Function(u8),
+    /// 单个字母（不区分大小写，存小写）
+    Letter(char),
+    /// 单个数字（不区分大小写，存原字符）
+    Digit(char),
+}
+
+/// 解析一条组合字符串：**纯函数**，所以录入 UI 只是"把按键拼成这一个字符串"这一件事。
+///
+/// 规则都是宽进严出：大小写、多余空格、修饰键的几种常见别名（`ctrl`/`control`、
+/// `alt`/`option`、`win`/`super`/`cmd`/`command`）都认；认不出主键就是 `None`，
+/// 由调用方回默认值——"配错了却按我们猜的键去注册"是最难查的那种。
+pub fn parse_combo(raw: &str) -> Option<Combo> {
+    let mut combo = Combo {
+        base: BaseKey::Function(1),
+        cmd: false,
+        shift: false,
+        option: false,
+        control: false,
+    };
+    let mut saw_base = false;
+    for part in raw.to_lowercase().split(['+', '-']) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        match part {
+            "cmd" | "command" | "super" | "win" | "meta" => combo.cmd = true,
+            "shift" => combo.shift = true,
+            "option" | "alt" | "opt" => combo.option = true,
+            "ctrl" | "control" => combo.control = true,
+            other => {
+                if saw_base {
+                    // 两个主键（"f1+f2"）不是"组合"，是打错了
+                    return None;
+                }
+                let base = if let Some(digits) = other.strip_prefix('f') {
+                    let n: u8 = digits.parse().ok()?;
+                    if (1..=12).contains(&n) {
+                        BaseKey::Function(n)
+                    } else {
+                        return None;
+                    }
+                } else if other.len() == 1 {
+                    let ch = other.chars().next()?;
+                    if ch.is_ascii_alphabetic() {
+                        BaseKey::Letter(ch)
+                    } else if ch.is_ascii_digit() {
+                        BaseKey::Digit(ch)
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                };
+                combo.base = base;
+                saw_base = true;
+            }
+        }
+    }
+    saw_base.then_some(combo)
 }
 
 impl Config {
@@ -491,6 +609,12 @@ impl Config {
 
     /// 把越界数值夹回合法区间，防止坏配置导致窗口不可用。
     pub fn sanitized(mut self) -> Self {
+        // 快捷键：认不出来就回默认值，并记一句**不含用户原文**的日志（FR-4.3 那套
+        // "配置损坏就回默认"的同一条纪律——原文是他自己起的键位，不该进日志）
+        let defaults = HotkeyConfig::default();
+        restore_combo(&mut self.hotkey.capture, &defaults.capture, "capture");
+        restore_combo(&mut self.hotkey.pin_last, &defaults.pin_last, "pin_last");
+        restore_combo(&mut self.hotkey.reopen, &defaults.reopen, "reopen");
         self.ui.font_scale = self.ui.font_scale.clamp(0.8, 2.0);
         // clamp 对 NaN 两条比较都为假、会原样返回 NaN，所以先单独挡一次（TOML 能写出 nan）。
         // alpha 是 NaN 时窗体会整个看不见，宁可退回默认档。
@@ -882,5 +1006,54 @@ mod tests {
         );
         let centered = WindowRect::centered_in(&monitor, 400.0, 300.0);
         assert!(centered.within(&monitor));
+    }
+    #[test]
+    fn combos_are_parsed_leniently_and_reject_ambiguous_input() {
+        // 大小写与分隔符都认（他要能手改这个文件）
+        assert_eq!(
+            parse_combo("Cmd+Shift+4"),
+            parse_combo("cmd-shift-4").map(|c| c)
+        );
+        let c = parse_combo("cmd+shift+4").unwrap();
+        assert_eq!(c.base, BaseKey::Digit('4'));
+        assert!(c.cmd && c.shift && !c.option && !c.control);
+        // 别名
+        assert_eq!(parse_combo("alt+f2").unwrap().option, true);
+        assert_eq!(parse_combo("ctrl+f2").unwrap().control, true);
+        assert_eq!(parse_combo("command+f2").unwrap().cmd, true);
+        // 裸功能键是他报的默认档
+        assert_eq!(parse_combo("f1").unwrap().base, BaseKey::Function(1));
+        assert_eq!(parse_combo("F12").unwrap().base, BaseKey::Function(12));
+        assert_eq!(parse_combo("g").unwrap().base, BaseKey::Letter('g'));
+        // 认不出的一律 None（由调用方回默认，不猜）
+        assert_eq!(parse_combo(""), None);
+        assert_eq!(parse_combo("f13"), None, "F13 不是我们承诺能按的键");
+        assert_eq!(parse_combo("f0"), None);
+        assert_eq!(parse_combo("f1+f2"), None, "两个主键是打错，不是组合");
+        assert_eq!(parse_combo("hyper+f1"), None);
+        assert_eq!(
+            parse_combo("tab"),
+            None,
+            "命名键里只承诺功能键/字母/数字三类"
+        );
+    }
+
+    #[test]
+    fn an_unparsable_hotkey_falls_back_silently_in_text_but_loudly_in_log() {
+        let cfg = Config {
+            hotkey: HotkeyConfig {
+                capture: "moon".into(),
+                pin_last: "f3".into(),
+                reopen: "ctrl+alt+k".into(),
+            },
+            ..Config::default()
+        }
+        .sanitized();
+        assert_eq!(cfg.hotkey.capture, "f1", "认不出就该回默认值");
+        assert_eq!(cfg.hotkey.pin_last, "f3", "没坏的那条不许被顺手动");
+        assert_eq!(
+            cfg.hotkey.reopen, "ctrl+alt+k",
+            "能解析的自定义组合原样留着"
+        );
     }
 }

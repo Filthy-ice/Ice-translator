@@ -149,6 +149,8 @@ pub struct IceApp {
     zoom_outcome: Option<titlebar::Outcome>,
     /// 上一帧标题栏双击监视器的装载结果（见 `apply_dblclick_hook`）。`None` = 还没下过。
     dblclick_outcome: Option<dblclick::Outcome>,
+    /// 热键的 handler 与首轮注册只在启动后做一次
+    hotkeys_started: bool,
     /// 截图历史目录，启动时解析一次。
     ///
     /// **为什么留成一份值而不是每次现问系统**：老化和「清除所有截图」都会**真删文件**。
@@ -190,6 +192,7 @@ impl IceApp {
             history,
             config_path,
             pending_save: PendingSave::None,
+            hotkeys_started: false,
             shots_dir: capture::shots_dir().ok(),
             lock,
             key_probe,
@@ -235,6 +238,20 @@ impl IceApp {
                 views::full::copy(&mut self.state, effects, CopyKind::Translation)
             }
             Action::ToggleTopmost => self.toggle_topmost(ctx),
+            // 全局热键那三把（CHG-009 REQ-006）。截图那一把与图片页那颗「框选贴图」
+            // **落同一个意图**，派发只在帧末一处做；「固定」在没有"框选但没钉住"的那张时
+            // 什么都不做（不弹一句"没有可固定的"，也不拿历史里更早那张顶上去——那会把
+            // 两把键混成一把）；「打开上一次」从历史里取最新那张钉出来，没有才说一句
+            Action::Capture => effects.capture = true,
+            Action::PinLast => {
+                self.state.pin_last_capture();
+            }
+            Action::ReopenLast => match self.newest_shot() {
+                Some(path) => {
+                    self.state.pin_from_history(path);
+                }
+                None => self.state.toast(Tone::Info, "还没有截图记录"),
+            },
             Action::HideWindow => self.hide(ctx),
             Action::RevealWindow => self.reveal(ctx),
             // 托盘菜单「设置」：收着就先唤回，再开设置页。兑现复用 `open_settings`
@@ -305,6 +322,28 @@ impl IceApp {
     ///   跟着换回"收进后台"，界面得说实话（REQ-005、REQ-006）。
     /// - **意图走 `run(action)`**，不在这外面另写一套兑现。四条意图与快捷键、设置页、
     ///   绿键落在同一批动作上，`Action::Quit` 必须是既有的那一条（TC-5.4-b）。
+    /// 全局热键：装上 handler、按需注册、把命中的那一下送进**既有的 `Action` 分派**。
+    ///
+    /// 挂在 `logic()` 而不是 `ui()`：窗口收起时 `ui()` 一帧都不跑，挂在那儿等于"只有窗口
+    /// 看得见时才听得到热键"（D-21 那一笔账）。这里也不立任何心跳——实测热键事件本身就能
+    /// 把停摆的循环叫回一帧（回调里那句 `request_repaint`，事实 38）
+    fn pump_hotkeys(&mut self, ctx: &egui::Context, effects: &mut Effects) {
+        if !crate::system::global_hotkeys::SUPPORTED {
+            return;
+        }
+        if !self.hotkeys_started {
+            self.hotkeys_started = true;
+            crate::system::global_hotkeys::arm(ctx);
+            if let Err(failure) = crate::system::global_hotkeys::apply(&self.state.config.hotkey) {
+                // 启动时就抢不到键：说清哪一把、并告诉他还能用按钮
+                self.state.toast(Tone::Warn, failure.explain());
+            }
+        }
+        if let Some(action) = crate::system::global_hotkeys::take_action() {
+            self.run(action, ctx, effects);
+        }
+    }
+
     fn pump_tray(
         &mut self,
         scale: f64,
@@ -1219,6 +1258,16 @@ impl IceApp {
         }
     }
 
+    /// 历史里最新那一张（「打开上一次截图」那一格要的那张）。
+    ///
+    /// 与老化**共用同一个排序**（`capture::recent`）："最近"在这条链上只有一个定义。
+    /// 读盘发生在帧末这一层，状态层不碰文件系统（REQ-005 那条分层纪律）
+    fn newest_shot(&self) -> Option<std::path::PathBuf> {
+        let dir = self.shots_dir.clone()?;
+        let shots = capture::list(&dir);
+        capture::recent(&shots).map(|shot| shot.path.clone())
+    }
+
     /// 历史老化：一次截图之后顺带跑一遍，**不开定时器**（REQ-008：没人看的时候不需要老化，
     /// 帧循环里少一件常驻的事也是好的）。删的是真删，不标记。
     fn age_shots(&mut self) {
@@ -1382,19 +1431,26 @@ impl IceApp {
         }
         // 「框选贴图」那颗与全局截图热键**落这一格**（同一个 `Effects::capture`）：
         // 派发只在这一处，两条入口不可能走偏成两套行为。
+        if effects.rebind_hotkeys && crate::system::global_hotkeys::SUPPORTED {
+            if let Err(failure) = crate::system::global_hotkeys::apply(&self.state.config.hotkey) {
+                self.state.toast(Tone::Error, failure.explain());
+            }
+        }
         if effects.capture {
             if let Some(job) = self.state.submit_capture() {
                 self.runner.submit(&self.runtime, job, ctx);
             }
         }
-        // 截图回来之后：建贴图、跑一次历史老化、派"只识别"——三件事，**没有翻译**
-        if let Some(CaptureApplied::Pinned { pin }) = self.state.capture_applied.take() {
+        // 回信那三件事的另外两件：跑一次历史老化（截图真的回来了才跑，不开定时器）
+        if self.state.capture_applied.take().is_some() {
             self.age_shots();
+        }
+        // 第三件：给"刚建好的每张贴图"派一次**只识别**。三种来源（截图回信、「固定」、
+        // 「打开上一次」）都汇到这同一个出口，所以"钉上去之后做什么"只有一份代码
+        for pin in self.state.pins_new.drain(..).collect::<Vec<_>>() {
             if let Some(job) = self.state.submit_pin_recognize(pin) {
                 self.runner.submit(&self.runtime, job, ctx);
             }
-        } else if self.state.capture_applied.take().is_some() {
-            self.age_shots();
         }
         // 贴图那两条出路（CHG-009 REQ-003/004）：**复用上面那两条同一把函数**，
         // 只换像素来源——从这张自己的文件读回（`pin::pixels_of`），长期留一份 RGBA 是六张
@@ -1784,6 +1840,7 @@ impl eframe::App for IceApp {
             .winit_window()
             .map_or(1.0, |window| window.scale_factor());
         let mut effects = Effects::default();
+        self.pump_hotkeys(ctx, &mut effects);
         self.pump_tray(scale, tray::take_outcome(), ctx, &mut effects);
         self.run_effects(ctx, effects);
     }

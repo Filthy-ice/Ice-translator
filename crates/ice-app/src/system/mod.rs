@@ -6,6 +6,7 @@ pub mod capture;
 pub mod clipboard;
 pub mod dblclick;
 pub mod dock;
+pub mod global_hotkeys;
 pub mod hotkeys;
 pub mod mouse;
 pub mod panel;

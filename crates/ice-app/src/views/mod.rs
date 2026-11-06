@@ -160,6 +160,9 @@ pub struct Effects {
     pub translate_pin: Option<u64>,
     /// 「框选贴图」那颗与全局截图热键**落同一格**（CHG-009 REQ-001/006）：两条入口一份意图，
     /// 派发的活儿在 `app.rs` 里做一处，视图只给意图、不碰子进程也不碰路径
+    /// 快捷键组合改了：先注销旧的再重新注册（`system::global_hotkeys::apply`）。
+    /// 三条录入都落这一格——**改一次注册一次**，而不是每帧重注册
+    pub rebind_hotkeys: bool,
     pub capture: bool,
     pub save_image: bool,
     /// 「复制图片」：帧末把成品那张 RGBA 写进剪贴板（REQ-008 的第二条出路）。

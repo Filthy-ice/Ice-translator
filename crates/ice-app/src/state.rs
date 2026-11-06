@@ -877,6 +877,13 @@ pub struct AppState {
     /// 最近一次截图回信的**落点**，由帧循环取走（`take`）后清空：开窗与派"只识别"
     /// 都是碰系统的事，不能发生在状态层里（REQ-005 那条分层纪律）
     pub capture_applied: Option<CaptureApplied>,
+    /// **刚建好、还没派过"只识别"的贴图号**。三种来源都往这里放：截图回信、「固定」
+    /// 那一格、以及「打开上一次」——帧循环在这一处统一派识别，"钉上去之后做什么"
+    /// 就只有一份代码
+    pub pins_new: Vec<RequestId>,
+    /// 因为"钉满了"而没钉上的那一张：它**已经在盘上**了，用户关掉一张之后按「固定」
+    /// 还能补钉上，不必重截（REQ-006 那条"固定"的语义）
+    pub unpinned_capture: Option<PathBuf>,
 }
 
 impl AppState {
@@ -945,6 +952,8 @@ impl AppState {
             pins: Vec::new(),
             next_pin_id: 0,
             capture_applied: None,
+            pins_new: Vec::new(),
+            unpinned_capture: None,
         }
     }
 
@@ -1397,12 +1406,19 @@ impl AppState {
                 // 满了：**图仍然留在历史里**（老化照常），只是不再往屏幕上钉。
                 // 撤掉用户已经钉着的那一张来腾位置是不可接受的（Q-007）。
                 if self.pins.len() >= PIN_MAX {
+                    self.unpinned_capture = Some(path.clone());
                     let text = "屏幕上已经钉满 6 张，先 esc 关掉一张".to_string();
                     self.capture_stage = CaptureStage::Failed(text.clone());
                     return CaptureApplied::Failed(text);
                 }
-                let pin = self.push_pin(path);
+                let pin = self.push_pin(path.clone());
                 self.capture_stage = CaptureStage::Pinned;
+                if let Some(id) = pin {
+                    self.pins_new.push(id);
+                } else {
+                    // 这一张没钉上但**已经在盘上**：留给「固定」那一格
+                    self.unpinned_capture = Some(path);
+                }
                 match pin {
                     Some(id) => CaptureApplied::Pinned { pin: id },
                     None => {
@@ -1427,6 +1443,26 @@ impl AppState {
         self.next_pin_id += 1;
         let id = self.next_pin_id;
         self.pins.push(Pin::new(id, path));
+        Some(id)
+    }
+
+    /// 「固定」那一格：把最近一次没钉上的那张补钉上。没有就说 `None`，**什么都不做**
+    /// （REQ-006 明写"没有就什么都不做"，不许拿历史里更早那张顶上去——那用户会以为
+    /// 这把键是"打开上一次"，两把键就成一把了）
+    pub fn pin_last_capture(&mut self) -> Option<RequestId> {
+        let path = self.unpinned_capture.take()?;
+        let id = self.push_pin(path)?;
+        self.pins_new.push(id);
+        self.capture_stage = CaptureStage::Pinned;
+        Some(id)
+    }
+
+    /// 「打开上一次截图」那一格：把历史里最新那张钉出来。**取图那一条路不重开**——
+    /// 这张已经在盘上，走的还是 `push_pin` + 派识别那一套
+    pub fn pin_from_history(&mut self, path: PathBuf) -> Option<RequestId> {
+        let id = self.push_pin(path)?;
+        self.pins_new.push(id);
+        self.capture_stage = CaptureStage::Pinned;
         Some(id)
     }
 
