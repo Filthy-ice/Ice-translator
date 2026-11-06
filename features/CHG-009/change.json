@@ -153,6 +153,16 @@
       "at": "2026-11-06T03:58:09+00:00",
       "action": "task-done",
       "detail": "T-003"
+    },
+    {
+      "at": "2026-11-06T04:07:06+00:00",
+      "action": "task-done",
+      "detail": "T-004"
+    },
+    {
+      "at": "2026-11-06T04:07:06+00:00",
+      "action": "task-done",
+      "detail": "T-005"
     }
   ],
   "approval": {
