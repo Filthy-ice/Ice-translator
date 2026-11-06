@@ -1,5 +1,9 @@
 {
-  "baseline": null,
+  "baseline": {
+    "change": "CHG-009",
+    "version": "v0.6",
+    "spec_hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f"
+  },
   "tasks": [
     {
       "id": "T-001",
@@ -24,8 +28,12 @@
         "REQ-009"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/capture.rs",
+        "crates/ice-app/src/system/mod.rs",
+        "crates/ice-core/src/config.rs"
+      ]
     },
     {
       "id": "T-003",
@@ -35,8 +43,11 @@
         "REQ-008"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/capture.rs",
+        "crates/ice-core/src/config.rs"
+      ]
     },
     {
       "id": "T-004",
