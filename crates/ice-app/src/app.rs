@@ -1226,17 +1226,6 @@ impl IceApp {
         }
     }
 
-    /// 这张贴图此刻的文件。贴图已经不在时给一个空路径——`pixels_of` 读不出来，
-    /// 由那一条统一说"不在了"，不在这里造第二套失败话。
-    fn pin_path(&self, id: u64) -> std::path::PathBuf {
-        self.state
-            .pins
-            .iter()
-            .find(|pin| pin.id == id)
-            .map(|pin| pin.path.clone())
-            .unwrap_or_default()
-    }
-
     /// 一张贴图发出来的意图落到**既有**通道上（本包不开第二条实现）。
     ///
     /// 关这张与收放带子是纯状态的事，就地做完；复制、保存、翻译只出意图——它们要碰
