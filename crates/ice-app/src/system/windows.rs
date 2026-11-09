@@ -30,7 +30,7 @@ pub const SELF_OWNER: &str = "ice-translator";
 /// - 自家窗要排掉：遮罩本身、还开着的贴图、主窗都在这张表里；
 /// - 零面积排掉（菜单栏上那些 0x0 的记账窗会混在里面）。
 pub fn topmost_at(entries: &[Entry], origin: Pos2, point: Pos2, self_owner: &str) -> Option<Rect> {
-    let global = point + (origin.to_vec2() * -1.0);
+    let global = point + origin.to_vec2();
     let hits = entries.iter().find(|entry| {
         entry.layer >= 0
             && entry.owner != self_owner
