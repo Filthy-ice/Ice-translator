@@ -1349,7 +1349,7 @@ impl IceApp {
                     points: frame.points,
                     origin: frame.origin,
                     windows: windows.clone(),
-                    texture: freeze_texture(ctx, frame),
+                    texture: freeze_texture(ctx, frame, capture.frozen_id),
                 },
             );
             if pushing {
@@ -2109,18 +2109,21 @@ fn pin_band_line(pin: &crate::state::Pin) -> Option<String> {
 
 /// 遮罩里那张冻结帧的纹理。**按 (截图序号, 屏序号) 缓存**：一张一块屏就是几十 MB 的像素，
 /// 每帧重传会把这一秒的成本抬起来；换一次截图（新 id）自然作废，不留到下一轮。
-fn freeze_texture(ctx: &egui::Context, frame: &crate::state::Freeze) -> egui::TextureId {
+fn freeze_texture(
+    ctx: &egui::Context,
+    frame: &crate::state::Freeze,
+    frozen_id: u64,
+) -> egui::TextureId {
     let (w, h) = (frame.image.width(), frame.image.height());
-    // 缓存键用**像素尺寸**而不是点尺寸：换一次截图（或换一块屏）尺寸几乎必变，
-    // 而真撞上了也只是多传一次纹理，不会画出上一轮的画面
+    // 缓存认的是**这一轮冻结的号**，不是像素尺寸。同一块屏每轮抓出来尺寸都一样，
+    // 拿尺寸当内容的凭证就会把上一轮的画面留下来（缺陷 D-41：遮罩里那颗钟停在 20:28，
+    // 而这一刻是 20:51；裁出去的是新像素，屏幕上却是旧的——用户框的是他看不见的东西）。
+    // 一轮一次重传，不是每帧一次：`frozen_id` 不变时下面那条命中就走完。
     let key = egui::Id::NULL
         .with("ice-selection.freeze")
-        .with(frame.display)
-        .with(w)
-        .with(h);
-    if let Some(old) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(key)) {
-        let size = old.size();
-        if size[0] == w as usize && size[1] == h as usize {
+        .with(frame.display);
+    if let Some((old_gen, old)) = ctx.data(|d| d.get_temp::<(u64, egui::TextureHandle)>(key)) {
+        if old_gen == frozen_id {
             return old.id();
         }
     }
@@ -2133,7 +2136,8 @@ fn freeze_texture(ctx: &egui::Context, frame: &crate::state::Freeze) -> egui::Te
     let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &bytes);
     let texture = ctx.load_texture("ice-selection.freeze", image, egui::TextureOptions::LINEAR);
     let id = texture.id();
-    ctx.data_mut(|d| d.insert_temp(key, texture));
+    // 键里不带轮号：新一轮把旧那一格**顶掉**，纹理才不会一轮攒一张
+    ctx.data_mut(|d| d.insert_temp(key, (frozen_id, texture)));
     id
 }
 
@@ -5083,6 +5087,7 @@ mod tests {
     fn frozen_app(dir: &std::path::Path) -> IceApp {
         let mut app = app(dir, plain_state());
         app.state.capture = Some(crate::state::Capture {
+            frozen_id: 1,
             frames: vec![crate::state::Freeze {
                 display: 1,
                 points: egui::vec2(40.0, 30.0),

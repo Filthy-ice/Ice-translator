@@ -635,6 +635,13 @@ pub struct Capture {
     /// 认窗那一份快照（REQ-108）。`None` = 这一轮还没问过系统；帧循环在遮罩开的第一帧
     /// 问一次就存进来，之后整段不再问（画面已冻结，问第二遍只会认出图里不存在的窗）。
     pub windows: Option<std::sync::Arc<crate::system::windows::Snapshot>>,
+    /// 这一轮冻结的号（= 回信那个 `request_id`）。**纹理缓存靠它认"这是新一轮的像素"**。
+    ///
+    /// 缺陷 D-41：缓存原先只按"哪块屏 + 多大"认，而同一块屏每轮抓出来尺寸都一样，
+    /// 于是第二轮之后的遮罩把**上一轮**那张定格画面当背景显示（真机读数：遮罩里菜单栏
+    /// 那颗钟停在 20:28，而这一刻是 20:51）。裁出去的那张倒是新像素——**所见非所得**，
+    /// 比整张都旧更糟，因为用户在框他看不见的东西。
+    pub frozen_id: RequestId,
 }
 
 /// 原生抬层与激活重下的帧数上限。之后不再下发（见 `Capture::push_frames`）。
@@ -1590,6 +1597,7 @@ impl AppState {
             .collect();
         let screens = frames.len();
         self.capture = Some(Capture {
+            frozen_id: id,
             frames,
             screen: 0,
             sel: crate::system::selection::Selection::fresh(),
@@ -2944,6 +2952,70 @@ mod tests {
             unreachable!()
         };
         assert!(hidden.root_was_hidden);
+    }
+
+    /// **每一轮冻结都带自己的号**，纹理缓存认的就是这一格（缺陷 D-41 的形状核查）。
+    ///
+    /// 真机读数：第二次之后的遮罩把**上一轮**那张定格画面当背景显示（菜单栏那颗钟停在
+    /// 20:28，而这一刻是 20:51），裁出去的那张却是新像素——用户在框他看不见的东西，
+    /// 比整张都旧更难查。病因是缓存拿"哪块屏 + 多大"当内容的凭证，而同一块屏每轮尺寸都一样。
+    #[test]
+    fn each_capture_carries_its_own_generation_for_the_texture_cache() {
+        let frame = |display: u8| Freeze {
+            display,
+            points: Vec2::new(1920.0, 1080.0),
+            appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
+            origin: Pos2::ZERO,
+            image: Arc::new(image::RgbaImage::from_pixel(
+                16,
+                16,
+                image::Rgba([7, 7, 7, 255]),
+            )),
+        };
+        let mut st = capture_state();
+        let first = st.submit_capture(two_screens()).expect("第一次该发得出");
+        // 号从派发出的那条任务里取（两条路都认，切换派发口时这条测试不许只有一支能过）
+        let (Job::ScreenCapture { id: id1, .. } | Job::Freeze { id: id1, .. }) = &first else {
+            unreachable!()
+        };
+        let id1 = *id1;
+        st.apply_frozen(id1, vec![frame(1)]);
+        assert_eq!(
+            st.capture.as_ref().expect("冻结已落地").frozen_id,
+            id1,
+            "这一轮的号就是回信那个 request_id"
+        );
+
+        // 上一轮取消落地之后再来一次：号必须换，缓存才认得出"这是新一轮的像素"
+        st.end_capture(CaptureStage::Cancelled);
+        let second = st
+            .submit_capture(two_screens())
+            .expect("上一次落地之后该再发得出");
+        let (Job::ScreenCapture { id: id2, .. } | Job::Freeze { id: id2, .. }) = &second else {
+            unreachable!()
+        };
+        let id2 = *id2;
+        st.apply_frozen(id2, vec![frame(1)]);
+        let second_gen = st.capture.as_ref().expect("第二轮也冻结了").frozen_id;
+        assert_eq!(second_gen, id2);
+        assert_ne!(second_gen, id1, "两轮同号 = 缓存会把上一轮的画面留下来");
+
+        // 代码形状：纹理那一处不许再拿尺寸当内容的凭证。
+        // 这一格只读 `freeze_texture` 自己那一段——`app.rs` 里 `#[cfg(test)]` 也出现在结构体字段
+        // 与语句上，拿"截到第一个 cfg(test) 之前"那种整文件读法会把它后面的真代码一起切掉。
+        let source = include_str!("app.rs");
+        let from = source
+            .find("fn freeze_texture")
+            .expect("纹理那一处得有个出处");
+        let body = &source[from..source.len().min(from + 1600)];
+        assert!(
+            body.contains("old_gen == frozen_id"),
+            "缓存必须认这一轮的号，而不是认像素尺寸"
+        );
+        assert!(
+            !body.contains("size[0] == w"),
+            "尺寸一样不等于内容一样：同一块屏每轮抓出来尺寸都一样"
+        );
     }
 
     /// **确认之后钉回原地**（CHG-009 REQ-001 那句"选完**原地**钉成一张浮在屏幕上的图"）。
