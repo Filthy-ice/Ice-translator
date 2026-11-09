@@ -55,6 +55,27 @@ pub fn clamp_to_screen(rect: Rect, screen: Rect) -> Rect {
     Rect::from_min_max(Pos2::new(a.min(c), b.min(d)), Pos2::new(a.max(c), b.max(d)))
 }
 
+/// 读系统的在线窗口表（`CGWindowListCopyWindowInfo`）——**这一步还没接上**。
+///
+/// 2026-11-09 深夜试过一版：`core-graphics` 那张表交回来的是**无类型**的
+/// `CFArray<*const c_void>`，元素要按 `CFDictionary<CFString, CFType>` 再取
+/// `kCGWindowBounds` 那个**嵌套字典**里的 X/Y/Width/Height；core-foundation 0.10 的
+/// `ItemRef` 不直接给 `get`，得自己按规则包装。第一版在这里连续撞三类签名问题
+/// （`let-else` 闭包、turbofish 的 `>>`、`ItemRef::get`），当场放弃 —— 不拿一段
+/// 半通的 FFI 提交进你的待批队列，也不留一个坏树。
+///
+/// 下一步按这个顺序做：先只读**层级与归属**（都是顶层键，一条 CFNumber/CFString）
+/// 把候选顺序跑通，再单独加 bounds 的嵌套取值；每一步都用真表跑一次、打印读数核对。
+#[cfg(target_os = "macos")]
+pub fn read() -> Vec<Entry> {
+    Vec::new()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn read() -> Vec<Entry> {
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
