@@ -48,7 +48,7 @@
     },
     {
       "id": "T-005",
-      "title": "新建 `crates/ice-app/src/system/cover.rs`：那一次**原生抬层与对位**的唯一出处——在主线程按标题找到遮罩那扇 `NSWindow`，`setLevel(NSMainMenuWindowLevel+1)` 后 `setFrame(该屏 frame)`，**再把 AppKit 实际给的矩形读回来**交给选区层当坐标基准；拿不到窗/不在主线程/非 mac 一律返回 false，调用方退回「只有可用区被盖住」那一档并**在界面说一句**，不许静默当成功。复用 `system/window.rs` 取窗口的路（`objc2-app-kit` 已在依赖里，零新增 crate 名）；探针三轮读数就是这条的验收底：`bounds=0,63,1920x953` → 只改尺寸 `0,31,1920x1080` → 抬层 `layer=25 bounds=0,0,1920x1080`",
+      "title": "新建 `crates/ice-app/src/system/cover.rs`：那一次**原生抬层与对位**的唯一出处——在主线程按标题找到遮罩那扇 `NSWindow`，`setLevel(NSMainMenuWindowLevel+1)` 后 `setFrame(该屏 frame)`，**再把 AppKit 实际给的矩形读回来**交给选区层当坐标基准；拿不到窗/不在主线程/非 mac 一律返回 false，调用方退回「只有可用区被盖住」那一档并**在界面说一句**，不许静默当成功。复用 `system/window.rs` 取窗口的路（`objc2-app-kit` 已在依赖里，零新增 crate 名）；探针三轮读数就是这条的验收底：`bounds=0,63,1920x953` → 只改尺寸 `0,31,1920x1080` → 抬层 `layer=25 bounds=0,0,1920x1080`。**同一处也要服务贴图窗**（缺陷 D-30：贴图是 layer 3、Dock 是 20，钉在屏幕下缘会被盖住一截）——抬层入口收一个「要盖住整屏」的窗口列表，遮罩与贴图都从这一处走，不许为贴图再写第二处 `setLevel`；验收按 D-29 那条口径在**同一扇贴图窗**上把「带子点得到 / 右键弹得出 / esc 与空格收得到 / 按住仍能拖窗 / 不再被 Dock 盖」五件一次验完",
       "requirements": [
         "REQ-101",
         "REQ-102"

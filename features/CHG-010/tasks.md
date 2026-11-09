@@ -1,5 +1,5 @@
 Change: CHG-010
-Version: v0.3
+Version: v0.4
 Spec-Hash: UNAPPROVED
 
 # Tasks（由 tasks.json 生成，勿直接修改）
@@ -7,7 +7,7 @@ Spec-Hash: UNAPPROVED
 - [ ] T-002 新建 `crates/ice-app/src/system/selection.rs` 的纯函数段：选区状态机 `Idle → Dragging → Ready → Confirmed/Cancelled`、一次按下落在哪（空白 / 框内 / 八个把手里的哪一个）的**唯一一处**判定、改大小与移动后夹在**那块屏**的矩形内、尺寸读数（宽 × 高）、动作条上下翻转的几何。**输入一律是「这块屏的矩形 + 一个点」，不许假设原点总是 0,0**——他机器上第二块屏是 `1920×1200` 挂在 `(-1920,-120)`，负偏移那条要进用例 | ice-translator | REQ-102
 - [ ] T-003 `capture.rs` 的 mac 分支换实现：子进程参数从交互框选改为静默整屏那一条（同一个二进制、同一处字面量出处，本包 V-004 那条静态核查仍然成立）；`Outcome` 不再由「文件是否出现」推断，取消/确认由调用方（选区层）直接给；`Failure` 的类别与那句能行动的话保持原样，抓屏失败 SHALL NOT 打开一扇空白遮罩；非 mac 分支与 `capability()` 那一处判定一字不动 | ice-translator | REQ-101, REQ-106, REQ-107
 - [ ] T-004 遮罩窗与顺序接线：`Job::ScreenCapture` 那一步在 `spawn_blocking` 里抓整屏、回信把冻结帧的**像素**交回帧循环；`app.rs` 按「收起自家窗 → 抓整屏 → 立刻放回 → 开遮罩 → 抬层读回几何」五段接线；**每块屏一扇遮罩**（屏幕表来自既有的 `NSScreen` 那一条路，不新开原生面；两块屏的 `visibleFrame` 缺口不同，事实 15，不许套同一组常量）；`CaptureStage` 加 `Selecting` 与 `Selected` 两态；压暗与出图用整屏一张冻结图 + 选区那块按原亮度重画（**uv 是归一化 0..1**，事实 13 那一处自纠错落成一条断言）；SHALL NOT 用透明窗口、鼠标穿透，也 SHALL NOT 用 `Fullscreen(true)` | ice-translator | REQ-101, REQ-102
-- [ ] T-005 新建 `crates/ice-app/src/system/cover.rs`：那一次**原生抬层与对位**的唯一出处——在主线程按标题找到遮罩那扇 `NSWindow`，`setLevel(NSMainMenuWindowLevel+1)` 后 `setFrame(该屏 frame)`，**再把 AppKit 实际给的矩形读回来**交给选区层当坐标基准；拿不到窗/不在主线程/非 mac 一律返回 false，调用方退回「只有可用区被盖住」那一档并**在界面说一句**，不许静默当成功。复用 `system/window.rs` 取窗口的路（`objc2-app-kit` 已在依赖里，零新增 crate 名）；探针三轮读数就是这条的验收底：`bounds=0,63,1920x953` → 只改尺寸 `0,31,1920x1080` → 抬层 `layer=25 bounds=0,0,1920x1080` | ice-translator | REQ-101, REQ-102
+- [ ] T-005 新建 `crates/ice-app/src/system/cover.rs`：那一次**原生抬层与对位**的唯一出处——在主线程按标题找到遮罩那扇 `NSWindow`，`setLevel(NSMainMenuWindowLevel+1)` 后 `setFrame(该屏 frame)`，**再把 AppKit 实际给的矩形读回来**交给选区层当坐标基准；拿不到窗/不在主线程/非 mac 一律返回 false，调用方退回「只有可用区被盖住」那一档并**在界面说一句**，不许静默当成功。复用 `system/window.rs` 取窗口的路（`objc2-app-kit` 已在依赖里，零新增 crate 名）；探针三轮读数就是这条的验收底：`bounds=0,63,1920x953` → 只改尺寸 `0,31,1920x1080` → 抬层 `layer=25 bounds=0,0,1920x1080`。**同一处也要服务贴图窗**（缺陷 D-30：贴图是 layer 3、Dock 是 20，钉在屏幕下缘会被盖住一截）——抬层入口收一个「要盖住整屏」的窗口列表，遮罩与贴图都从这一处走，不许为贴图再写第二处 `setLevel`；验收按 D-29 那条口径在**同一扇贴图窗**上把「带子点得到 / 右键弹得出 / esc 与空格收得到 / 按住仍能拖窗 / 不再被 Dock 盖」五件一次验完 | ice-translator | REQ-101, REQ-102
 - [ ] T-006 动作条：圆角药丸、恰好四颗（钉住 / 复制 / 保存 / 取消），浮在选区下方、放不下时翻到上方，SHALL NOT 铺满整屏或整幅图宽；复制与保存**复用既有两条接缝**（`clipboard::write_image`、`panel::request_save` + `export::save`），不开第二条实现。四颗的数量与顺序由一处表驱动，菜单与命中区都遍历那张表 | ice-translator | REQ-103
 - [ ] T-007 确认之后：按选区从冻结帧裁剪像素（点 → 物理像素的换算**只在这一处**，且用的是抬层后读回来的那块矩形）→ 落历史目录（沿用 7 天 / 200 张双上限与一键清除）→ 走 CHG-009 的贴图链（钉住 → 只识别 → 人按那颗「翻译」）。**确认之前目录里一个新文件都不许多出来**（本包最容易写错的一条，单独一条断言锁住）；一次截图进行中 SHALL NOT 再开第二次 | ice-translator | REQ-104, REQ-102
 - [ ] T-008 取消与失败什么都不留：三个入口（esc / 点遮罩外 / 点「取消」）**汇到同一个出口**，不写历史、不建贴图、不改图片页任何东西、**每扇遮罩都关掉**（多屏就是多扇）；取消时 SHALL NOT 去「还原层级」（遮罩当场销毁，层级跟着没了），也 SHALL NOT 碰主窗的置顶档。esc 那一格的机制已由事实 16 定死（开关是应用激活，且激活约 0.15 秒才落地，发一次不许当成功）：默认不激活 ⇒ 提示语只说点取消、界面不许把 esc 写成承诺；他若选激活那一档（Q-006），实现要下一帧核对 `isActive`/`isKeyWindow`。同时把 F3「固定」的落点接上 `CaptureStage::Selected` | ice-translator | REQ-105, REQ-106

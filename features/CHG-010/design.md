@@ -13,7 +13,7 @@ Spec-Hash: UNAPPROVED
 | 文件 | 动作 | 内容 |
 |---|---|---|
 | `crates/ice-app/src/system/selection.rs` | **新建** | 选区层的全部：每屏一块的遮罩表、选区状态机（`Idle → Dragging → Ready → Confirmed/Cancelled`）、八个把手的命中、点↔像素换算、夹取。**几何与状态机全是纯函数**（输入是"这块屏的矩形 + 一个点"），能无头断言；只有"开遮罩窗""读鼠标事件""抬层"落在原生那一侧 |
-| `crates/ice-app/src/system/cover.rs` | **新建** | 那一次原生抬层与对位的唯一出处：按标题在主线程找到遮罩那扇 `NSWindow` → `setLevel(NSMainMenuWindowLevel+1)` → `setFrame(该屏 frame)` → **把 AppKit 实际给的矩形读回来**交给选区层。非 mac 恒 `false`。复用 `system/window.rs` 那条取窗口的路（`objc2-app-kit` 已在依赖里，**零新增 crate 名**）|
+| `crates/ice-app/src/system/cover.rs` | **新建** | 那一次原生抬层与对位的**唯一出处**（遮罩窗与贴图窗共用，缺陷 D-30）：按标题在主线程找到那扇 `NSWindow` → `setLevel(NSMainMenuWindowLevel+1)` → `setFrame(该屏 frame)` → **把 AppKit 实际给的矩形读回来**交给选区层。非 mac 恒 `false`。复用 `system/window.rs` 那条取窗口的路（`objc2-app-kit` 已在依赖里，**零新增 crate 名**）|
 | `crates/ice-app/src/system/capture.rs` | 改 | mac 分支从"跑 `screencapture -i`"换成"跑 `screencapture -x -o <临时路径>` 抓整屏"（同一个二进制、同一处字面量出处，CHG-009 的 V-005 那条静态核查在本包由 V-004 接手，仍然成立）；`Outcome` 的三态不再由"文件是否出现"推断，改由调用方（选区层）直接给。**`capability()` 那一处判定不动** |
 | `crates/ice-app/src/state.rs` | 改 | 截图段新增两态：`CaptureStage::Selecting`（遮罩开着，用户正在框）与 `CaptureStage::Selected`（已确认、还没钉住——F3「固定」的落点就在这格）。贴图/识别/翻译那三段一字不动 |
 | `crates/ice-app/src/jobs.rs` | 改 | 抓整屏那一步走 `spawn_blocking`（80～150 毫秒的阻塞式子进程，不许在帧循环里等，沿用事实 12 那条纪律）；回信把冻结帧的**像素**交回帧循环 |
@@ -38,7 +38,9 @@ Spec-Hash: UNAPPROVED
 
 **8. 每块屏一扇遮罩，两块屏的缺口本来就不一样大。** 事实 15：第二扇遮罩开在左边那块屏上，同样要先被夹成 `-1920,-120,1920x1137`、再靠抬层与对位才拿到 `layer=25 bounds=-1920,0,1920x1200`。两条写法约束由此而来：① **抬层与对位那一步要按"这一块屏"做**，SHALL NOT 拿主屏那组常量（上让 31、下让 64）去套第二块屏——第二块屏的 `visibleFrame` 就等于 `frame`，它上面没有菜单栏可让；② 位置给的是**全局点坐标**，负 x 直接用（与 CHG-009 事实 34 那条"副屏在左、负 x 不是 bug"对上），但**读回来的也必须是被夹之前的那一个来源**（`ViewportInfo::outer_rect`），换算与命中都从它推。
 
-**9. 动作条复用既有接缝**：复制走 `clipboard::write_image`、保存走 `panel::request_save` + `export::save`，与本包之外的那两条链共用同一把函数（CHG-009 的"复用而不是新造"原样继承）。
+**9. 同一处抬层也管贴图窗（缺陷 D-30）。** 事实 8 那组层级读数不是遮罩独有的：贴图窗同样是 `layer=3`，Dock 是 `layer=20`，所以钉到屏幕下缘的贴图会被 Dock 盖住一截。抬层入口因此收一个"要盖住整屏"的窗口列表，遮罩与贴图都从这一处走，**不开第二处 `setLevel`**；验收按事实 4 的口径在**同一扇贴图窗**上把点击、右键、esc、空格、拖窗、不被 Dock 盖这六件一次验完（D-29 就是这么犯的，别再犯第三次）。
+
+**10. 动作条复用既有接缝**：复制走 `clipboard::write_image`、保存走 `panel::request_save` + `export::save`，与本包之外的那两条链共用同一把函数（CHG-009 的"复用而不是新造"原样继承）。
 
 ## 取证结果（批准前跑完，2026-11-09 三轮，仓外 `/tmp/sel_poc`）
 
