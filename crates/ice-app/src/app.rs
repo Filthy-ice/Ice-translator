@@ -1324,7 +1324,6 @@ impl IceApp {
                     points: frame.points,
                     texture: freeze_texture(ctx, frame),
                 },
-                capture.sel,
             );
             // 抬层每帧幂等重下：实测 AppKit 与窗口服务器会短时不一致，
             // 而且框架自己也会按 viewport 设置重摆这扇窗（与 D-26/D-27 同族）
@@ -1369,47 +1368,70 @@ impl IceApp {
     ) {
         use crate::system::selection::MaskOut;
         match out {
-            MaskOut::Select { screen, sel } => self.state.apply_selection(screen, sel),
-            MaskOut::Cancel => {
-                // 什么都不留：不写历史、不建贴图、临时文件早删过了（REQ-105）
-                self.state
-                    .end_capture(crate::state::CaptureStage::Cancelled);
-            }
-            MaskOut::Pin => {
-                if let Some(path) = self.confirm_capture() {
-                    self.state.pin_confirmed_capture(path);
+            // 确认三兄弟：都带"哪块屏 + 那个框"，主窗不再猜（上一版猜过一次就串了屏）
+            MaskOut::Confirm { display, rect } => {
+                tracing::info!("遮罩：对勾确认");
+                if self.focus_capture(display, rect) {
+                    self.confirm_capture();
                 }
             }
-            MaskOut::Copy => {
-                if let Some(path) = self.confirm_capture() {
-                    self.state.confirm_capture(path.clone());
-                    effects.copy_shot = Some(path);
-                }
-            }
-            MaskOut::Save => {
-                if let Some(path) = self.confirm_capture() {
-                    self.state.confirm_capture(path.clone());
-                    // 面板只把名字交回来，落盘等回信；与图片页/贴图那两条共用同一个回信通道
-                    let name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "截图.png".to_string());
-                    if crate::system::panel::request_save(
-                        &self.save_tx,
-                        ctx,
-                        &name,
-                        &crate::system::panel::SAVE_TYPES,
-                    ) {
-                        self.pending_save = PendingSave::Shot(path);
-                    } else {
-                        self.state.toast(
-                            Tone::Error,
-                            "这台机器弹不出系统保存面板；可以用「复制」再粘到别处",
-                        );
+            MaskOut::ConfirmCopy { display, rect } => {
+                tracing::info!("遮罩：复制");
+                if self.focus_capture(display, rect) {
+                    let path = self.confirm_capture();
+                    if let Some(path) = path {
+                        effects.copy_shot = Some(path);
                     }
                 }
             }
+            MaskOut::ConfirmSave { display, rect } => {
+                tracing::info!("遮罩：保存");
+                if self.focus_capture(display, rect) {
+                    if let Some(path) = self.confirm_capture() {
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "截图.png".to_string());
+                        if crate::system::panel::request_save(
+                            &self.save_tx,
+                            ctx,
+                            &name,
+                            &crate::system::panel::SAVE_TYPES,
+                        ) {
+                            self.pending_save = PendingSave::Shot(path);
+                        } else {
+                            self.state.toast(
+                                Tone::Error,
+                                "这台机器弹不出系统保存面板；可以用「复制」再粘到别处",
+                            );
+                        }
+                    }
+                }
+            }
+            MaskOut::Cancel => {
+                tracing::info!("遮罩：取消");
+                self.state
+                    .end_capture(crate::state::CaptureStage::Cancelled);
+            }
         }
+    }
+
+    /// 把"哪块屏 + 那个框"记进这次截图，好让裁剪知道去哪张图上裁。
+    /// 屏序号找不到就是遮罩与冻结帧对不上号 —— 那必须说，不许悄悄裁第一块屏。
+    fn focus_capture(&mut self, display: u8, rect: egui::Rect) -> bool {
+        let Some(capture) = self.state.capture.as_mut() else {
+            return false;
+        };
+        let Some(index) = capture.frames.iter().position(|f| f.display == display) else {
+            tracing::warn!("遮罩交来的屏序号不在这次的冻结帧里");
+            return false;
+        };
+        capture.screen = index;
+        let Some(field) = capture.field() else {
+            return false;
+        };
+        capture.sel = crate::system::selection::Selection::from_rect(&field, rect);
+        true
     }
 
     /// 确认 = 裁 → **到这里才第一次写盘**（REQ-102：确认之前盘上不许有东西）。

@@ -291,6 +291,14 @@ impl Selection {
         self.grab == Grab::Blank && !self.moved
     }
 
+    /// 外部（遮罩自己算好的）框直接进 `Ready`：确认时主窗用它，不再重算一遍。
+    pub fn from_rect(field: &Field, rect: Rect) -> Selection {
+        let mut sel = Selection::fresh();
+        sel.rect = Some(field.clamp(rect));
+        sel.stage = Stage::Ready;
+        sel
+    }
+
     /// 认出的那扇窗直接成为选区并确认（REQ-108 的"单击就走"）。
     pub fn take_window(&mut self, field: &Field, rect: Rect) -> Stage {
         self.rect = Some(field.clamp(rect));
@@ -732,15 +740,15 @@ mod tests {
 /// 键、按钮、右键若各写一套，出的就是"点按钮有效、按键没反应"那类只对一半的缺陷。
 #[derive(Debug, Clone, PartialEq)]
 pub enum MaskOut {
-    /// 这一帧的按下/拖动改写了选区。带屏序号：**选区只在那一块屏内**（Q-004）
-    Select { screen: usize, sel: Selection },
-    /// 动作条那颗「钉住」或回车：确认 = 裁 → 落盘 → 走贴图链
-    Pin,
-    /// 动作条那颗「复制」：确认但不钉（F3「固定」的落点就是这一档）
-    Copy,
-    /// 动作条那颗「保存」：同上，走原生保存面板那条既有接缝
-    Save,
-    /// esc 或动作条那颗「取消」：什么都不留
+    /// 按对勾 / 回车 / 复制 / 保存：把这扇窗自己的选区交出去确认（点=那块屏的本地点坐标）。
+    /// **选区状态不再回传主窗**——上一版每帧回传，两扇子窗都在往同一格写，
+    /// 结果就是"拖动一闪一闪"和"在左边拖、右边的旧框自己跳出来"（用户 2026-11-09 晚原话）。
+    Confirm { display: u8, rect: Rect },
+    /// 复制那颗：同样先确认，差别在落点（钉住 vs 只写剪贴板）
+    ConfirmCopy { display: u8, rect: Rect },
+    /// 保存那颗
+    ConfirmSave { display: u8, rect: Rect },
+    /// esc 或点空白：什么都不留
     Cancel,
 }
 
@@ -751,6 +759,13 @@ pub fn mask_title(display: u8) -> String {
 
 fn slot_key(display: u8) -> Id {
     Id::NULL.with("ice-selection.mask.slot").with(display)
+}
+
+/// 这扇遮罩自己的选区状态存在根上下文的 data 里，**按屏编号分开**。
+/// 放这里而不是放 `AppState`：只有画它的那一帧会读写它，绕一圈主窗就会看到旧值（闪），
+/// 而两扇窗同时写一份更会串（左屏拖动、右屏旧框跳出来）。
+fn sel_key(display: u8) -> Id {
+    Id::NULL.with("ice-selection.mask.sel").with(display)
 }
 
 fn viewport_of(display: u8) -> egui::ViewportId {
@@ -802,10 +817,12 @@ pub struct MaskScreen {
 /// 压暗 = **整屏一张冻结图乘一个暗档**，选区那块再按原亮度重画一遍。
 /// 这里刻意不用透明窗口、不用鼠标穿透：那两个属性正是 D-29 那次吞掉全部点击与键盘的元凶，
 /// 而乘暗这一条路在探针里逐点核对过（红 `(220,30,30)` → `(99,13,13)`）。
-pub fn show(ctx: &egui::Context, screen: &MaskScreen, sel: Selection) {
-    let viewport = viewport_of(screen.display);
+pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
+    // `-D` 的序号。闭包要 `'static`，所以一进来就按值带走
+    let display = screen.display;
+    let viewport = viewport_of(display);
     let builder = egui::ViewportBuilder::default()
-        .with_title(mask_title(screen.display))
+        .with_title(mask_title(display))
         .with_decorations(false)
         .with_transparent(false)
         .with_has_shadow(false)
@@ -817,13 +834,20 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen, sel: Selection) {
 
     let texture = screen.texture;
     let points = screen.points;
+    // 闭包要 'static：把这一帧要用的三个数**按值**带走，不带引用
+
     let index = screen.screen;
     let root = ctx.clone();
-    let slot = slot_of(ctx, screen.display);
+    let slot = slot_of(ctx, display);
 
     ctx.show_viewport_deferred(viewport, builder, move |ui, _class| {
         let child = ui.ctx().clone();
         let field = Field::new(Rect::from_min_size(Pos2::ZERO, points), points);
+        // 这一扇窗自己的选区：**读写都在这一帧里完成**，不绕主窗一圈
+        let mut next = ui.ctx().data(|d| {
+            d.get_temp::<Selection>(sel_key(display))
+                .unwrap_or_default()
+        });
         let full = ui.max_rect();
         // 整屏压暗
         ui.painter().image(
@@ -833,7 +857,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen, sel: Selection) {
             egui::Color32::from_rgb(DIM, DIM, DIM),
         );
         // 选区那块按原亮度 + 白边 + 八个把手
-        if let Some(rect) = sel.rect {
+        if let Some(rect) = next.rect {
             let uv = Rect::from_min_max(
                 Pos2::new(rect.min.x / points.x, rect.min.y / points.y),
                 Pos2::new(rect.max.x / points.x, rect.max.y / points.y),
@@ -870,7 +894,10 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen, sel: Selection) {
                         key: egui::Key::Enter,
                         pressed: true,
                         ..
-                    } => Some(MaskOut::Pin),
+                    } => next.rect.map(|rect| MaskOut::Confirm {
+                        display: display,
+                        rect,
+                    }),
                     _ => None,
                 })
                 .collect()
@@ -882,33 +909,33 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen, sel: Selection) {
             root.request_repaint();
         }
 
-        // 鼠标：按下落在哪 → 拖动 → 抬起。这一帧算出的新状态原样交回（`Selection` 是 Copy）
+        // 鼠标：按下落在哪 → 拖动 → 抬起。**状态就在这一扇窗自己身上读写**，
+        // 不经过主窗一圈（上一版经过，于是"拖了没框"、"一闪一闪"、"左屏拖右屏跳框"）
+        let mut next = ui.ctx().data(|d| {
+            d.get_temp::<Selection>(sel_key(display))
+                .unwrap_or_default()
+        });
         let pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
         let here = ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO);
-        let mut next = sel;
         let mut changed = false;
         if pressed {
             next.press(&field, here, HANDLE_RADIUS);
             changed = true;
         } else if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
+            let before = next.rect;
             next.drag(&field, here);
-            changed = true;
+            changed = next.rect != before;
         }
         if released {
             next.release(&field, here);
             changed = true;
         }
         if changed {
-            if let Ok(mut queue) = slot.lock() {
-                queue.push(MaskOut::Select {
-                    screen: index,
-                    sel: next,
-                });
-            }
-            // **这一句是 D-32 的正解**。选区存在主窗那侧，而指针事件只叫醒这扇子窗：
-            // 不叫主窗，主循环就停在"上一次画出来的那一帧"，于是按下/拖动算了半天
-            // 也没人把结果写回去 —— 用户看到的就是"鼠标拖了，什么框都没有"。
+            ui.ctx().data_mut(|d| d.insert_temp(sel_key(display), next));
+        }
+        // 抬起之后没有再动，就不再要帧（否则空转）
+        if ui.input(|i| i.pointer.is_moving()) {
             root.request_repaint();
         }
 
@@ -934,10 +961,22 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen, sel: Selection) {
                         // 承担。图标全是**线稿**，不用字符（本仓出过字符显示成方块的缺陷）。
                         for icon in BAR_ICONS {
                             if icon_button(ui, icon).clicked() {
-                                let out = match icon {
-                                    BarIcon::Check => MaskOut::Pin,
-                                    BarIcon::Copy => MaskOut::Copy,
-                                    BarIcon::Save => MaskOut::Save,
+                                // 确认必须带上**这扇窗自己的框**：主窗不用再猜是哪块屏
+                                let out = match (icon, next.rect) {
+                                    (BarIcon::Check, Some(rect)) => MaskOut::Confirm {
+                                        display: display,
+                                        rect,
+                                    },
+                                    (BarIcon::Copy, Some(rect)) => MaskOut::ConfirmCopy {
+                                        display: display,
+                                        rect,
+                                    },
+                                    (BarIcon::Save, Some(rect)) => MaskOut::ConfirmSave {
+                                        display: display,
+                                        rect,
+                                    },
+                                    // 还没框就先不响应：不猜一个全屏框给用户，那比不响应更糟
+                                    _ => continue,
                                 };
                                 if let Ok(mut queue) = slot.lock() {
                                     queue.push(out);
