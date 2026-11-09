@@ -1817,10 +1817,12 @@ fn pin_band_line(pin: &crate::state::Pin) -> Option<String> {
         parts.push(pin.translate_stage.label());
     }
     if pin.text_ready() {
+        // 这句要短：带子只有 34pt 高、宽度跟着图走，窄图上长句会被裁掉。
+        // "怎么拖选"那句挪到悬停提示里（`pin::show` 那一处），这里只说"按 C 会给什么"。
         parts.push(if pin.selected.is_empty() {
-            "Shift 拖选文字 · 按 C 复制这张图".to_string()
+            "按 C 复制这张图".to_string()
         } else {
-            format!("已选中 {} 段 · 按 C 复制文字", pin.selected.len())
+            format!("已选 {} 段 · 按 C 复制文字", pin.selected.len())
         });
     }
     if parts.is_empty() {
@@ -4487,12 +4489,14 @@ mod tests {
         pin.document = Some(crate::system::pin::probe_document());
         pin.stage = crate::state::RecognitionStage::Done { blocks: 2 };
         let line = pin_band_line(pin).unwrap();
-        assert!(line.contains("按 C 复制这张图"), "{line}");
-        assert!(line.contains("Shift"), "那一次拖选的手势要写出来：{line}");
+        assert_eq!(
+            line, "完成 2 块 · 按 C 复制这张图",
+            "带子那格要短，长句在窄图上会被裁：{line}"
+        );
 
         pin.selected = vec![0, 1];
         let line = pin_band_line(pin).unwrap();
-        assert!(line.contains("已选中 2 段 · 按 C 复制文字"), "{line}");
+        assert_eq!(line, "完成 2 块 · 已选 2 段 · 按 C 复制文字", "{line}");
 
         pin.selected = Vec::new();
         pin.stage = crate::state::RecognitionStage::NoText;

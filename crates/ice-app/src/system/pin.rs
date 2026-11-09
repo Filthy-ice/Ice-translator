@@ -590,9 +590,10 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
                 |ui| {
                     band_buttons(ui, &mut local);
                     if let Some(line) = band_line.as_deref() {
-                        // 同一行的右半边：这张自己的进度。六张贴图各说各的，不共用一条
+                        // 同一行的右半边：这张自己的进度 + 现在按 `C` 会给什么。六张各说各的。
+                        // "怎么拖选"这句放在悬停里——带子宽度跟着图走，长句在窄图上会被裁掉。
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(line);
+                            ui.label(line).on_hover_text(TEXT_LAYER_TIP);
                         });
                     }
                 },
@@ -616,6 +617,9 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
 pub fn default_save_name(id: u64) -> String {
     format!("\u{8d34}\u{56fe}-{id}.png")
 }
+
+/// 悬停在那句进度上时给的那句手势说明。
+const TEXT_LAYER_TIP: &str = "按住 Shift 在字上拖可多选几行；在空白处拖一下则取消选中";
 
 /// 测试夹具：一块 1000×400 像素的文档，上下两行可读文字（id 0 与 1）。
 /// 贴图文字层的用例（本模块与 `app.rs`）都从这里造，不各写一份字段。
