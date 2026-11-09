@@ -274,6 +274,43 @@ pub fn capture(_dir: &Path, _seq: u64) -> Outcome {
     Outcome::Unsupported
 }
 
+/// 把一张**内存里的图**写进历史目录，并按双上限老化。**这是"确认之后才落盘"的唯一入口**
+/// （CHG-010 REQ-102/104：一次没确认的框选，盘上不许留任何东西）。
+///
+/// 为什么由我们写而不是让工具写：工具的 `-i` 那一档是"它自己挑路径写文件"，而自绘遮罩拿到的
+/// 是内存里的一块像素，落盘点必须由我们定名——顺便把"文件名里没有用户内容"这条老纪律
+/// （REQ-008，日志与文案都不许出现文件名）继续锁在 `file_name` 那一处。
+///
+/// 顺序是有意义的：**先建目录、再算名字、才写**。目录建不起来时先失败，免得白拿一个名字
+/// 却什么都没落。**老化不在这里**——它已经有唯一的出口（帧循环里那一处，跑的是同一对上限
+/// 常量与同一个 `retain`），这里再来一遍就是"两个地方各自删用户的文件"。
+pub fn save_shot(dir: &Path, image: &image::RgbaImage, seq: u64) -> Result<PathBuf, Failure> {
+    std::fs::create_dir_all(dir).map_err(|_| Failure::Unwritable)?;
+    let path = target_path(dir, std::process::id(), now_secs(), seq);
+    if let Err(e) = image.save(&path) {
+        tracing::warn!("截图写不出去：{e}");
+        return Err(Failure::Unwritable);
+    }
+    Ok(path)
+}
+
+/// 抓屏用的**临时**落点：静默抓图也要经一次磁盘（那是系统二进制的接口形状），
+/// 但那份文件不是历史、也不许进历史目录——它只活到解码完成那一瞬（[`purge_temp`] 删掉）。
+pub fn temp_dir() -> PathBuf {
+    std::env::temp_dir().join(format!("ice-translator-frozen-{}", std::process::id()))
+}
+
+/// 删掉这次抓屏留下的临时文件（**每屏一份，全删**；删不掉不报错——那是别人的进程在用的名字，
+/// 我们无权判断，也不能因为一个删不掉的临时文件就说"截图失败"）。
+pub fn purge_temp(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        std::fs::remove_file(entry.path()).ok();
+    }
+}
+
 /// 历史目录的名字。**这个路径不是配置项**：能配就等于能把用户截到的东西配进仓库里，
 /// 隐私边界交出去了（REQ-008）。
 pub const SHOTS_DIR: &str = "shots";
@@ -580,6 +617,54 @@ mod tests {
         } else {
             assert_eq!(outcome, Outcome::Unsupported);
         }
+    }
+
+    /// 确认之后才落盘：**只有这一条路**会往历史目录写文件，写完立刻按双上限老化。
+    #[test]
+    fn a_confirmed_capture_is_the_only_way_into_the_history_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let img = image::RgbaImage::from_pixel(6, 4, image::Rgba([9, 9, 9, 255]));
+        let path = save_shot(dir.path(), &img, 1).expect("能写进去");
+        assert!(path.exists(), "说写完了却没文件");
+        assert_eq!(list(dir.path()).len(), 1);
+        // 名字仍是那三段（pid-自增-epoch），不含用户内容
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with("-1.png")
+        );
+
+        // 写第二张不会动第一张（老化不是这里的活）
+        let img2 = image::RgbaImage::from_pixel(6, 4, image::Rgba([1, 1, 1, 255]));
+        let second = save_shot(dir.path(), &img2, 2).unwrap();
+        assert!(second.exists());
+        assert_eq!(list(dir.path()).len(), 2, "写入这一处不许顺手删别人的截图");
+    }
+
+    /// 目录建不起来（父路径是个普通文件）时报的是**"存不下"**，不是"取消了"也不是"截不出"：
+    /// 那两档的界面话给的是不同的退路，说错了用户会照着做一遍没用的动作。
+    #[test]
+    fn an_unwritable_history_directory_says_so_instead_of_blaming_the_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("a-file").join("shots");
+        std::fs::File::create(dir.path().join("a-file")).unwrap();
+        let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([0, 0, 0, 255]));
+        assert_eq!(save_shot(&blocked, &img, 1), Err(Failure::Unwritable),);
+    }
+
+    /// 临时落点按 pid 分开：两个实例同时截图不许互相删对方的文件。
+    #[test]
+    fn the_freeze_temp_directory_is_per_process() {
+        let dir = temp_dir();
+        assert!(dir.starts_with(std::env::temp_dir()));
+        assert!(
+            dir.to_string_lossy()
+                .contains(&std::process::id().to_string()),
+            "临时目录没带上 pid，两个实例会互删：{dir:?}"
+        );
+        // 不存在时不炸（用户可能一次都没截过就退出）
+        purge_temp(&dir.join("never-created"));
     }
 
     /// 文件名三段都要有：两个实例（pid 不同）在同一秒同一序号也不许撞；

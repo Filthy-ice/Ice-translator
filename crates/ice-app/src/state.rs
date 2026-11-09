@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui::Rect;
+use egui::{Pos2, Vec2};
 use ice_core::config::{Config, UiMode};
 use ice_core::document::{OcrDocument, PixelRect, TextBlock};
 use ice_core::glossary::{Glossary, Term};
@@ -292,6 +293,15 @@ pub enum Job {
         /// 挂在帧循环上不行：窗收起时帧循环根本不跑，还原就永远不会执行
         hidden: capture::Hidden,
     },
+    /// 抓每块屏的冻结帧（CHG-010 REQ-101）。`displays` 是要点名的屏序号（`-D`，1 起）；
+    /// 序号由 `app.rs` 从 `NSScreen` 列表按位置编出来，回信再按它配对（不做缓存，
+    /// 用户当场改分辨率这件事今天实测过）。
+    Freeze {
+        id: RequestId,
+        seq: u64,
+        displays: Vec<u8>,
+        hidden: capture::Hidden,
+    },
     /// 一张贴图自己的"只识别"（REQ-005）。**不带翻译**：那颗「翻译」是人按的。
     /// `gen` 是派发那一刻的代序号，回信原样带回来，对不上就丢弃。
     PinRecognize {
@@ -377,6 +387,9 @@ pub enum Outcome {
         id: RequestId,
         outcome: crate::system::capture::Outcome,
     },
+    /// 冻结帧回来了，按屏一块一张（**临时文件已经在回信之前删掉**）。
+    /// 空表 = 一块都没拿到，与 `ScreenCaptured(Failed)` 同一档处理。
+    Froze { id: RequestId, frames: Vec<Freeze> },
     /// 某张贴图的识别回来了，带着它那一代的序号。
     /// `admitted` 一起带回来：合成要有底图，而**底图必须是入场缩放之后的那一份**——
     /// 现读文件会拿到未缩放的原始像素，回填的坐标就整体错位（CHG-005 那条同量纲规则）
@@ -401,8 +414,13 @@ const MAX_TOASTS: usize = 3;
 pub enum CaptureStage {
     #[default]
     Idle,
-    /// 交互框选已经发起，正在等用户画完（可能两秒，也可能两分钟）
+    /// 抓屏子进程还在飞（CHG-009 那一档"等人画完"的语义已经随系统工具退役，
+    /// 这里只剩"几百毫秒的抓取"，所以这句话不许再写成"在框选里"）
     Capturing,
+    /// 冻结帧拿到了，遮罩开着、用户正在选（CHG-010 REQ-102）
+    Frozen,
+    /// 已确认但还没钉住的那一张（CHG-010 REQ-106：F3「固定」的落点就在这格）
+    Selected,
     /// 拿到图并且钉上了。贴图的细节在 [`AppState::pins`] 里，这一态只说"这一段成功了"
     Pinned,
     /// 工具报错、权限被拒、图坏了——装的是一句能行动的话（`capture` 那侧算好的）
@@ -416,7 +434,9 @@ impl CaptureStage {
     pub fn label(&self) -> Option<&'static str> {
         match self {
             CaptureStage::Idle => None,
-            CaptureStage::Capturing => Some("在框选里…"),
+            CaptureStage::Capturing => Some("正在冻结画面…"),
+            CaptureStage::Frozen => Some("在选区里…"),
+            CaptureStage::Selected => Some("已确认，没钉住"),
             CaptureStage::Pinned => Some("已钉住"),
             // 失败那句已经在 `Failed` 里带着了，这一层不再造第二句
             CaptureStage::Failed(_) => Some("截不出来"),
@@ -427,8 +447,8 @@ impl CaptureStage {
     /// 状态行那一格的颜色档（与另外三段同口径：取消不算坏，只是这一次没往下走）
     pub const fn phase(&self) -> Phase {
         match self {
-            CaptureStage::Capturing => Phase::Busy,
-            CaptureStage::Pinned => Phase::Done,
+            CaptureStage::Capturing | CaptureStage::Frozen => Phase::Busy,
+            CaptureStage::Pinned | CaptureStage::Selected => Phase::Done,
             CaptureStage::Failed(_) => Phase::Bad,
             CaptureStage::Idle | CaptureStage::Cancelled => Phase::Idle,
         }
@@ -545,6 +565,71 @@ impl Pin {
     }
 }
 
+/// 一块屏的冻结帧。**像素只活在遮罩开着这段时间**：确认时裁完就清，取消时整批清
+/// （CHG-010 REQ-102：确认之前盘上不许有东西，那这一份内存就是它唯一的容身之处）。
+#[derive(Clone)]
+pub struct Freeze {
+    /// `-D` 的序号（1 起），与 `system::screen` 那块屏一一对上
+    pub display: u8,
+    /// 那块屏的**点**尺寸（遮罩窗本地坐标就是 0..这一对）
+    pub points: Vec2,
+    /// 那块屏在 AppKit 坐标里的矩形（抬层与对位要用，见 `system::cover`）
+    pub appkit: Rect,
+    /// 抓回来的物理像素
+    pub image: std::sync::Arc<image::RgbaImage>,
+}
+
+impl std::fmt::Debug for Freeze {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 一句"这张有多大"就够日志用了；把像素或路径带进日志是本仓明令禁止的
+        f.debug_struct("Freeze")
+            .field("display", &self.display)
+            .field("points", &self.points)
+            .finish()
+    }
+}
+
+/// 一次"冻结后自选"的进行中状态（CHG-010）。**只在遮罩开着这段时间存在**。
+#[derive(Debug, Clone)]
+pub struct Capture {
+    /// 这次截图的序号，与识别/翻译那三条互不作废（第四条通道的那一条纪律）
+    pub id: RequestId,
+    pub frames: Vec<Freeze>,
+    /// 选区落在第几块屏（`frames` 的下标）。**选区只在这一块屏内**（Q-004）
+    pub screen: usize,
+    /// 那块屏本地坐标里的选区状态机
+    pub sel: crate::system::selection::Selection,
+    /// 抬层那一步这一刻成没成（成=整屏盖住，含菜单栏与 Dock 那两条）。
+    /// 不成也要能继续用，但界面 SHALL 说一句（REQ-101：不许静默当成功）。
+    pub raised: bool,
+}
+
+impl Capture {
+    /// 这次截图当前那块屏的作业面（给纯函数用的 `Field`）。拿不到就是没有选区可算。
+    pub fn field(&self) -> Option<crate::system::selection::Field> {
+        let frame = self.frames.get(self.screen)?;
+        Some(crate::system::selection::Field::new(
+            Rect::from_min_size(Pos2::ZERO, frame.points),
+            frame.px(),
+        ))
+    }
+}
+
+impl Freeze {
+    /// 那份像素的真实尺寸（点尺寸与像素尺寸不一致时，以像素为准——它是裁的对象）。
+    pub fn px(&self) -> Vec2 {
+        Vec2::new(self.image.width() as f32, self.image.height() as f32)
+    }
+
+    /// 这块屏的作业面。
+    pub fn field(&self) -> crate::system::selection::Field {
+        crate::system::selection::Field::new(
+            Rect::from_min_size(Pos2::ZERO, self.points),
+            self.px(),
+        )
+    }
+}
+
 /// 一次截图回信的落点结果，交给帧循环决定要不要开窗与派识别。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureApplied {
@@ -557,6 +642,9 @@ pub enum CaptureApplied {
     Failed(String),
     /// 新建的贴图号。帧循环拿它去开窗（`system::pin::open`）并派"只识别"
     Pinned { pin: RequestId },
+    /// 冻结帧已就位、遮罩该开了。`screens` 是拿到的块数（**少于屏数也算成功**：
+    /// 少一块就是那一屏没盖住，界面说一句，不假装全屏定格了）
+    Frozen { screens: usize },
 }
 
 /// 同时能钉几张。**6 不是能力上限**（本机实测同时钉 8 张各自出图，事实 33），
@@ -887,6 +975,13 @@ pub struct AppState {
     pub compose_mode: CompositeMode,
     /// ---- 截图与贴图（CHG-009 第四条通道） ----
     pub capture_stage: CaptureStage,
+    /// 一次"冻结后自选"的进行中状态（CHG-010）。`None` = 没有遮罩开着。
+    pub capture: Option<Capture>,
+    /// 这一刻遮罩是不是当前键盘窗（帧循环每帧回读）。**一帧一变，不进 `Capture`**：
+    /// 遮罩一关就该忘掉，留着它会让下一次按 esc 被上一轮的判断骗过去
+    pub capture_key: bool,
+    /// 这次要点名抓哪几块屏（`-D` 序号 + 那块屏的点尺寸），回信按它配对
+    capture_screens: Vec<(u8, Rect)>,
     pub capture_request_id: RequestId,
     pub capture_in_flight: Option<RequestId>,
     /// 历史文件名的自增段。**从 1 起**，0 留给"一次都没发过"那个读法
@@ -970,6 +1065,9 @@ impl AppState {
             composed: None,
             compose_mode: CompositeMode::default(),
             capture_stage: CaptureStage::Idle,
+            capture: None,
+            capture_screens: Vec::new(),
+            capture_key: false,
             capture_request_id: 0,
             capture_in_flight: None,
             capture_seq: 0,
@@ -1133,6 +1231,10 @@ impl AppState {
                 ChainOwner::Pin(pin) => self.apply_pin_composed(pin, id, result),
             },
             // 截图与贴图那两条：回信**只改状态**，开窗与派识别发生在帧循环里
+            Outcome::Froze { id, frames } => {
+                self.capture_applied = Some(self.apply_frozen(id, frames));
+                true
+            }
             Outcome::ScreenCaptured { id, outcome } => {
                 self.capture_applied = Some(self.apply_capture(id, outcome));
                 true
@@ -1366,8 +1468,18 @@ impl AppState {
     ///
     /// 一次框选在飞时**不发起第二次**（REQ-001 末句：后到的直接忽略）。这一条不靠
     /// `capture_gate` 的灰按钮兜住，因为热键那一下不经过按钮。
-    pub fn submit_capture(&mut self) -> Option<Job> {
-        if self.capture_in_flight.is_some() {
+    pub fn submit_capture(&mut self, screens: Vec<(u8, Rect)>) -> Option<Job> {
+        if self.capture_gate().is_some() {
+            return None;
+        }
+        if screens.is_empty() {
+            // 一块屏都列不出来：这不是"用户取消了"，是这台机器给不出画面（REQ-101 末句）
+            self.capture_stage = CaptureStage::Failed(
+                capture::Outcome::Failed(capture::Failure::NoPixels)
+                    .explain()
+                    .unwrap_or("截不出画面")
+                    .to_string(),
+            );
             return None;
         }
         self.capture_request_id += 1;
@@ -1375,9 +1487,11 @@ impl AppState {
         self.capture_seq += 1;
         self.capture_in_flight = Some(id);
         self.capture_stage = CaptureStage::Capturing;
-        Some(Job::ScreenCapture {
+        self.capture_screens = screens.clone();
+        Some(Job::Freeze {
             id,
             seq: self.capture_seq,
+            displays: screens.into_iter().map(|(display, _)| display).collect(),
             // 发起前要收起哪些窗，账跟着任务走：子进程结束时由**那条线程**放回来
             hidden: self.capture_hidden_record(),
         })
@@ -1404,12 +1518,140 @@ impl AppState {
         }
     }
 
+    /// 冻结帧回来了。**像素只在这里进状态**，遮罩一关就清（确认之前盘上不许有东西）。
+    ///
+    /// 抓成功的屏按 `submit_capture` 那次给的顺序配回点尺寸；**少几块照样开遮罩**，
+    /// 但把少了几块这件事原样交回界面（REQ-101：不许静默当成功）。
+    pub fn apply_frozen(&mut self, id: RequestId, grabbed: Vec<Freeze>) -> CaptureApplied {
+        if self.capture_in_flight != Some(id) {
+            return CaptureApplied::Stale;
+        }
+        self.capture_in_flight = None;
+        if grabbed.is_empty() {
+            self.capture = None;
+            let text = capture::Outcome::Failed(capture::Failure::NoPixels)
+                .explain()
+                .unwrap_or("截不出画面")
+                .to_string();
+            self.capture_stage = CaptureStage::Failed(text.clone());
+            return CaptureApplied::Failed(text);
+        }
+        let specs = self.capture_screens.clone();
+        let frames: Vec<Freeze> = grabbed
+            .into_iter()
+            .filter_map(|frame| {
+                let (_, appkit) = specs.iter().find(|(d, _)| *d == frame.display)?;
+                Some(Freeze {
+                    points: appkit.size(),
+                    appkit: *appkit,
+                    ..frame
+                })
+            })
+            .collect();
+        let screens = frames.len();
+        self.capture = Some(Capture {
+            id,
+            frames,
+            screen: 0,
+            sel: crate::system::selection::Selection::fresh(),
+            raised: false,
+        });
+        self.capture_stage = CaptureStage::Frozen;
+        CaptureApplied::Frozen { screens }
+    }
+
+    /// 记一下这一刻"抬层成没成"（帧循环每帧回读一次）。它只决定界面上那句
+    /// "菜单栏与 Dock 这一条我没盖住"要不要说（REQ-101 不许静默当成功）。
+    pub fn set_raised(&mut self, raised: bool) {
+        if let Some(capture) = self.capture.as_mut() {
+            capture.raised = raised;
+        }
+    }
+
+    /// 遮罩这一刻是不是当前键盘窗。esc 收不收得到就看它，而它**要一两帧才翻成 true**，
+    /// 所以每帧回读、不许"发一次激活就当成功"。
+    pub fn capture_has_keyboard(&self) -> bool {
+        self.capture_key
+    }
+
+    /// 遮罩那一帧的选区回写。`screen` 是第几块屏——**按下在哪块屏，选区就归哪块**，
+    /// 换屏按下时丢掉旧框（旧框的坐标是另一块屏的本地坐标，留着它会裁到不该裁的地方）
+    pub fn apply_selection(&mut self, screen: usize, sel: crate::system::selection::Selection) {
+        let Some(capture) = self.capture.as_mut() else {
+            return;
+        };
+        if capture.screen != screen {
+            capture.screen = screen;
+        }
+        capture.sel = sel;
+    }
+
+    /// 确认之后：像素从状态里撤掉（一块屏几十 MB，看完就该放），路径留下等钉/等复制。
+    /// 这一格的存在就是 F3「固定」的落点（REQ-106）。
+    pub fn confirm_capture(&mut self, path: PathBuf) {
+        self.capture = None;
+        self.unpinned_capture = Some(path);
+        self.capture_stage = CaptureStage::Selected;
+    }
+
+    /// 钉住遮罩里确认的那一张（走的是与老流程同一条 `pin_from_history`，不开第二条钉图路）
+    pub fn pin_confirmed_capture(&mut self, path: PathBuf) -> Option<RequestId> {
+        self.capture = None;
+        self.pin_from_history(path)
+    }
+
+    /// 正在遮罩里吗。帧循环用它决定要不要每帧重下抬层与激活。
+    pub fn capturing(&self) -> bool {
+        matches!(self.capture_stage, CaptureStage::Frozen)
+    }
+
+    /// 把当前选区裁成一张图（**只在确认之后调**，REQ-102/104）。
+    ///
+    /// 换算只走 `Field::to_pixels` 那一处；拿不到选区、或那块屏的换算不可信（零尺寸、
+    /// 横纵比例分歧），一律 `None` 由调用方说那句"这张没裁出来"——不许裁一张猜测的图。
+    pub fn crop_selection(&self) -> Option<image::RgbaImage> {
+        let capture = self.capture.as_ref()?;
+        let frame = capture.frames.get(capture.screen)?;
+        let field = frame.field();
+        let sel = capture.sel.rect?;
+        let px = field.to_pixels(sel)?;
+        let x = px.x.max(0.0) as u32;
+        let y = px.y.max(0.0) as u32;
+        let w = px.w.max(1.0) as u32;
+        let h = px.h.max(1.0) as u32;
+        let (width, height) = (frame.image.width(), frame.image.height());
+        if x >= width || y >= height {
+            return None;
+        }
+        let cropped = image::imageops::crop_imm(
+            frame.image.as_ref(),
+            x,
+            y,
+            w.min(width - x),
+            h.min(height - y),
+        )
+        .to_image();
+        Some(cropped)
+    }
+
+    /// 遮罩收尾：**两种终点都不留像素在内存里**（那东西一块屏就是几十 MB）。
+    /// `pinned=true` 走"已钉住"，false 走"已取消"，`Selected` 那一格由调用方另设。
+    pub fn end_capture(&mut self, stage: CaptureStage) {
+        self.capture = None;
+        self.capture_stage = stage;
+    }
+
+    /// 已经确认、还没钉住的那一张的路径（F3「固定」的落点，REQ-106）。
+    pub fn confirmed_capture(&self) -> Option<&std::path::PathBuf> {
+        self.unpinned_capture.as_ref()
+    }
+
     pub fn capture_gate(&self) -> Option<&'static str> {
         if !crate::system::capture::capability().capture {
             return Some("这台机器没有可用的框选截图；可先用系统截图再点「粘贴」");
         }
-        if self.capture_in_flight.is_some() {
-            return Some("上一次框选还没画完");
+        if self.capture_in_flight.is_some() || self.capture.is_some() {
+            return Some("上一次截图还没完");
         }
         if self.pins.len() >= PIN_MAX {
             return Some("屏幕上已经钉满 6 张，先 esc 关掉一张");
@@ -2386,6 +2628,21 @@ mod tests {
     }
 
     /// 贴图那一支的识别回信同时带底图与文档（合成用的底图必须是入场那一份）
+    /// 一次截图能点名的屏：给两块（主屏 1920×1080 + 左置 2240×1400，本机实测形状）。
+    /// 测试里不写 `Vec::new()`：那样测的是"一块屏"，而负坐标那块屏才是这包容易错的地方。
+    fn two_screens() -> Vec<(u8, Rect)> {
+        vec![
+            (
+                1,
+                Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
+            ),
+            (
+                2,
+                Rect::from_min_size(Pos2::new(-2240.0, -320.0), Vec2::new(2240.0, 1400.0)),
+            ),
+        ]
+    }
+
     fn pin_doc() -> OcrDocument {
         let mut document = OcrDocument::empty(600, 400);
         document.blocks = vec![TextBlock::new(
@@ -2594,7 +2851,7 @@ mod tests {
     fn the_capture_job_carries_which_windows_to_put_back() {
         fn id_of(job: &Job) -> RequestId {
             match job {
-                Job::ScreenCapture { id, .. } => *id,
+                Job::ScreenCapture { id, .. } | Job::Freeze { id, .. } => *id,
                 other => panic!("派出的必须是截图任务：{other:?}"),
             }
         }
@@ -2602,10 +2859,15 @@ mod tests {
         let mut st = capture_state();
         st.push_pin(PathBuf::from("/tmp/history/a.png"));
         st.push_pin(PathBuf::from("/tmp/history/b.png"));
-        let job = st.submit_capture().expect("空闲时该发得出");
-        let Job::ScreenCapture { hidden, .. } = &job else {
+        let job = st.submit_capture(two_screens()).expect("空闲时该发得出");
+        let Job::Freeze {
+            hidden, displays, ..
+        } = &job
+        else {
             panic!("派出的必须是截图任务：{job:?}");
         };
+        // 两块屏都点名：少一块就是那一块屏的遮罩没画面，"整屏定格"这句在它上面不成立
+        assert_eq!(displays, &vec![1, 2]);
         // 主窗 + 两张贴图，一个都不能漏
         assert_eq!(hidden.viewports.len(), 3);
         assert!(hidden.viewports.contains(&egui::ViewportId::ROOT));
@@ -2616,11 +2878,153 @@ mod tests {
         let first = st.apply_capture(id_of(&job), capture::Outcome::Cancelled);
         assert!(matches!(first, CaptureApplied::Cancelled));
         st.hidden = true;
-        let job = st.submit_capture().expect("上一次落地之后该再发得出");
-        let Job::ScreenCapture { hidden, .. } = &job else {
+        let job = st
+            .submit_capture(two_screens())
+            .expect("上一次落地之后该再发得出");
+        let Job::Freeze { hidden, .. } = &job else {
             unreachable!()
         };
         assert!(hidden.root_was_hidden);
+    }
+
+    /// 遮罩里的三个动作各自落到哪一格（REQ-102/105/106）。
+    /// **取消不许留下选区**：留着它，下一次按 F1 会看见上一个框的残影。
+    #[test]
+    fn cancelling_a_capture_leaves_no_selection_and_no_path() {
+        let mut st = capture_state();
+        st.submit_capture(two_screens()).expect("该发得出");
+        let frames = vec![Freeze {
+            display: 1,
+            points: Vec2::new(1920.0, 1080.0),
+            appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
+            image: Arc::new(image::RgbaImage::from_pixel(
+                1920,
+                1080,
+                image::Rgba([9, 9, 9, 255]),
+            )),
+        }];
+        assert!(matches!(
+            st.apply_frozen(1, frames.clone()),
+            CaptureApplied::Frozen { screens: 1 }
+        ));
+        assert!(st.capturing());
+        assert!(st.crop_selection().is_none(), "还没选就不许裁得出东西");
+
+        st.end_capture(CaptureStage::Cancelled);
+        assert!(st.capture.is_none());
+        assert_eq!(st.capture_stage, CaptureStage::Cancelled);
+        assert!(
+            st.unpinned_capture.is_none(),
+            "取消了就不该有『已确认那张』"
+        );
+
+        // 同一批像素不能既被取消又被钉住
+        assert!(
+            st.pin_confirmed_capture(PathBuf::from("/tmp/x.png"))
+                .is_some()
+        );
+    }
+
+    /// 选区归"按下那一帧所在的那块屏"。换屏按下要丢掉旧框——旧框的坐标是
+    /// 另一块屏的本地坐标，留着它就裁到不该裁的地方（副屏还带负偏移）。
+    #[test]
+    fn a_selection_belongs_to_the_screen_it_was_started_on() {
+        let mut st = capture_state();
+        st.submit_capture(two_screens()).expect("该发得出");
+        let frames = (1..=2u8)
+            .map(|display| Freeze {
+                display,
+                points: Vec2::new(1000.0, 800.0),
+                appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0)),
+                image: Arc::new(image::RgbaImage::from_pixel(
+                    1000,
+                    800,
+                    image::Rgba([1, 1, 1, 255]),
+                )),
+            })
+            .collect();
+        st.apply_frozen(1, frames);
+        let field = st.capture.as_ref().unwrap().field().unwrap();
+        let mut sel = crate::system::selection::Selection::fresh();
+        sel.press(&field, Pos2::new(10.0, 10.0), 10.0);
+        sel.drag(&field, Pos2::new(90.0, 70.0));
+        sel.release(&field, Pos2::new(90.0, 70.0));
+        st.apply_selection(0, sel);
+        assert_eq!(st.capture.as_ref().unwrap().screen, 0);
+        assert_eq!(
+            st.capture.as_ref().unwrap().sel.rect,
+            Some(Rect::from_min_max(
+                Pos2::new(10.0, 10.0),
+                Pos2::new(90.0, 70.0)
+            ))
+        );
+
+        // 换到第二块屏按下：屏序号跟着换
+        let mut fresh = crate::system::selection::Selection::fresh();
+        let other = Freeze {
+            display: 2,
+            points: Vec2::new(1000.0, 800.0),
+            appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0)),
+            image: Arc::new(image::RgbaImage::from_pixel(
+                1000,
+                800,
+                image::Rgba([1, 1, 1, 255]),
+            )),
+        }
+        .field();
+        fresh.press(&other, Pos2::new(5.0, 5.0), 10.0);
+        st.apply_selection(1, fresh);
+        assert_eq!(st.capture.as_ref().unwrap().screen, 1);
+    }
+
+    /// 确认之后才有像素可裁，而且**裁出来的尺寸与尺寸读数同源**。
+    #[test]
+    fn a_confirmed_selection_crops_to_the_size_the_label_promised() {
+        let mut st = capture_state();
+        st.submit_capture(two_screens()).expect("该发得出");
+        // 2 倍屏：主屏 1920×1080 点 = 3840×2160 像素。
+        // 注意 `points` 不是这张图说了算——`apply_frozen` 会按**屏的规格**配对后覆盖它，
+        // 于是"屏给尺寸、图给像素"这一条分工在这里被顺手钉住：喂进来的 1000×800 会被换成 1920×1080
+        st.apply_frozen(
+            1,
+            vec![Freeze {
+                display: 1,
+                points: Vec2::new(1000.0, 800.0),
+                appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0)),
+                image: Arc::new(image::RgbaImage::from_pixel(
+                    3840,
+                    2160,
+                    image::Rgba([5, 6, 7, 255]),
+                )),
+            }],
+        );
+        let field = st.capture.as_ref().unwrap().field().unwrap();
+        assert_eq!(
+            field.scale(),
+            Some(2.0),
+            "屏的规格要盖过图自己的尺寸，否则换算没有唯一来源"
+        );
+        let mut sel = crate::system::selection::Selection::fresh();
+        sel.press(&field, Pos2::new(100.0, 100.0), 10.0);
+        sel.drag(&field, Pos2::new(300.0, 250.0));
+        sel.release(&field, Pos2::new(300.0, 250.0));
+        st.apply_selection(0, sel);
+        let label = st.capture.as_ref().unwrap().sel.size_label(&field);
+        let cut = st.crop_selection().expect("该裁得出来");
+        assert_eq!(label.as_deref(), Some("400 × 300"), "读数与实际裁剪对不上");
+        assert_eq!((cut.width(), cut.height()), (400, 300));
+    }
+
+    /// 一块屏都没冻上：那是失败，**不是用户取消**（静默抓屏没有"取消"这一档）。
+    #[test]
+    fn an_empty_freeze_is_a_failure_never_a_cancellation() {
+        let mut st = capture_state();
+        st.submit_capture(two_screens()).expect("该发得出");
+        let applied = st.apply_frozen(1, Vec::new());
+        assert!(matches!(applied, CaptureApplied::Failed(_)), "{applied:?}");
+        assert!(!matches!(applied, CaptureApplied::Cancelled));
+        assert!(!st.capturing());
+        assert!(st.capture.is_none(), "没画面就不该留一扇空遮罩的账");
     }
 
     fn pixels_and_doc(width: u32, height: u32) -> (ice_vision::import::Admitted, OcrDocument) {
@@ -2643,8 +3047,10 @@ mod tests {
         let mut st = capture_state();
         let path = PathBuf::from("/tmp/history/1-1-100.png");
         // 先真派发一次：回信带的是那一刻的序号，凭空喂一个 1 会被判过期
-        let job = st.submit_capture().expect("空闲时该发得出框选任务");
-        assert!(matches!(job, Job::ScreenCapture { id: 1, seq: 1, .. }));
+        let job = st
+            .submit_capture(two_screens())
+            .expect("空闲时该发得出截图任务");
+        assert!(matches!(job, Job::Freeze { id: 1, seq: 1, .. }));
         let applied = st.apply_capture(1, capture::Outcome::Captured(path.clone()));
         assert_eq!(applied, CaptureApplied::Pinned { pin: 1 });
         assert_eq!(st.pins.len(), 1);
@@ -2695,12 +3101,15 @@ mod tests {
     #[test]
     fn a_second_capture_while_one_is_in_flight_is_ignored() {
         let mut st = capture_state();
-        let first = st.submit_capture();
+        let first = st.submit_capture(two_screens());
         assert!(first.is_some());
-        assert!(st.submit_capture().is_none(), "在飞时第二次派发必须被拒");
+        assert!(
+            st.submit_capture(two_screens()).is_none(),
+            "在飞时第二次派发必须被拒"
+        );
         assert_eq!(
             st.capture_gate(),
-            Some("上一次框选还没画完"),
+            Some("上一次截图还没完"),
             "按钮的话与状态的事实得是同一件事"
         );
         // 序号只走了一次
@@ -2925,8 +3334,8 @@ mod tests {
             return;
         }
         assert_eq!(st.capture_gate(), None, "空闲时按钮不该灰");
-        st.submit_capture();
-        assert_eq!(st.capture_gate(), Some("上一次框选还没画完"));
+        st.submit_capture(two_screens());
+        assert_eq!(st.capture_gate(), Some("上一次截图还没完"));
         st.capture_in_flight = None;
         for i in 0..PIN_MAX {
             st.push_pin(PathBuf::from(format!("/tmp/history/{i}.png")));
@@ -2972,6 +3381,7 @@ mod tests {
             | Job::ImageTranslate { .. }
             | Job::ImageCompose { .. }
             | Job::ScreenCapture { .. }
+            | Job::Freeze { .. }
             | Job::PinRecognize { .. } => {
                 panic!("这条断言只适用于文本任务")
             }
@@ -2985,6 +3395,7 @@ mod tests {
             | Job::ImageTranslate { .. }
             | Job::ImageCompose { .. }
             | Job::ScreenCapture { .. }
+            | Job::Freeze { .. }
             | Job::PinRecognize { .. } => {
                 panic!("这条断言只适用于文本任务")
             }
@@ -2999,7 +3410,8 @@ mod tests {
             | Job::ImageOcr { id, .. }
             | Job::ImageTranslate { id, .. }
             | Job::ImageCompose { id, .. }
-            | Job::ScreenCapture { id, .. } => *id,
+            | Job::ScreenCapture { id, .. }
+            | Job::Freeze { id, .. } => *id,
             // 贴图那条带的是 `pin` + `generation`，**不是** 请求序号：
             // 给它编一个 `id` 就等于让测试可以拿错东西去断言
             Job::PinRecognize { .. } => panic!("贴图识别那条没有请求序号"),

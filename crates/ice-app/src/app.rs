@@ -84,6 +84,10 @@ pub struct IceApp {
     history: HistoryStore,
     config_path: PathBuf,
     /// 保存面板在等谁的回信（见 [`PendingSave`]）
+    /// 只给测试用：无头环境里没有真的 `NSScreen` 可问，屏列表由测试喂进来
+    /// （与 `JobRunner::set_capture_runner` 同一条理由：会问到真屏幕的路径不许被测试撞上）
+    #[cfg(test)]
+    test_screens: Option<Vec<(u8, egui::Rect)>>,
     pending_save: PendingSave,
     /// 单实例锁。`on_exit` 里显式释放，进程被杀时靠 `Drop`（REQ-009）
     lock: Option<InstanceLock>,
@@ -196,6 +200,8 @@ impl IceApp {
             outcomes,
             history,
             config_path,
+            #[cfg(test)]
+            test_screens: None,
             pending_save: PendingSave::None,
             hotkeys_started: false,
             shots_dir,
@@ -1164,6 +1170,7 @@ impl IceApp {
                     let (tone, text) =
                         match std::mem::replace(&mut self.pending_save, PendingSave::None) {
                             PendingSave::Pin(id) => save_pin_image(&self.state, id, &path),
+                            PendingSave::Shot(source) => save_shot_copy(&source, &path),
                             PendingSave::Page | PendingSave::None => {
                                 save_product(&self.state, &path)
                             }
@@ -1297,6 +1304,128 @@ impl IceApp {
     ///
     /// 先 `clone` 一遍清单再遍历：处理一条意图会改 `state.pins`（关一张就摘一条），
     /// 边遍历边改是借位检查器最爱抓的事；这里宁可多拷几份 `PathBuf`。
+    /// 遮罩那一组窗（CHG-010 REQ-101/102/103）：每块屏一扇、每帧幂等重下抬层与激活，
+    /// 再取走它们攒下的意图。
+    ///
+    /// 开哪几扇窗、抬到哪一层、这一刻是不是前台，都是"这一帧的屏幕事实"，
+    /// 所以放在帧循环而不是回信里（`apply_outcome` 只改状态，REQ-005 那条分层纪律）。
+    fn draw_capture(&mut self, ctx: &egui::Context, effects: &mut Effects) {
+        let Some(capture) = self.state.capture.clone() else {
+            return;
+        };
+        let mut outs: Vec<crate::system::selection::MaskOut> = Vec::new();
+        for (index, frame) in capture.frames.iter().enumerate() {
+            let title = crate::system::selection::mask_title(frame.display);
+            crate::system::selection::show(
+                ctx,
+                &crate::system::selection::MaskScreen {
+                    screen: index,
+                    display: frame.display,
+                    points: frame.points,
+                    texture: freeze_texture(ctx, frame),
+                },
+                capture.sel,
+            );
+            // 抬层每帧幂等重下：实测 AppKit 与窗口服务器会短时不一致，
+            // 而且框架自己也会按 viewport 设置重摆这扇窗（与 D-26/D-27 同族）
+            let raised = crate::system::cover::cover_display(&title, frame.appkit);
+            if index == 0 {
+                self.state.set_raised(raised.covers);
+            }
+            outs.extend(crate::system::selection::take_outs(ctx, frame.display));
+        }
+        // esc 收不收得到取决于我们是不是前台（事实 9/16）。激活是异步的，
+        // 所以这句也每帧重下，读回来的值进状态、不当成功记账
+        let focus = crate::system::cover::focus(&crate::system::selection::mask_title(
+            capture.frames.first().map_or(1, |f| f.display),
+        ));
+        let had = self.state.capture_has_keyboard();
+        self.state.capture_key = focus.key;
+        if had != focus.key {
+            ctx.request_repaint();
+        }
+        for out in outs {
+            self.apply_mask_out(out, ctx, effects);
+        }
+    }
+
+    /// 遮罩那四颗 + esc 的落点。**五个入口汇到同一个出口**（REQ-105），
+    /// 而"确认"这一件事只有一条路：裁 → 才第一次写盘。
+    fn apply_mask_out(
+        &mut self,
+        out: crate::system::selection::MaskOut,
+        ctx: &egui::Context,
+        effects: &mut Effects,
+    ) {
+        use crate::system::selection::MaskOut;
+        match out {
+            MaskOut::Select { screen, sel } => self.state.apply_selection(screen, sel),
+            MaskOut::Cancel => {
+                // 什么都不留：不写历史、不建贴图、临时文件早删过了（REQ-105）
+                self.state
+                    .end_capture(crate::state::CaptureStage::Cancelled);
+            }
+            MaskOut::Pin => {
+                if let Some(path) = self.confirm_capture() {
+                    self.state.pin_confirmed_capture(path);
+                }
+            }
+            MaskOut::Copy => {
+                if let Some(path) = self.confirm_capture() {
+                    self.state.confirm_capture(path.clone());
+                    effects.copy_shot = Some(path);
+                }
+            }
+            MaskOut::Save => {
+                if let Some(path) = self.confirm_capture() {
+                    self.state.confirm_capture(path.clone());
+                    // 面板只把名字交回来，落盘等回信；与图片页/贴图那两条共用同一个回信通道
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "截图.png".to_string());
+                    if crate::system::panel::request_save(
+                        &self.save_tx,
+                        ctx,
+                        &name,
+                        &crate::system::panel::SAVE_TYPES,
+                    ) {
+                        self.pending_save = PendingSave::Shot(path);
+                    } else {
+                        self.state.toast(
+                            Tone::Error,
+                            "这台机器弹不出系统保存面板；可以用「复制」再粘到别处",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// 确认 = 裁 → **到这里才第一次写盘**（REQ-102：确认之前盘上不许有东西）。
+    /// 裁不出来就说那一句并关掉遮罩——留一扇截不出东西的遮罩在屏上比一次失败更糟。
+    fn confirm_capture(&mut self) -> Option<std::path::PathBuf> {
+        let dir = self.shots_dir.clone()?;
+        let image = self.state.crop_selection()?;
+        let seq = self.state.capture_seq + 1;
+        match capture::save_shot(&dir, &image, seq) {
+            Ok(path) => {
+                self.state.capture_seq += 1;
+                Some(path)
+            }
+            Err(kind) => {
+                let text = capture::Outcome::Failed(kind)
+                    .explain()
+                    .unwrap_or("这张没存下来")
+                    .to_string();
+                self.state
+                    .end_capture(crate::state::CaptureStage::Failed(text.clone()));
+                self.state.toast(Tone::Error, text);
+                None
+            }
+        }
+    }
+
     fn draw_pins(&mut self, ctx: &egui::Context, effects: &mut Effects) {
         if self.state.pins.is_empty() {
             return;
@@ -1449,8 +1578,15 @@ impl IceApp {
         // 都会进图（事实 32 的正负对照）。**还原不在这里做**：窗收起时帧循环根本不跑，挂在
         // 帧末的还原永远不会执行；那份账跟着任务走，由子进程结束那条线程去放（REQ-010）。
         if effects.capture {
-            if let Some(job) = self.state.submit_capture() {
-                if let crate::state::Job::ScreenCapture { hidden, .. } = &job {
+            // 屏列表只能由帧循环读（`NSScreen` 要在主线程）：抓哪几块、每块多大，
+            // 都在这一下定下来交给任务，回信再按它配对（CHG-010 REQ-102"每块屏一扇遮罩"）。
+            let screens = capture_screens(self);
+            if let Some(job) = self.state.submit_capture(screens) {
+                // 两条截图任务（老的系统框选 / 新的先冻结）收窗的是同一处：
+                // 少收一扇，我们自己就会出现在自己截出来的图上
+                if let crate::state::Job::ScreenCapture { hidden, .. }
+                | crate::state::Job::Freeze { hidden, .. } = &job
+                {
                     capture::hide(ctx, hidden.viewports.clone());
                 }
                 self.runner.submit(&self.runtime, job, ctx);
@@ -1551,6 +1687,24 @@ impl IceApp {
         // 贴图那两条出路（CHG-009 REQ-003/004）：**复用上面那两条同一把函数**，
         // 只换像素来源——从这张自己的文件读回（`pin::pixels_of`），长期留一份 RGBA 是六张
         // 几百 MB，而复制/保存都是用户显式点一下，一次读盘换不来第四条任务那套机制。
+        if let Some(path) = effects.copy_shot {
+            let written = image::ImageReader::open(&path)
+                .ok()
+                .and_then(|r| r.decode().ok())
+                .map(|img| clipboard::write_image(&img.to_rgba8()));
+            match written {
+                Some(Ok(())) => {
+                    self.state.toast(Tone::Info, clipboard::COPY_IMAGE_DONE);
+                    // 遮罩已经关了，焦点没处可还：这一步之后把应用藏起来，
+                    // 让键盘回到他刚才那个应用。**这一格是实测缺口**：hide 之后
+                    // 前台是不是原来那个应用，今天没量成（见 REQ-102/W-6.6），
+                    // 所以只做一次、不写成"一定还得回去"
+                    crate::system::cover::step_back();
+                }
+                Some(Err(reason)) => self.state.toast(Tone::Error, reason),
+                None => self.state.toast(Tone::Warn, "这张读不回来，复制没做成"),
+            }
+        }
         if let Some(id) = effects.copy_pin {
             let written = self
                 .state
@@ -1784,7 +1938,7 @@ impl IceApp {
 /// 面板是异步的：从"点了保存"到"选了位置"之间可能隔几秒，这期间用户可能又点了别张贴图的
 /// 保存，也可能把那张关掉了。所以**来源要在按下那一刻定下来**，回信时按那一份去存；
 /// 只有 `Page`（图片页那条）沿用 `state.composed`。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 enum PendingSave {
     /// 没有面板在等回信
     #[default]
@@ -1793,6 +1947,9 @@ enum PendingSave {
     Page,
     /// 某张贴图（此刻屏上显示的那一张）
     Pin(u64),
+    /// 遮罩里刚确认的那一张：已经在历史目录里了，这里只是**再复制一份**到用户挑的位置。
+    /// 为什么不重画一遍：那份像素已经落过盘，重画会多出第二个"写文件"的地方（REQ-104）
+    Shot(std::path::PathBuf),
 }
 
 /// 贴图没了的时候要说的那一句。与 `PRODUCT_GONE_TEXT` 分开的理由一样：这时候盘上那个文件
@@ -1803,6 +1960,36 @@ const PIN_GONE_TEXT: &str = "那张贴图已经不在了，这张没保存";
 /// 一张贴图带子里那一行该说的话：识别段优先（"识别中…"、"未发现文字"），
 /// 其次翻译段（"翻译中 3/7"、"翻好 5 块，失败 2 块"）。两段都空闲就不说——
 /// 带子本来就窄，没事的时候不许占着那一格说话。
+/// 要点名抓哪几块屏、每块屏多大。**每次截图前重新读**，不缓存：
+/// 用户改分辨率今天实测过两次（1920×1200 → 2240×1400，位置也从 `(-1920,-120)` 变成
+/// `(-2240,-320)`），缓存一帧就会把遮罩开在一块已经不存在的屏上。
+///
+/// 屏序号按 `NSScreen` 列表的位置从 1 编（`-D1` 是主屏），并用**像素尺寸回核**绑定
+/// （见 `features/CHG-010/design.md` 那节追加）：两屏像素尺寸完全相同时这一核对分辨不出来，
+/// 那种情况下宁可只盖主屏并说一句，也不猜。
+fn capture_screens(app: &IceApp) -> Vec<(u8, egui::Rect)> {
+    // 无头测试里没有真 `NSScreen` 可问，也不该让测试去猜这台机器插了几块屏：
+    // 屏列表由测试喂（与 `set_capture_runner` 同一条理由）
+    #[cfg(test)]
+    if let Some(seeded) = &app.test_screens {
+        return seeded.clone();
+    }
+    crate::system::screen::probe()
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+        .map(|(index, screen)| {
+            (
+                index as u8 + 1,
+                egui::Rect::from_min_size(
+                    egui::pos2(screen.frame.x, screen.frame.y),
+                    egui::vec2(screen.frame.w, screen.frame.h),
+                ),
+            )
+        })
+        .collect()
+}
+
 /// 带子右半边那一格：这张自己的进度，加一句"现在按 `C` 会得到什么"（REQ-005 末段）。
 ///
 /// 进度那条**识别段优先占位**——识别没回来时说"可选文字"是假话（REQ-005 原话）。
@@ -1829,6 +2016,45 @@ fn pin_band_line(pin: &crate::state::Pin) -> Option<String> {
         None
     } else {
         Some(parts.join(" · "))
+    }
+}
+
+/// 遮罩里那张冻结帧的纹理。**按 (截图序号, 屏序号) 缓存**：一张一块屏就是几十 MB 的像素，
+/// 每帧重传会把这一秒的成本抬起来；换一次截图（新 id）自然作废，不留到下一轮。
+fn freeze_texture(ctx: &egui::Context, frame: &crate::state::Freeze) -> egui::TextureId {
+    let (w, h) = (frame.image.width(), frame.image.height());
+    // 缓存键用**像素尺寸**而不是点尺寸：换一次截图（或换一块屏）尺寸几乎必变，
+    // 而真撞上了也只是多传一次纹理，不会画出上一轮的画面
+    let key = egui::Id::NULL
+        .with("ice-selection.freeze")
+        .with(frame.display)
+        .with(w)
+        .with(h);
+    if let Some(old) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(key)) {
+        let size = old.size();
+        if size[0] == w as usize && size[1] == h as usize {
+            return old.id();
+        }
+    }
+    // 这里要的是**四个一组的字节**，不是 Color32 数组——那个签名挨着的 `from_rgb`
+    // 也一样，传错编译不过（探针那一轮我就是传错 uv 量出一个假结论，同族的错）
+    let mut bytes = Vec::with_capacity((w * h * 4) as usize);
+    for pixel in frame.image.pixels() {
+        bytes.extend_from_slice(&pixel.0);
+    }
+    let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &bytes);
+    let texture = ctx.load_texture("ice-selection.freeze", image, egui::TextureOptions::LINEAR);
+    let id = texture.id();
+    ctx.data_mut(|d| d.insert_temp(key, texture));
+    id
+}
+
+/// 把历史目录里那一份**原样复制**到用户挑的位置。
+/// 不重画一遍：像素已经在盘上了，再走一次编码就是第二个"写文件"的地方（REQ-104）。
+fn save_shot_copy(source: &std::path::Path, picked: &str) -> (Tone, String) {
+    match std::fs::copy(source, picked) {
+        Ok(_) => (Tone::Info, "已保存这张截图".to_string()),
+        Err(error) => (Tone::Error, format!("保存失败：{error}")),
     }
 }
 
@@ -2036,6 +2262,7 @@ impl eframe::App for IceApp {
         // 贴图窗（CHG-009 REQ-003/004）：**每帧为每一张活着的贴图各 show 一次**。
         // 只在第一帧调一次的写法实测会翻车（事实 25）：窗口下一帧就被 egui 以
         // `it was never used this pass` 删掉。反过来，"关掉一张"的实现就是这一帧起不再 show 它。
+        self.draw_capture(&ctx, &mut effects);
         self.draw_pins(&ctx, &mut effects);
 
         self.run_effects(&ctx, effects);
@@ -2465,6 +2692,30 @@ mod tests {
     fn without_real_capture(mut app: IceApp) -> IceApp {
         app.runner
             .set_capture_runner(|_path, _seq| capture::Outcome::Cancelled);
+        // 冻结那一支同样要接缝：默认给"两块屏"的形状（本机实测：主屏 + 左置那块），
+        // 于是无头测试既不真抓屏、也不依赖测试机到底插了几块屏
+        app.test_screens = Some(vec![
+            (
+                1,
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0)),
+            ),
+            (
+                2,
+                egui::Rect::from_min_size(egui::pos2(-2240.0, -320.0), egui::vec2(2240.0, 1400.0)),
+            ),
+        ]);
+        app.runner.set_freeze_runner(|_path, _seq, display| {
+            Some(crate::state::Freeze {
+                display,
+                points: egui::vec2(1920.0, 1080.0),
+                appkit: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0)),
+                image: std::sync::Arc::new(image::RgbaImage::from_pixel(
+                    8,
+                    4,
+                    image::Rgba([1, 2, 3, 255]),
+                )),
+            })
+        });
         app
     }
 

@@ -46,9 +46,41 @@ pub type OutcomeReceiver = mpsc::Receiver<Outcome>;
 /// 不需要靠每个测试记得绕开。
 pub type CaptureRun = dyn Fn(&std::path::Path, u64) -> capture::Outcome + Send + Sync;
 
+/// 抓一块屏 → 解成像素 → 立刻删掉那份临时文件。**只在真应用里用**（测试走接缝）。
+fn grab_one(temp: &std::path::Path, seq: u64, display: u8) -> Option<crate::state::Freeze> {
+    let outcome = capture::grab_screen(temp, seq, display);
+    let capture::Outcome::Captured(path) = outcome else {
+        return None;
+    };
+    let image = image::ImageReader::open(&path)
+        .ok()
+        .and_then(|r| r.decode().ok())
+        .map(|img| img.to_rgba8());
+    // 解码与否都要删：留在 /tmp 里的一份用户屏幕内容，不会因为本次失败就变成可以留下的东西
+    std::fs::remove_file(&path).ok();
+    let image = image?;
+    let points = egui::vec2(image.width() as f32, image.height() as f32);
+    Some(crate::state::Freeze {
+        display,
+        // 点尺寸与那块屏的位置由调用方配对时给（这里只知道像素）：先占位，
+        // `apply_frozen` 用真实屏的矩形覆盖——**换算的真相在屏那一侧，不在这张图里**。
+        points,
+        appkit: egui::Rect::ZERO,
+        image: std::sync::Arc::new(image),
+    })
+}
+
+/// 抓**一块屏**的执行体：给临时目录、序号与屏序号，回一张像素。`None` = 这块屏没拿到。
+///
+/// 它单独成一个接缝而不是复用 [`CaptureRun`]：那条交回的是"文件路径"，而自绘遮罩这条
+/// 从始至终不许在盘上留东西（REQ-102），两者的形状不一样，硬并成一条就会有人拿路径当中间人。
+pub type FreezeRun =
+    dyn Fn(&std::path::Path, u64, u8) -> Option<crate::state::Freeze> + Send + Sync;
+
 pub struct JobRunner {
     shared: Arc<Mutex<Translator>>,
     capture_run: Arc<CaptureRun>,
+    freeze_run: Arc<FreezeRun>,
     tx: mpsc::Sender<Outcome>,
     pending_glossary: Option<Glossary>,
     pending_translator: Option<Translator>,
@@ -57,6 +89,15 @@ pub struct JobRunner {
 impl JobRunner {
     /// 测试用：把框选的执行体换成桩，**任何测试都不该真去起那个全屏交互工具**
     #[cfg(test)]
+    /// 换掉"抓一块屏"这件事的执行体（无头测试用，理由见 [`FreezeRun`]）。
+    #[cfg(test)]
+    pub fn set_freeze_runner<F>(&mut self, f: F)
+    where
+        F: Fn(&std::path::Path, u64, u8) -> Option<crate::state::Freeze> + Send + Sync + 'static,
+    {
+        self.freeze_run = Arc::new(f);
+    }
+
     pub fn set_capture_runner<F>(&mut self, f: F)
     where
         F: Fn(&std::path::Path, u64) -> capture::Outcome + Send + Sync + 'static,
@@ -68,10 +109,12 @@ impl JobRunner {
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
         // 默认就是真工具。换成桩是测试的责任，见 `CaptureRun` 上面那段
         let capture_run: Arc<CaptureRun> = Arc::new(capture::capture);
+        let freeze_run: Arc<FreezeRun> = Arc::new(grab_one);
         (
             Self {
                 shared: Arc::new(Mutex::new(translator)),
                 capture_run,
+                freeze_run,
                 tx,
                 pending_glossary: None,
                 pending_translator: None,
@@ -122,6 +165,12 @@ impl JobRunner {
             Job::ScreenCapture { id, seq, hidden } => {
                 self.submit_screen_capture(runtime, id, seq, hidden, ctx)
             }
+            Job::Freeze {
+                id,
+                seq,
+                displays,
+                hidden,
+            } => self.submit_freeze(runtime, id, seq, displays, hidden, ctx),
             Job::PinRecognize {
                 pin,
                 generation,
@@ -327,6 +376,50 @@ impl JobRunner {
     ///
     /// 落点目录与文件名都在这条线程上算——状态层不知道文件系统的事。日志只记结局与耗时：
     /// 那张图的文件名本身就可能是用户内容（REQ-008 的白名单：尺寸、耗时、张数、类别）。
+    /// 抓每一块屏的冻结帧（CHG-010 REQ-101）。
+    ///
+    /// 三条不显然的：
+    /// - **抓完立刻把窗放回来**，不等用户框完（REQ-101）。放窗那一下仍由这条线程做，
+    ///   理由与老那条一样：主窗收着时帧循环根本不跑，挂在帧循环上的还原永远不执行；
+    /// - **临时文件只活到解码完成**，出这个函数前一定删干净（REQ-102：确认之前盘上不许有东西，
+    ///   而"盘上"也包括临时目录里躺着的一份用户屏幕内容）；
+    /// - 执行体可替换（[`JobRunner::set_freeze_runner`]）：无头测试一旦跑到真抓屏，
+    ///   就会在用户屏幕上真的闪一扇全屏窗——那是 CHG-009 已经犯过一次的事故。
+    fn submit_freeze(
+        &mut self,
+        runtime: &Runtime,
+        id: RequestId,
+        seq: u64,
+        displays: Vec<u8>,
+        hidden: capture::Hidden,
+        ctx: &Context,
+    ) {
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        let grab = Arc::clone(&self.freeze_run);
+        runtime.spawn_blocking(move || {
+            let started = Instant::now();
+            let temp = capture::temp_dir();
+            let mut frames = Vec::new();
+            for display in &displays {
+                if let Some(frame) = grab(&temp, seq, *display) {
+                    frames.push(frame);
+                }
+            }
+            capture::purge_temp(&temp);
+            capture::show_again(&ctx, &hidden);
+            tracing::info!(
+                request_id = id,
+                screens = frames.len(),
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "画面已冻结"
+            );
+            if tx.try_send(Outcome::Froze { id, frames }).is_ok() {
+                ctx.request_repaint();
+            }
+        });
+    }
+
     fn submit_screen_capture(
         &mut self,
         runtime: &Runtime,
@@ -559,6 +652,9 @@ fn log_outcome(outcome: &Outcome) {
         },
         // 截图这一支**只有结局与耗时**：那张图的路径与文件名可能就是用户内容，
         // 一个字符都不许进日志（REQ-008 的字段白名单）。
+        Outcome::Froze { id, frames } => {
+            tracing::info!(request_id = id, screens = frames.len(), "冻结帧回信")
+        }
         Outcome::ScreenCaptured { id, outcome } => {
             tracing::info!(request_id = id, result = outcome_name(outcome), "截图回信")
         }

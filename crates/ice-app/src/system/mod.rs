@@ -4,6 +4,7 @@ pub mod alpha;
 pub mod background;
 pub mod capture;
 pub mod clipboard;
+pub mod cover;
 pub mod dblclick;
 pub mod dock;
 pub mod global_hotkeys;

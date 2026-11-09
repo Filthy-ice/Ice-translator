@@ -1941,7 +1941,7 @@ mod tests {
     fn there_is_exactly_one_place_that_dispatches_a_capture() {
         let source = include_str!("../app.rs");
         assert_eq!(
-            source.matches("state.submit_capture()").count(),
+            source.matches("state.submit_capture(").count(),
             1,
             "submit_capture 出现了第二个调用点"
         );

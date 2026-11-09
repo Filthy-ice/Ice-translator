@@ -9,7 +9,7 @@
 //! 3. **点 → 物理像素的换算只许存在一处**（[`Field::to_pixels`]）。CHG-009 事实 22 已经演示过
 //!    两处各除一次或都忘了除的现场：贴图大一倍、文字层整体错位。
 
-use egui::{Pos2, Rect, Vec2, pos2};
+use egui::{Id, Pos2, Rect, Vec2, pos2};
 use ice_core::document::PixelRect;
 
 /// 一次拖选期间的临时状态。
@@ -725,3 +725,235 @@ mod tests {
         assert!(!flipped.intersects(low), "翻上去那一档同样不许压住选区");
     }
 }
+
+// ---- 遮罩那一扇窗（egui 侧） ----
+
+/// 遮罩能对外发出的**全部意图**。一条枚举、一处映射——与贴图那一条纪律同形：
+/// 键、按钮、右键若各写一套，出的就是"点按钮有效、按键没反应"那类只对一半的缺陷。
+#[derive(Debug, Clone, PartialEq)]
+pub enum MaskOut {
+    /// 这一帧的按下/拖动改写了选区。带屏序号：**选区只在那一块屏内**（Q-004）
+    Select { screen: usize, sel: Selection },
+    /// 动作条那颗「钉住」或回车：确认 = 裁 → 落盘 → 走贴图链
+    Pin,
+    /// 动作条那颗「复制」：确认但不钉（F3「固定」的落点就是这一档）
+    Copy,
+    /// 动作条那颗「保存」：同上，走原生保存面板那条既有接缝
+    Save,
+    /// esc 或动作条那颗「取消」：什么都不留
+    Cancel,
+}
+
+/// 遮罩窗的标题。**抬层那一步按它找窗**（`system::cover`），所以这一格只许有一处定义。
+pub fn mask_title(display: u8) -> String {
+    format!("IceTranslator 选区 {display}")
+}
+
+fn slot_key(display: u8) -> Id {
+    Id::NULL.with("ice-selection.mask.slot").with(display)
+}
+
+fn viewport_of(display: u8) -> egui::ViewportId {
+    egui::ViewportId::from_hash_of(Id::NULL.with("ice-selection.mask").with(display))
+}
+
+/// 取走这一扇遮罩攒下的意图（帧循环每帧一次）。
+pub fn take_outs(ctx: &egui::Context, display: u8) -> Vec<MaskOut> {
+    let key = slot_key(display);
+    let slot = ctx.data_mut(|d| {
+        d.get_temp::<std::sync::Arc<std::sync::Mutex<Vec<MaskOut>>>>(key)
+            .unwrap_or_else(|| {
+                let fresh = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                d.insert_temp(key, fresh.clone());
+                fresh
+            })
+    });
+    slot.lock()
+        .map(|mut q| std::mem::take(&mut *q))
+        .unwrap_or_default()
+}
+
+fn slot_of(ctx: &egui::Context, display: u8) -> std::sync::Arc<std::sync::Mutex<Vec<MaskOut>>> {
+    let key = slot_key(display);
+    ctx.data_mut(|d| {
+        d.get_temp::<std::sync::Arc<std::sync::Mutex<Vec<MaskOut>>>>(key)
+            .unwrap_or_else(|| {
+                let fresh = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                d.insert_temp(key, fresh.clone());
+                fresh
+            })
+    })
+}
+
+/// 一扇遮罩这一帧要画的东西。
+pub struct MaskScreen {
+    /// 第几块屏（也是 `Selection` 的坐标归属）
+    pub screen: usize,
+    /// `-D` 的序号，用来命名窗口与配对
+    pub display: u8,
+    /// 那块屏的点尺寸
+    pub points: Vec2,
+    /// 冻结帧的纹理（**由根上下文加载**，与贴图那一条同一个做法）
+    pub texture: egui::TextureId,
+}
+
+/// 画一扇遮罩。每帧对该 show 的每块屏各调一次（CHG-009 事实 25 那条：deferred viewport 是每帧 show）。
+///
+/// 压暗 = **整屏一张冻结图乘一个暗档**，选区那块再按原亮度重画一遍。
+/// 这里刻意不用透明窗口、不用鼠标穿透：那两个属性正是 D-29 那次吞掉全部点击与键盘的元凶，
+/// 而乘暗这一条路在探针里逐点核对过（红 `(220,30,30)` → `(99,13,13)`）。
+pub fn show(ctx: &egui::Context, screen: &MaskScreen, sel: Selection) {
+    let viewport = viewport_of(screen.display);
+    let builder = egui::ViewportBuilder::default()
+        .with_title(mask_title(screen.display))
+        .with_decorations(false)
+        .with_transparent(false)
+        .with_has_shadow(false)
+        // 这一档只是**下限**：真盖住 Dock 与菜单栏靠 `system::cover` 那一次原生抬层，
+        // 每帧幂等重下。留着它是为了让抬层失败时退回"至少还置顶在普通窗之上"。
+        .with_always_on_top()
+        .with_position(egui::pos2(0.0, 0.0))
+        .with_inner_size(screen.points);
+
+    let texture = screen.texture;
+    let points = screen.points;
+    let index = screen.screen;
+    let root = ctx.clone();
+    let slot = slot_of(ctx, screen.display);
+
+    ctx.show_viewport_deferred(viewport, builder, move |ui, _class| {
+        let child = ui.ctx().clone();
+        let field = Field::new(Rect::from_min_size(Pos2::ZERO, points), points);
+        let full = ui.max_rect();
+        // 整屏压暗
+        ui.painter().image(
+            texture,
+            full,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            egui::Color32::from_rgb(DIM, DIM, DIM),
+        );
+        // 选区那块按原亮度 + 白边 + 八个把手
+        if let Some(rect) = sel.rect {
+            let uv = Rect::from_min_max(
+                Pos2::new(rect.min.x / points.x, rect.min.y / points.y),
+                Pos2::new(rect.max.x / points.x, rect.max.y / points.y),
+            );
+            ui.painter().image(texture, rect, uv, egui::Color32::WHITE);
+            ui.painter().rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(1.0, egui::Color32::WHITE),
+                egui::StrokeKind::Outside,
+            );
+            for handle in 0..HANDLE_COUNT {
+                let center = handle_center(rect, handle);
+                ui.painter().rect_filled(
+                    Rect::from_center_size(center, Vec2::splat(6.0)),
+                    0.0,
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+
+        // 键盘：esc 取消、回车钉住。收不收得到取决于应用是否前台——那一步在 `cover::focus`，
+        // 每帧幂等重下（实测激活要一两帧才落地，"发一次就当成功"是错的）。
+        let keys: Vec<MaskOut> = child.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key {
+                        key: egui::Key::Escape,
+                        pressed: true,
+                        ..
+                    } => Some(MaskOut::Cancel),
+                    egui::Event::Key {
+                        key: egui::Key::Enter,
+                        pressed: true,
+                        ..
+                    } => Some(MaskOut::Pin),
+                    _ => None,
+                })
+                .collect()
+        });
+        if !keys.is_empty() {
+            if let Ok(mut queue) = slot.lock() {
+                queue.extend(keys);
+            }
+            root.request_repaint();
+        }
+
+        // 鼠标：按下落在哪 → 拖动 → 抬起。这一帧算出的新状态原样交回（`Selection` 是 Copy）
+        let pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
+        let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+        let here = ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO);
+        let mut next = sel;
+        let mut changed = false;
+        if pressed {
+            next.press(&field, here, HANDLE_RADIUS);
+            changed = true;
+        } else if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
+            next.drag(&field, here);
+            changed = true;
+        }
+        if released {
+            next.release(&field, here);
+            changed = true;
+        }
+        if changed {
+            if let Ok(mut queue) = slot.lock() {
+                queue.push(MaskOut::Select {
+                    screen: index,
+                    sel: next,
+                });
+            }
+        }
+
+        // 动作条：**圆角药丸，浮在选区下方，放不下翻上方**；不许铺满整幅图宽（REQ-103）
+        if let Some(rect) = next.rect.filter(|r| r.width() > 0.0 && r.height() > 0.0) {
+            let size = Vec2::new(BAR_W, BAR_H);
+            let side = bar_side(rect, size, &field);
+            let bar = bar_rect(rect, size, side);
+            let _ = side;
+            // 用 Area 浮在遮罩之上：药丸的位置跟着选区算，不占窗口布局（占位会把图片挤走）
+            egui::Area::new(Id::NULL.with("ice-selection.bar"))
+                .fixed_pos(bar.min)
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    ui.painter().rect_filled(
+                        Rect::from_min_size(Pos2::ZERO, bar.size()),
+                        bar.height() / 2.0,
+                        egui::Color32::from_rgba_premultiplied(28, 28, 30, 235),
+                    );
+                    ui.horizontal(|ui| {
+                        for label in BAR_ACTIONS {
+                            if ui.button(label).clicked() {
+                                let out = match label {
+                                    "钉住" => MaskOut::Pin,
+                                    "复制" => MaskOut::Copy,
+                                    "保存" => MaskOut::Save,
+                                    _ => MaskOut::Cancel,
+                                };
+                                if let Ok(mut queue) = slot.lock() {
+                                    queue.push(out);
+                                }
+                                root.request_repaint();
+                            }
+                        }
+                        // 尺寸读数与裁剪同源（同一个 `Field`），这里只报一次
+                        if let Some(text) = next.size_label(&field) {
+                            ui.label(text);
+                        }
+                    });
+                });
+        }
+    });
+}
+
+/// 动作条那一排：四颗、顺序就是显示顺序（Q-001 的默认档）。
+/// **只有这四颗**——加第五颗要改这张表，而 `the_bar_has_exactly_the_four_actions` 会先响。
+pub const BAR_ACTIONS: [&str; 4] = ["钉住", "复制", "保存", "取消"];
+
+/// 动作条的尺寸（药丸）。宽度按四颗按钮 + 一句尺寸读数估的固定值：
+/// 它 SHALL NOT 跟着选区宽度变（用户那句"标注按钮怎么有背景"要的就是浮着的小条，不是一条 bar）。
+pub const BAR_W: f32 = 300.0;
+pub const BAR_H: f32 = 34.0;

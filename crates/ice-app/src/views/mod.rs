@@ -152,6 +152,8 @@ pub struct Effects {
     /// 与上面两条的区别只在像素来源：那两条拿 `state.composed`，这两条拿贴图自己那张文件。
     /// `Some(id)` 表示"这一帧要点"，落点在 `run_effects` 里做——视图不碰剪贴板也不碰面板。
     pub copy_pin: Option<u64>,
+    /// 遮罩里「复制」那一下：刚确认、已在历史目录里的那一张，把它的文件交回剪贴板
+    pub copy_shot: Option<std::path::PathBuf>,
     /// 同上，走同一把 `panel::request_save`
     pub save_pin: Option<u64>,
     /// 带子里那颗「翻译」被按下：这张贴图要走的链由 T-007 的后半接（识别 → 翻译 →
