@@ -2002,11 +2002,11 @@ const PIN_GONE_TEXT: &str = "那张贴图已经不在了，这张没保存";
 /// 屏序号按 `NSScreen` 列表的位置从 1 编（`-D1` 是主屏），并用**像素尺寸回核**绑定
 /// （见 `features/CHG-010/design.md` 那节追加）：两屏像素尺寸完全相同时这一核对分辨不出来，
 /// 那种情况下宁可只盖主屏并说一句，也不猜。
-fn capture_screens(app: &IceApp) -> Vec<(u8, egui::Rect)> {
+fn capture_screens(_app: &IceApp) -> Vec<(u8, egui::Rect)> {
     // 无头测试里没有真 `NSScreen` 可问，也不该让测试去猜这台机器插了几块屏：
     // 屏列表由测试喂（与 `set_capture_runner` 同一条理由）
     #[cfg(test)]
-    if let Some(seeded) = &app.test_screens {
+    if let Some(seeded) = &_app.test_screens {
         return seeded.clone();
     }
     crate::system::screen::probe()

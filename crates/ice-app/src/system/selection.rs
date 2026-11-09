@@ -836,7 +836,6 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
     let points = screen.points;
     // 闭包要 'static：把这一帧要用的三个数**按值**带走，不带引用
 
-    let index = screen.screen;
     let root = ctx.clone();
     let slot = slot_of(ctx, display);
 
@@ -894,10 +893,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                         key: egui::Key::Enter,
                         pressed: true,
                         ..
-                    } => next.rect.map(|rect| MaskOut::Confirm {
-                        display: display,
-                        rect,
-                    }),
+                    } => next.rect.map(|rect| MaskOut::Confirm { display, rect }),
                     _ => None,
                 })
                 .collect()
@@ -933,9 +929,10 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         }
         if changed {
             ui.ctx().data_mut(|d| d.insert_temp(sel_key(display), next));
-        }
-        // 抬起之后没有再动，就不再要帧（否则空转）
-        if ui.input(|i| i.pointer.is_moving()) {
+            // 自己叫醒自己：指针事件只到这一扇子窗，不叫它重画，框就停在上一次画出来的样子
+            // （"拖了没框/一闪一闪"的根在这儿，与绕不绕主窗无关）
+            child.request_repaint();
+            // 选区是画在这扇窗里的，但按钮要点得动、主窗也要知道还活着
             root.request_repaint();
         }
 
@@ -963,18 +960,15 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                             if icon_button(ui, icon).clicked() {
                                 // 确认必须带上**这扇窗自己的框**：主窗不用再猜是哪块屏
                                 let out = match (icon, next.rect) {
-                                    (BarIcon::Check, Some(rect)) => MaskOut::Confirm {
-                                        display: display,
-                                        rect,
-                                    },
-                                    (BarIcon::Copy, Some(rect)) => MaskOut::ConfirmCopy {
-                                        display: display,
-                                        rect,
-                                    },
-                                    (BarIcon::Save, Some(rect)) => MaskOut::ConfirmSave {
-                                        display: display,
-                                        rect,
-                                    },
+                                    (BarIcon::Check, Some(rect)) => {
+                                        MaskOut::Confirm { display, rect }
+                                    }
+                                    (BarIcon::Copy, Some(rect)) => {
+                                        MaskOut::ConfirmCopy { display, rect }
+                                    }
+                                    (BarIcon::Save, Some(rect)) => {
+                                        MaskOut::ConfirmSave { display, rect }
+                                    }
                                     // 还没框就先不响应：不猜一个全屏框给用户，那比不响应更糟
                                     _ => continue,
                                 };
