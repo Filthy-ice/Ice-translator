@@ -1029,17 +1029,14 @@ mod tests {
     #[test]
     fn combos_are_parsed_leniently_and_reject_ambiguous_input() {
         // 大小写与分隔符都认（他要能手改这个文件）
-        assert_eq!(
-            parse_combo("Cmd+Shift+4"),
-            parse_combo("cmd-shift-4").map(|c| c)
-        );
+        assert_eq!(parse_combo("Cmd+Shift+4"), parse_combo("cmd-shift-4"));
         let c = parse_combo("cmd+shift+4").unwrap();
         assert_eq!(c.base, BaseKey::Digit('4'));
         assert!(c.cmd && c.shift && !c.option && !c.control);
         // 别名
-        assert_eq!(parse_combo("alt+f2").unwrap().option, true);
-        assert_eq!(parse_combo("ctrl+f2").unwrap().control, true);
-        assert_eq!(parse_combo("command+f2").unwrap().cmd, true);
+        assert!(parse_combo("alt+f2").unwrap().option);
+        assert!(parse_combo("ctrl+f2").unwrap().control);
+        assert!(parse_combo("command+f2").unwrap().cmd);
         // 裸功能键是他报的默认档
         assert_eq!(parse_combo("f1").unwrap().base, BaseKey::Function(1));
         assert_eq!(parse_combo("F12").unwrap().base, BaseKey::Function(12));
