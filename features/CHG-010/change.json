@@ -3,7 +3,7 @@
   "id": "CHG-010",
   "title": "自绘截图选区层：先冻结整屏、再拖可调选框、确认后钉住",
   "version": "v0.5",
-  "status": "SPEC_REVIEW",
+  "status": "IMPLEMENTING",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -94,8 +94,61 @@
       "at": "2026-11-09T02:44:28+00:00",
       "action": "revise",
       "detail": "用户 2026-11-09 晚两句：①「窗口识别 + 快速截图不要忘了做」——原 v0.4 把窗口识别选区列为非目标，现按实测机制改回目标（新 REQ-108，两条像素来源的取舍登记为 Q-007）；②「按下截图键、遮罩准备截图时，不想截了按 esc 也要能退出」——这把 Q-006 答了（要 esc 有效 ⇒ 开遮罩即激活），REQ-102/105 的 esc 从分档升为承诺，代价（抢焦点、以及 hide 之后焦点归位）另测"
+    },
+    {
+      "at": "2026-11-09T03:37:52+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16",
+        "version": "v0.5",
+        "by": "filthy-ice",
+        "reference": "会话 2026-11-09：认窗+esc 两句改判已按原话写入",
+        "at": "2026-11-09T03:37:52+00:00",
+        "snapshot": "approvals/v0.5-a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16.md",
+        "scope": "local-delivery",
+        "context_hash": "c8a2979fd992e457cab16f6b534b813bdeb5a8f30f8940a39683c2c44af1fbfd",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-09T03:44:44+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      }
+    },
+    {
+      "at": "2026-11-09T03:44:45+00:00",
+      "action": "seal-plan",
+      "detail": "a453ee744a2281f1ae00b1f2f1b49911d3beddc00cb375e8ebfe8b95e77d3059"
+    },
+    {
+      "at": "2026-11-09T03:44:55+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-11-09T03:50:56+00:00",
+      "action": "task-done",
+      "detail": "T-002"
     }
   ],
-  "approval": null,
-  "plan_hash": null
+  "approval": {
+    "hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16",
+    "version": "v0.5",
+    "by": "filthy-ice",
+    "reference": "会话 2026-11-09：认窗+esc 两句改判已按原话写入",
+    "at": "2026-11-09T03:37:52+00:00",
+    "snapshot": "approvals/v0.5-a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16.md",
+    "scope": "local-delivery",
+    "context_hash": "c8a2979fd992e457cab16f6b534b813bdeb5a8f30f8940a39683c2c44af1fbfd",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "a453ee744a2281f1ae00b1f2f1b49911d3beddc00cb375e8ebfe8b95e77d3059"
 }

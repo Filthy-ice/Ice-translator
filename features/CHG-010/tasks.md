@@ -1,10 +1,11 @@
 Change: CHG-010
 Version: v0.5
-Spec-Hash: UNAPPROVED
+Spec-Hash: a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [ ] T-001 批准前取证**已跑完四轮**（2026-11-09，仓外 `/tmp/sel_poc`，不进仓；读数逐条抄在 spec.md 事实 5~16）：① H1 鼠标三类事件全进遮罩、每事件出一帧；② H2 把手/移动/夹取三条判定各量到一次；③ H5 主窗收起再放回后三个时刻整屏采样逐点相同；④ 量出**置顶档 layer 3 盖不住 Dock(20) 与菜单栏(24)**，并证到原生 `setLevel(25)+setFrame(那块屏 frame)` 这一跳（三档台阶读数在事实 8）；⑤ **每块屏一扇遮罩可行**（第二扇抬层后 `layer=25 bounds=-1920,0,1920x1200`，事实 15）；⑥ **esc 那一格的开关是应用激活**（不激活 0 条 Key 事件、激活后进得来，且激活约 0.15 秒才落地，事实 16）；⑦ 遮罩存在时整屏抓屏仍是 0.07~0.09 秒。本任务剩下的部分是**实施时在真应用里复核一次**（探针是裸进程，真应用有托盘与多形态窗——停止条件 5） | ice-translator | REQ-101, REQ-102
-- [ ] T-002 新建 `crates/ice-app/src/system/selection.rs` 的纯函数段：选区状态机 `Idle → Dragging → Ready → Confirmed/Cancelled`、一次按下落在哪（空白 / 框内 / 八个把手里的哪一个）的**唯一一处**判定、改大小与移动后夹在**那块屏**的矩形内、尺寸读数（宽 × 高）、动作条上下翻转的几何。**输入一律是「这块屏的矩形 + 一个点」，不许假设原点总是 0,0**——他机器上第二块屏是 `1920×1200` 挂在 `(-1920,-120)`，负偏移那条要进用例 | ice-translator | REQ-102
+- [x] T-002 新建 `crates/ice-app/src/system/selection.rs` 的纯函数段：选区状态机 `Idle → Dragging → Ready → Confirmed/Cancelled`、一次按下落在哪（空白 / 框内 / 八个把手里的哪一个）的**唯一一处**判定、改大小与移动后夹在**那块屏**的矩形内、尺寸读数（宽 × 高）、动作条上下翻转的几何。**输入一律是「这块屏的矩形 + 一个点」，不许假设原点总是 0,0**——他机器上第二块屏是 `1920×1200` 挂在 `(-1920,-120)`，负偏移那条要进用例 | ice-translator | REQ-102
+  Code/Test: crates/ice-app/src/system/mod.rs
 - [ ] T-003 `capture.rs` 的 mac 分支换实现：子进程参数从交互框选改为静默整屏那一条（同一个二进制、同一处字面量出处，本包 V-004 那条静态核查仍然成立）；`Outcome` 不再由「文件是否出现」推断，取消/确认由调用方（选区层）直接给；`Failure` 的类别与那句能行动的话保持原样，抓屏失败 SHALL NOT 打开一扇空白遮罩；非 mac 分支与 `capability()` 那一处判定一字不动 | ice-translator | REQ-101, REQ-106, REQ-107
 - [ ] T-004 遮罩窗与顺序接线：`Job::ScreenCapture` 那一步在 `spawn_blocking` 里抓整屏、回信把冻结帧的**像素**交回帧循环；`app.rs` 按「收起自家窗 → 抓整屏 → 立刻放回 → 开遮罩 → 抬层读回几何」五段接线；**每块屏一扇遮罩**（屏幕表来自既有的 `NSScreen` 那一条路，不新开原生面；两块屏的 `visibleFrame` 缺口不同，事实 15，不许套同一组常量）；`CaptureStage` 加 `Selecting` 与 `Selected` 两态；压暗与出图用整屏一张冻结图 + 选区那块按原亮度重画（**uv 是归一化 0..1**，事实 13 那一处自纠错落成一条断言）；SHALL NOT 用透明窗口、鼠标穿透，也 SHALL NOT 用 `Fullscreen(true)` | ice-translator | REQ-101, REQ-102
 - [ ] T-005 新建 `crates/ice-app/src/system/cover.rs`：那一次**原生抬层与对位**的唯一出处——在主线程按标题找到遮罩那扇 `NSWindow`，`setLevel(NSMainMenuWindowLevel+1)` 后 `setFrame(该屏 frame)`，**再把 AppKit 实际给的矩形读回来**交给选区层当坐标基准；拿不到窗/不在主线程/非 mac 一律返回 false，调用方退回「只有可用区被盖住」那一档并**在界面说一句**，不许静默当成功。复用 `system/window.rs` 取窗口的路（`objc2-app-kit` 已在依赖里，零新增 crate 名）；探针三轮读数就是这条的验收底：`bounds=0,63,1920x953` → 只改尺寸 `0,31,1920x1080` → 抬层 `layer=25 bounds=0,0,1920x1080`。**同一处也要服务贴图窗**（缺陷 D-30：贴图是 layer 3、Dock 是 20，钉在屏幕下缘会被盖住一截）——抬层入口收一个「要盖住整屏」的窗口列表，遮罩与贴图都从这一处走，不许为贴图再写第二处 `setLevel`；验收按 D-29 那条口径在**同一扇贴图窗**上把「带子点得到 / 右键弹得出 / esc 与空格收得到 / 按住仍能拖窗 / 不再被 Dock 盖」五件一次验完 | ice-translator | REQ-101, REQ-102
