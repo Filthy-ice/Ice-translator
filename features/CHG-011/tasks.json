@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": "T-001",
-      "title": "批准前取证（仓外探针，不进仓不提交）：四档各跑一轮并把读数抄回 spec.md 事实表——① 只开子窗那一层透明（预期落进 glow_integration.rs:206-210 那条只记 error 照样建窗的路径，缝里黑块，用来证两层缺一不可）；② 两层都开且缝里不画（背后放纯色窗，只取探针窗那一块的像素比对，不整屏抓）；③ 透明区吃不吃点击 + 另起小窗的残留死区量级（往缝里/药丸两侧/圆角外各注入一次点击，看背后那扇窗收不收得到，并与 (a) 的 2×(图宽−药丸宽)/2×药丸高 对比）；④ 开进程级 alpha 之后主窗与贴图窗还实不实（停止条件 8）。任一档证伪 H1 或量出绕不开的死区就停下来报，不自行换 (c) 假装浮空",
+      "title": "批准前取证（仓外探针，不进仓不提交）：五档各跑一轮并把读数抄回 spec.md 事实表。三格开关见事实 16/19：① 进程级 NativeOptions::viewport.transparent（wgpu 全进程一个 Painter 只读一次，管所有窗的合成模式）、② 那一扇窗的 with_transparent(true)（管 NSWindow）、③ App::clear_color 全透明（管没画到的地方被清成什么）。五档：① 只开②不开① → 预期落进 egui-wgpu winit.rs:272-305 那条 warn + 合成模式退回 Auto，缝里实底（证三格缺一不可）；② ①② 开、③ 不动 → 预期一层七成不透明的暗纱（量事实 19）；③ 三格全开、缝里不画 → 背后放纯色窗，只取探针窗那一块的像素比对，应当透出背后那个色（不整屏抓）；④ 三格全开 + 缝里画一层 alpha=0 的矩形（看混合会不会回填成清屏色）＋ 透明区吃不吃点击（H2，用 AppKit windowNumberAtPoint:belowWindowWithWindowNumber: 逐点问归属，不许用 CGEventPost 注入——本机注入坐标偏出几百点，判命中是伪证据）＋ (b) 残留死区量级与 (a) 的 2×(图宽−药丸宽)/2×药丸高 对比；⑤ 三格全开之后主窗与贴图窗还实不实、失焦半透明那一档 setAlphaValue 行为有没有变（停止条件 8）。任一档证伪 H1 或量出绕不开的死区或主窗露桌面就停下来报，不自行换 (c) 假装浮空",
       "requirements": [
         "REQ-001",
         "REQ-007"
@@ -27,7 +27,7 @@
     },
     {
       "id": "T-003",
-      "title": "新建 system/pill.rs：药丸窗自己那一扇——视口号唯一构造点、with_transparent(true)/with_active(false)/with_has_shadow(false)/with_always_on_top、外接框 = 药丸矩形四周各留 SHADOW_PAD=6 点（提示弹出来时再长出那一块）、跟随由贴图窗子回调直推 send_viewport_cmd_to（不绕主窗）、位置与尺寸命令都只在真变了那一刻发一次（照 inner_size_command 的 0.5 点容差）、esc 转交所属那张贴图的意图槽并 request_repaint 主窗、收起那一帧起不再 show。形状核查：本模块 OuterPosition 恰好 1 次且值只来自纯函数、movable_by_background 0 次",
+      "title": "新建 system/pill.rs：药丸窗自己那一扇——视口号唯一构造点、with_transparent(true)/with_active(false)/with_has_shadow(false)/with_always_on_top、外接框 = 药丸矩形四周各留 SHADOW_PAD=6 点（提示弹出来时再长出那一块）、跟随由贴图窗子回调直推 send_viewport_cmd_to（不绕主窗）、位置与尺寸命令都只在真变了那一刻发一次（照 inner_size_command 的 0.5 点容差）、esc 转交所属那张贴图的意图槽并 request_repaint 主窗、收起那一帧起不再 show。形状核查：本模块 OuterPosition 恰好 1 次且值只来自纯函数、movable_by_background 0 次。接线在 app.rs 的 draw_pins：每帧为每张活着的贴图各调一次 pill::show（不调的那一帧起窗就被 egui 删掉，与 pin::show 同一条纪律），pin_band_line 从\"带子里那一行\"改成\"悬停里那一句\"",
       "requirements": [
         "REQ-001",
         "REQ-003",
@@ -54,7 +54,7 @@
     },
     {
       "id": "T-005",
-      "title": "改 main.rs 一格：NativeOptions::viewport 加 with_transparent(true)（事实 16：glow 的 GL alpha 只从这一份读、每进程一次，不开它药丸窗必然黑块）。主窗与贴图窗各自的 with_transparent(false) 保持不动（子窗显式值不继承）。改完按 T-001 第四档复核主窗仍实心、失焦半透明那一档 setAlphaValue 行为未变；任一露出桌面即命中停止条件 8，停下来报",
+      "title": "改透明那两格（三格开关里缺的两格，见事实 16/19）：main.rs 的 NativeOptions::viewport 加 with_transparent(true)——wgpu 全进程只有一个 Painter，support_transparent_backbuffer 就从这一份读一次，此后每扇窗的 surface 都按它选合成模式，不开它药丸窗的 surface 必然退回 Auto（不透明）。app.rs 覆写 App::clear_color 返回全透明 [0.0;4]——默认那份是 (12,12,12,180) 带七成不透明，且 wgpu_integration.rs:833-841 对每一扇窗都用它，不覆写则缝里是一层暗纱。主窗与贴图窗各自的 with_transparent(false) 保持不动（wgpu 这条路没有子窗继承）。改完按 T-001 第五档复核主窗与贴图窗仍实心、失焦半透明那一档 setAlphaValue 行为未变；任一露出桌面即命中停止条件 8，停下来报。除这两格以外，main.rs/app.rs 里的别的东西归 T-003 的接线，本条不碰",
       "requirements": [
         "REQ-001",
         "REQ-007"
@@ -62,7 +62,7 @@
       "repo": "ice-translator",
       "status": "todo",
       "code_refs": [],
-      "verify_note": "这一格是 H1 成立的必要条件，绕不开；但它动的是全进程的 GL 配置，所以必须复核主窗观感而不是只看药丸。他的冷灰白基底是已点头的观感，本包只许动贴图下方那条。"
+      "verify_note": "这两格动的是全进程的合成模式与全 App 的清屏色，所以必须复核主窗观感而不是只看药丸。他的冷灰白基底是已点头的观感，本包只许动贴图下方那条。"
     },
     {
       "id": "T-006",

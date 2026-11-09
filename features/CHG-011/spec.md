@@ -8,7 +8,7 @@
   3. 「那就改吧」（对"把『钉住』换成对勾、去掉『关闭』"那一轮的点头；本包把同一套口径推到贴图窗）
   4. 「随便你用什么实现，最后达到的效果和 某截图工具 的相同就行」／「我要的是产出，不是固定你的技术栈」
 - **为什么另开一包而不是塞进 CHG-010**：CHG-010 的 Q-003 已经把这件事判为「本包不做，另开一包」，理由是它要处理"两扇窗跟随、收起、置顶、关闭"四件事，与选区层是两份工作。第 65 号待批条目里我也照他这次的原话把它**升级为要做**，并写明另开一包。本包就是那一包。
-- **本包要推翻一条已批准的旧契约**：CHG-009 `REQ-003` 明写「SHALL NOT 依赖"窗口透明 + 按钮浮在透明区"那种形态：**带子是窗口的一部分**」，其 `design.md` 开放点 1 记了当时放弃的理由（"透明 + 圆角 + 只有按钮那块可点"要逐像素命中，egui 的 viewport 透明在 glow 后端上的表现本仓没用过）。**用户这次的原话正是要那条被搁置的路**，所以本包 REQ-008 负责把那句 SHALL NOT 就地改口并登记沿革，而不是在实现里偷偷绕开它。
+- **本包要推翻一条已批准的旧契约**：CHG-009 `REQ-003` 明写「SHALL NOT 依赖"窗口透明 + 按钮浮在透明区"那种形态：**带子是窗口的一部分**」，其 `design.md` 开放点 1 记了当时放弃的理由（"透明 + 圆角 + 只有按钮那块可点"要逐像素命中，egui 的 viewport 透明本仓没用过）。**那份旧文里写的后端名是 glow，与本仓实际跑的 wgpu 不符**——事实 16 有更正记录，本包一律按 wgpu 那条机制说事。**用户这次的原话正是要那条被搁置的路**，所以本包 REQ-008 负责把那句 SHALL NOT 就地改口并登记沿革，而不是在实现里偷偷绕开它。
 - 参照物：他自己放进背景的 某截图工具 / 某聊天软件截图（操作条是**离图几个像素的独立圆角药丸**，不是铺满图宽的一条 bar）。
 
 ## 目标与非目标
@@ -46,12 +46,13 @@
 | 10 | FACT | 现有提示条（toast）是**会自己淡出的横条**，没有勾选框、不持久化：`state.rs:1123` 的 `toast(tone, text)`、`views/mod.rs:697` 的绘制、`TOAST_FADE_STEP = 16ms` 配 1s 寿命逐帧续重绘。⇒ 首用提示**不是**一条 toast，是新的一格 | `state.rs:92`（`Tone`）、`:151`、`:1123`；`views/mod.rs:697-732`；`app.rs:1267-1269` |
 | 11 | FACT | 仓里**没有任何**首用引导机制：`hint_seen` / `first_run` / `onboarding` / `不再提示` 在 `crates/` 全根零命中 | 本机 2026-11-09 grep（只读调查） |
 | 12 | FACT | 写窗口层级只许一个出处（`system/cover.rs`），这是 CHG-010 V-007 的静态判据；贴图那一档靠 `with_always_on_top()`（层级 3）就够，**不需要**原生 `setLevel`（那是遮罩要盖住 Dock 才用的 25） | CHG-010 `traceability.json` V-007；`system/cover.rs`；[[macos-window-native-limits]] 实测层级表 |
-| 13 | HYPOTHESIS | **H1 透明窗在 glow 后端上真能透出桌面**：要同时满足事实 16 的**两层**（进程级 GL alpha 开 + 药丸窗 `with_transparent(true)`），且 painter 在那道缝与圆角外**真的留下 alpha=0**（不是画了一个透明色块上去）。探针分三档量：① 只开子窗那一层（预期落进 `:206-210` 那条只记 error 的路径 ⇒ 黑块，用来证"两层缺一不可"）；② 两层都开、缝里不画（预期透出桌面）；③ 两层都开、缝里画一层 alpha=0 的矩形（看 egui 的混合会不会把它变成清屏色）。**本仓从没用过这一档**（CHG-009 开放点 1 就是因此搁置的），必须先探针 | 待取证（T-001，仓外探针，不进仓）；机制依据事实 16/17 |
-| 14 | HYPOTHESIS | **H2 透明区仍然吃点击**：由事实 6（没有逐像素命中）推论，整扇窗矩形里凡是没画东西的地方照样拦事件。若成立，"同一扇窗改透明"这条路会在药丸两侧留下 `(图宽 − 药丸宽)/2 × 药丸高` 两块隐形陷阱（512 宽的图配 300 宽的药丸就是每侧 106×34） | 待取证（T-001 同一轮：往缝里与药丸两侧注入点击，看背后那扇窗收不收得到） |
+| 13 | HYPOTHESIS | **H1 透明窗在 wgpu 后端上真能透出桌面**：要同时满足**三层**——① 事实 16 那一格进程级 `support_transparent_backbuffer`（`NativeOptions::viewport.transparent = Some(true)`）；② 药丸窗自己 `with_transparent(true)`；③ 事实 19 那一份 `App::clear_color` 覆写成全透明（否则缝里被清成七成不透明的深灰）。且 painter 在那道缝与圆角外**真的留下 alpha=0**（不是画了一个 alpha=0 的色块上去——混合之后可能变成清屏色）。探针分四档量：① 只开子窗那一层（预期 surface 退回 `Auto`，缝里不透明）；② 开①②、清屏色不动（预期一层暗纱，用来证"三层缺一不可"）；③ 三层全开、缝里不画（预期透出桌面）；④ 三层全开、缝里画一层 alpha=0 的矩形（看混合会不会把它变成清屏色）。**本仓从没用过这一档**（CHG-009 开放点 1 就是因此搁置的），必须先探针 | 待取证（T-001，仓外探针，不进仓）；机制依据事实 16/17/19 |
+| 14 | HYPOTHESIS | **H2 透明区仍然吃点击**：由事实 6（没有逐像素命中）推论，整扇窗矩形里凡是没画东西的地方照样拦事件。若成立，"同一扇窗改透明"这条路会在药丸两侧留下 `(图宽 − 药丸宽)/2 × 药丸高` 两块隐形陷阱（512 宽的图配 300 宽的药丸就是每侧 106×34）。**取证手段要换**：本机 `CGEventPost` 注入的鼠标坐标偏出几百点（[[macos-window-native-limits]] 已实测），拿它判命中会得出假读数；改用 AppKit 的 `windowNumberAtPoint:belowWindowWithWindowNumber:` 直接问"这个点归哪扇窗"，那是只读查询、不依赖注入 | 待取证（T-001 同一轮：往缝里与药丸两侧各问一次归属，看背后那扇窗拿不拿得到） |
 | 15 | HYPOTHESIS | **H3 另起一扇小窗当药丸**能把隐形陷阱压到只剩圆角那几像素，代价是要跟着贴图走四件事（拖动、置顶、关闭、收放）。位置由贴图窗的 `outer_rect` **每帧现推**（事实 5 不许攒第二份坐标），所以"跟随"在原则上成立；剩下的只有"跟不跟得上、闪不闪"归真机 | 待取证（T-001 第三档）+ 真机走查 |
-| 16 | FACT | **glow 后端的透明是两层，不是一层**：① 进程级——GL 配置的 alpha 通道由 `native_options.viewport.transparent.unwrap_or(false)` 决定（`eframe-0.37.0/src/native/glow_integration.rs:1212` 的 `.with_transparency(...)`），**只读主窗那一份 NativeOptions，每进程一次**；② 每扇窗——`window_attributes.transparent()`。若窗要透明而 GL 配置不支持，eframe **只 `log::error!("Cannot create transparent window: the GL config does not support it")` 然后照样把窗建出来**（`:206-210`）⇒ 症状就是缝里一块黑/清屏色，正是 H1 证伪的形状。子窗未显式指定时继承主窗那一格（`:1633-1635`），而贴图窗现在显式写着 `.with_transparent(false)`，所以**开进程级 alpha 不会自动把贴图窗或主窗变透明** | 本机 2026-11-09 读依赖源码（只读调查，行号逐条核过）；`egui-0.37.0/src/viewport.rs:420-431` 的文档也明写"If this is not working … you will need to set the transparency in the eframe" |
-| 17 | FACT | 药丸窗要的三件 API 都在：`with_active(false)` = **建出来不抢焦点**（`viewport.rs:445-457`，文档明写"Whether the window will be initially focused or not"，Android/iOS/X11/Wayland 不支持）；`ViewportCommand::OuterPosition(Pos2)`（`:1111`）与 `Focus`（`:1175`）；`with_transparent` 的 macOS 注记明写**要配 `with_has_shadow(false)` 否则有 ghosting 残影**（`:427-428`）——与 Q-002"阴影用 painter 画、不开整窗窗影"正好同向 | `egui-0.37.0/src/viewport.rs`，2026-11-09 读源码 |
+| 16 | FACT | **本仓跑的是 wgpu，不是 glow**（三条独立证据：`cargo tree -p ice-app -e features -i eframe` 里只有 `wgpu`/`wgpu_no_default_features`/`egui-wgpu`，**没有 `glow`**；`target/release/deps/` 里只有 `libegui_wgpu-*.rlib` 与 `libwgpu-*.rlib`，没有 `egui_glow`；`eframe-0.37.0/src/epi.rs:634-654` 的 `Default for Renderer` 在两个都开时也返回 `Wgpu`）。**wgpu 这条路的透明机制**：全进程只有**一个** `Painter`，`support_transparent_backbuffer` 这一格在创建时从 `native_options.viewport.transparent.unwrap_or(false)` 读一次（`eframe-0.37.0/src/native/wgpu_integration.rs:237-240`）；此后**每扇窗的 surface** 都按这一格选合成模式（`egui-wgpu-0.37.0/src/winit.rs:272-305` 的 `install_surface`：优先 `PreMultiplied`，退 `PostMultiplied`，都不支持就 `log::warn!("Transparent window was requested, but the active wgpu surface does not support a CompositeAlphaMode with transparency.")` 并退回 `Auto`）。⇒ **这一格是进程级的，开它会连主窗与贴图窗的合成模式一起改**，不是只改药丸那一扇。每扇窗那一层仍要各自给：`ViewportBuilder::with_transparent` → `egui-winit-0.37.0/src/lib.rs:2289` 的 `.with_transparent(...)` → winit → NSWindow 不透明属性关掉；wgpu 这条路**没有** glow 那种"子窗继承主窗"的逻辑（整个 `wgpu_integration.rs` 里 `transparent` 只出现一次） | 本机 2026-11-09 读依赖源码 + cargo feature 树 + 构建产物（只读调查，行号逐条核过）。**更正记录**：本行先前写成 glow 的机制（`glow_integration.rs:1212`/`:206-210`），那是核错了后端；glow 的源码确实在 registry 里、Cargo.lock 也列了 `egui_glow`，但**没有被启用**，所以那套读数对本仓不成立 |
+| 17 | FACT | 药丸窗要的三件 API 都在：`with_active(false)` = **建出来不抢焦点**（`viewport.rs:445-457`，文档明写"Whether the window will be initially focused or not"，Android/iOS/X11/Wayland 不支持）；`ViewportCommand::OuterPosition(Pos2)`（`:1111`）、`Focus`（`:1175`）、`Transparent(bool)`（运行时改那一扇窗，`egui-winit/src/lib.rs:2012`）；`with_transparent` 的 macOS 注记明写**要配 `with_has_shadow(false)` 否则有 ghosting 残影**（`:427-428`）——与 Q-002"阴影用 painter 画、不开整窗窗影"正好同向 | `egui-0.37.0/src/viewport.rs`，2026-11-09 读源码 |
 | 18 | FACT | **本模块有一条形状核查明令不许发位置命令**：`only_one_drag_path_exists_in_this_module` 断言 `pin.rs` 的实现行里 `OuterPosition` 出现 0 次（"不许由我们往窗口发位置命令：位置只从 outer_rect 读"），同时断言 `movable_by_background` 0 次、`StartDrag` 恰好 1 次。⇒ 走 (b) 必须把药丸窗放到**另一个模块**，并把这条断言**按原意拆成两条**（贴图窗仍不许被发位置命令；药丸窗只许有一处发、且值只能来自那个纯函数），不许悄悄删掉它 | `system/pin.rs:1012-1029`、模块硬规矩 3（`:13-14`），2026-11-09 读源码 |
+| 19 | FACT | **默认清屏色本身就带七成不透明，而且全 App 只有一份**：`eframe-0.37.0/src/epi.rs:251-258` 的 `App::clear_color` 默认返回 `Color32::from_rgba_unmultiplied(12, 12, 12, 180)`（alpha ≈ 0.706），注释明写"We use a bit of transparency so that if the user switches on the `transparent()` option they get immediate results"；本仓**没有覆写**它（`crates/ice-app/src/` 全根零命中）。而 wgpu 那条路对**每一扇窗**都用这一份（`wgpu_integration.rs:833-841` 的 `app.clear_color(...)` 在按视口循环里）。⇒ **只开事实 16 那一格还不够**：缝里没画东西的地方会被清成"七成不透明的深灰"，看起来是一层暗纱而不是真透明；今天之所以看不出来，是因为合成模式是 `Auto`（不透明），alpha 被丢掉了。所以本包必须同时把清屏色覆写成**全透明**，主窗的实心则靠"egui 把整个客户区铺满不透明底色"来保证——**这一格是停止条件 8 要量的东西，不是可以假设的东西** | `eframe-0.37.0/src/epi.rs:251-258`、`native/wgpu_integration.rs:833-841`、`egui-wgpu-0.37.0/src/winit.rs:690-695`（清屏色进 `LoadOp::Clear` 的 a 分量），2026-11-09 读源码 + 本仓 grep |
 
 ## 行为与验收
 
@@ -119,7 +120,7 @@ AND 这个字段 SHALL NOT 承载任何用户内容（它只是一个"提示过�
 
 WHEN 在 Linux / Windows 上跑
 THEN 透明浮空这一档 SHALL 按 NFR-7 的分档口径登记（未证 = 未证，不许写成"三平台一致"）；
-AND 若 T-001 证伪 H1（透明在 glow 后端上透不出来）或 H2 成立且绕不开，SHALL 退回"带子是窗口一部分"的旧形态并**如实说一句为什么**，SHALL NOT 用"画成桌面色"假装浮空；
+AND 若 T-001 证伪 H1（透明在 wgpu 后端上透不出来，或本机 surface 不支持带透明的 `CompositeAlphaMode`）或 H2 成立且绕不开，SHALL 退回"带子是窗口一部分"的旧形态并**如实说一句为什么**，SHALL NOT 用"画成桌面色"假装浮空；
 AND 非 macOS 上首用提示与那一个 bool SHALL 照常成立（它与透明无关）。
 验证层次：静态核查（平台判定不许散进 views，延续 CHG-010 V-004 那条）+ 真机只有 mac 这一档能走；Linux/Windows 那两格登记为"本机给不出"。
 
@@ -146,27 +147,28 @@ AND `docs/01` 的 NFR-3 隐私口径 SHALL 不被本包改动（首用提示那�
 
 **批准即允许**：仓外探针取证（不进仓、不提交）；本地实现与验证；改 `crates/ice-app/src/system/pin.rs`（药丸几何与绘制、跟随、收放）、`crates/ice-app/src/state.rs`（首用提示那一格状态与意图）、`crates/ice-app/src/app.rs`（接线与帧末交付）、`crates/ice-app/src/views/mod.rs` 或贴图窗绘制处（提示那一格）、`crates/ice-core/src/config.rs`（**只加 REQ-006 那一个 bool**）；复用 CHG-010 那份线稿图标资产；回写 REQ-008 列的文档；本地 commit + 同号 patch 进待批队列。
 
-**事实 16/18 逼出来的三处额外落点（同在本包批准范围内，不另开包）**：
+**事实 16/18/19 逼出来的四处额外落点（同在本包批准范围内，不另开包）**：
 
-- `crates/ice-app/src/main.rs`：**只改 `NativeOptions::viewport` 那一格透明开关**。事实 16 证明 glow 的 GL alpha 只从主窗那一份 NativeOptions 读、每进程一次，所以"只给药丸窗开透明"必然落进只记一条 error 就照样建窗的路径（缝里黑块）。这一格是 H1 成立的必要条件，绕不开。主窗与贴图窗各自的 `with_transparent(false)` 保持不动（子窗显式值不继承，事实 16），主窗是否仍然实心由 T-001 第四档量。
+- `crates/ice-app/src/main.rs`：**只改 `NativeOptions::viewport` 那一格透明开关**（`transparent: Some(true)`）。事实 16 证明 wgpu 的 `support_transparent_backbuffer` 只从主窗那一份 NativeOptions 读、**全进程一个 `Painter` 读一次**，此后每扇窗的 surface 都按这一格选合成模式；只给药丸窗开 `with_transparent(true)` 而不动这一格，surface 会退回 `Auto`（不透明），缝里照样是实底。这一格是 H1 成立的必要条件，绕不开。主窗与贴图窗各自的 `with_transparent(false)` 保持不动（wgpu 这条路没有子窗继承逻辑，事实 16），主窗是否仍然实心由 T-001 第五档量。
+- `crates/ice-app/src/app.rs`：**覆写 `App::clear_color` 为全透明**（`[0.0; 4]`）。事实 19：默认那一份是 `(12,12,12,180)`、七成不透明，且对每一扇窗都用它；不覆写的话缝里是一层暗纱。覆写之后主窗的实心**只能靠"egui 把整个客户区铺满不透明底色"来保证**，这一格必须量、不许假设（停止条件 8）。除这一格与既有接线外不动 app.rs 别的东西。
 - 新建 `crates/ice-app/src/system/pill.rs`：药丸窗自己那一扇（事实 18 那条形状核查不许 `pin.rs` 发位置命令，药丸窗的位置命令只能落在另一个模块，且值只来自一个纯函数）。
 - 线稿画法抽到**一处共用**：`selection.rs:1066` 的 `icon_button` 现在是私有函数、`BarIcon` 只有对勾/复制/保存三颗。本包把画法提成共用一处并加「翻译」那一颗（双气泡线稿，形状语言照 `system/tray.rs:216-222` 那两只气泡的比例，**不动 tray.rs 的位图栅格化**——那是他已点头的观感），两条药丸都从这一处读。这是节点收尾的抽公共纪律，不是新抽象。
 
 **停止条件**（任一命中就停下来报告，不自作替代路径）：
 
-1. **H1 证伪**——透明在 glow 后端上透不出来（缝里是黑块/清屏色）：退回旧带子形态，如实说，走 `deviation` 登记，不许用桌面色假装（REQ-007）。
+1. **H1 证伪**——三层全开之后透明仍透不出来（缝里是实底、暗纱、或被混合回填成清屏色），或本机 wgpu surface 不支持任何带透明的 `CompositeAlphaMode`（`winit.rs:272-305` 那条 warn + `Auto` 退回真的发生）：退回旧带子形态，如实说，走 `deviation` 登记，不许用桌面色假装（REQ-007）。
 2. **H2 成立且 (b) 也绕不开**——另起药丸窗之后仍有可感知的隐形陷阱（圆角外那几像素吃点击吃到用户能撞见）：停下来报工作量与候选，不自行砍掉"浮空"这个要求。
 3. **四件跟随里任一件在真机上坏了**（拖动时药丸 lag/闪、置顶不一致、关图留下药丸孤窗、收放后药丸错位）：那是行为回归，退回评审，不许留半接通的链在他每天用的入口上（第 65 号立的纪律）。
 4. 任一实现要求**新增 crate 名**：先回来批准。
 5. **配置面超出 REQ-006 那一个 bool**：先回来批准。
 6. 需要动 CHG-010 的选区层或 `cover.rs` 的层级判据才能做完：那是改另一包的已批准行为，走 `revise`，不在本包里顺手改。
 7. **D-29 那一族回退**（按钮点不动 / 右键弹不出 / esc 进不来）任一再现：立刻退回旧路径，新码留在仓里不接线（用户 2026-11-09 定的纪律）。
-8. **开进程级 alpha 之后主窗或贴图窗不再实心**（没画到的地方露出桌面、或失焦半透明那一档 `setAlphaValue` 的行为变了）：停下来报读数与候选，不许 ship 一扇看穿的主窗——他的冷灰白基底是已点头的观感，本包只许动贴图下方那条。
+8. **进程级 alpha + 全透明清屏色之后主窗或贴图窗不再实心**（没画到的地方露出桌面、或失焦半透明那一档 `setAlphaValue` 的行为变了）：这是事实 16 与事实 19 各自都能单独造成的后果——前者改每一扇窗的合成模式，后者改每一扇窗的清屏色。停下来报读数与候选，不许 ship 一扇看穿的主窗——他的冷灰白基底是已点头的观感，本包只许动贴图下方那条。
 9. **事实 18 那条形状核查不许悄悄删**：走 (b) 就必须把它按原意拆成两条（贴图窗仍不许被发位置命令；药丸窗只许一处发、值只来自纯函数），并把这次改口写进 REQ-008 的文档回写。删断言迁就实现是本仓明令禁止的那一类（CHG-010 V-001 的注记）。
 
 ## 时间估算
 
-- T-001 探针取证（三档各跑一轮 + 读数回写）：0.5~1 小时，**不含等待**；探针在仓外，结论与判据写回本文件事实表。
+- T-001 探针取证（五档各跑一轮 + 读数回写）：0.5~1 小时，**不含等待**；探针在仓外，结论与判据写回本文件事实表。
 - 药丸几何 + 绘制 + 跟随（REQ-001~004）：2~4 小时，其中"跟随四件事"是最不确定的一块（H3）。
 - 首用提示 + 那一个 bool（REQ-005/006）：1~1.5 小时。
 - 文档回写与证据一次性留档（REQ-008）：0.5~1 小时。**注意**：`docs/` 在树指纹内，改文档会使已录证据过期，所以走查与 `check`/`record` 要在文档定稿之后一次性做完。

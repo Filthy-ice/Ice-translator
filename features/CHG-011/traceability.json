@@ -199,7 +199,7 @@
       "kind": "VERIFIED_RUNTIME",
       "environment": "sandbox",
       "required": true,
-      "note": "T-001 四档探针读数（仓外探针，不进仓不提交）：① 只开子窗那一层 → 预期黑块 + 那条 error 日志；② 两层都开且缝里不画 → 缝里透出背后纯色窗（只取探针窗那一块的像素，不整屏抓）；③ 透明区吃不吃点击 + (b) 的残留死区量级与 (a) 对比；④ 开进程级 alpha 后主窗与贴图窗仍实心、失焦半透明那一档未变。读数用 record 导入，逐条抄回 spec.md 事实表把 H1/H2/H3 改成 FACT 或写明证伪。量不到的两格明写：跟手与闪不闪归 W-7.2、本机无 HiDPI 档"
+      "note": "T-001 五档探针读数（仓外探针，不进仓不提交）。三格开关：① 进程级 NativeOptions::viewport.transparent、② 那一扇窗的 with_transparent(true)、③ App::clear_color 全透明（事实 16/19）。五档：第一档 只开②不开① → 预期 egui-wgpu winit.rs:272-305 那条 warn、合成模式退回 Auto、缝里实底；第二档 ①② 开且③ 不动 → 预期一层七成不透明的暗纱；第三档 三格全开且缝里不画 → 缝里透出背后纯色窗（只取探针窗那一块的像素，不整屏抓）；第四档 三格全开且缝里画 alpha=0 的矩形（看混合会不会回填成清屏色）+ 透明区吃不吃点击 + (b) 的残留死区量级与 (a) 对比——命中归属用 AppKit windowNumberAtPoint:belowWindowWithWindowNumber: 逐点问，不许用 CGEventPost 注入（本机注入坐标偏出几百点，判命中是伪证据）；第五档 三格全开后主窗与贴图窗仍实心、失焦半透明那一档未变。读数用 record 导入，逐条抄回 spec.md 事实表把 H1/H2/H3 改成 FACT 或写明证伪。量不到的两格明写：跟手与闪不闪归 W-7.2、本机无 HiDPI 档"
     },
     {
       "id": "V-010",
