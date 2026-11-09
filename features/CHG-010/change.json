@@ -170,6 +170,142 @@
       "at": "2026-11-09T07:37:49+00:00",
       "action": "transition",
       "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-11-09T08:40:42+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:40:43+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:40:44+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-003",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:40:44+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-004",
+        "result": "failed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:40:44+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-007",
+        "result": "failed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:41:31+00:00",
+      "action": "replan",
+      "detail": "V-004/V-007 两条静态核查的判据收窄（裸词→路径字面量、任何出现→只看代码行），被解释性注释误伤两次"
+    },
+    {
+      "at": "2026-11-09T08:41:32+00:00",
+      "action": "seal-plan",
+      "detail": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7"
+    },
+    {
+      "at": "2026-11-09T08:41:32+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-11-09T08:41:32+00:00",
+      "action": "task-done",
+      "detail": "T-004"
+    },
+    {
+      "at": "2026-11-09T08:41:32+00:00",
+      "action": "task-done",
+      "detail": "T-005"
+    },
+    {
+      "at": "2026-11-09T08:41:32+00:00",
+      "action": "task-done",
+      "detail": "T-006"
+    },
+    {
+      "at": "2026-11-09T08:41:32+00:00",
+      "action": "task-done",
+      "detail": "T-007"
+    },
+    {
+      "at": "2026-11-09T08:41:33+00:00",
+      "action": "task-done",
+      "detail": "T-008"
+    },
+    {
+      "at": "2026-11-09T08:41:45+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:41:45+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:41:46+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-003",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:41:46+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-004",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:41:46+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-007",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:41:46+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-005",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T08:42:12+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-005",
+        "result": "observed"
+      }
     }
   ],
   "approval": {
@@ -185,5 +321,5 @@
       "ice-translator": "main"
     }
   },
-  "plan_hash": "d11eac0bc36552bceb53913b17057d1f8dc221ea0356788b73ee2d6ae17d9692"
+  "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7"
 }

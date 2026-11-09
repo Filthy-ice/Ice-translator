@@ -1,3 +1,330 @@
 {
-  "events": []
+  "events": [
+    {
+      "at": "2026-11-09T08:40:42+00:00",
+      "verification": "V-001",
+      "requirements": [
+        "REQ-101",
+        "REQ-102",
+        "REQ-103",
+        "REQ-104",
+        "REQ-105",
+        "REQ-106",
+        "REQ-107",
+        "REQ-108"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": false
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "d11eac0bc36552bceb53913b17057d1f8dc221ea0356788b73ee2d6ae17d9692",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"--workspace\"] exit=0",
+      "artifact": "evidence/0001-V-001.txt",
+      "artifact_hash": "1bb8ba480464397880c09b0d1997a4cb45327cb4b882d36b2c8d6424be6d1638"
+    },
+    {
+      "at": "2026-11-09T08:40:43+00:00",
+      "verification": "V-002",
+      "requirements": [
+        "REQ-102",
+        "REQ-108"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "d11eac0bc36552bceb53913b17057d1f8dc221ea0356788b73ee2d6ae17d9692",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-app\", \"selection\"] exit=0",
+      "artifact": "evidence/0002-V-002.txt",
+      "artifact_hash": "f98c100bb3605cc3cb0a4dff01b6cb8d434d6d9defc37421df97b7e239115983"
+    },
+    {
+      "at": "2026-11-09T08:40:44+00:00",
+      "verification": "V-003",
+      "requirements": [
+        "REQ-104",
+        "REQ-105"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "d11eac0bc36552bceb53913b17057d1f8dc221ea0356788b73ee2d6ae17d9692",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-app\", \"capture\"] exit=0",
+      "artifact": "evidence/0003-V-003.txt",
+      "artifact_hash": "58cc2d87fe12828f1a3b955eaa1913076233e2d5345dca5de3402656c43cbd45"
+    },
+    {
+      "at": "2026-11-09T08:40:44+00:00",
+      "verification": "V-004",
+      "requirements": [
+        "REQ-101",
+        "REQ-106",
+        "REQ-107"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "d11eac0bc36552bceb53913b17057d1f8dc221ea0356788b73ee2d6ae17d9692",
+      "result": "failed",
+      "summary": "argv=[\"bash\", \"-c\", \"test $(grep -Rl 'screencapture' crates/ice-app/src | wc -l) -eq 1 && ! grep -Rn 'cfg(target_os' crates/ice-app/src/views\"] exit=1",
+      "artifact": "evidence/0004-V-004.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-09T08:40:44+00:00",
+      "verification": "V-007",
+      "requirements": [
+        "REQ-101",
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "d11eac0bc36552bceb53913b17057d1f8dc221ea0356788b73ee2d6ae17d9692",
+      "result": "failed",
+      "summary": "argv=[\"bash\", \"-c\", \"test $(grep -Rl 'setLevel' crates/ice-app/src | wc -l) -le 1 && ! grep -Rn 'Fullscreen(true)' crates/ice-app/src\"] exit=1",
+      "artifact": "evidence/0005-V-007.txt",
+      "artifact_hash": "e1c78ad466d2a46fe5810be163002abe87711f7df24120782ff9162ad17cce65"
+    },
+    {
+      "at": "2026-11-09T08:41:45+00:00",
+      "verification": "V-001",
+      "requirements": [
+        "REQ-101",
+        "REQ-102",
+        "REQ-103",
+        "REQ-104",
+        "REQ-105",
+        "REQ-106",
+        "REQ-107",
+        "REQ-108"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"--workspace\"] exit=0",
+      "artifact": "evidence/0006-V-001.txt",
+      "artifact_hash": "be0323ef94989f5aebed301d856263017a25360e1a47f71d9f2c8e17b8d9657a"
+    },
+    {
+      "at": "2026-11-09T08:41:45+00:00",
+      "verification": "V-002",
+      "requirements": [
+        "REQ-102",
+        "REQ-108"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-app\", \"selection\"] exit=0",
+      "artifact": "evidence/0007-V-002.txt",
+      "artifact_hash": "3c259302ccc38018be6990bd8ffa54239cc4b4096d64b998a865ebf8301347fe"
+    },
+    {
+      "at": "2026-11-09T08:41:46+00:00",
+      "verification": "V-003",
+      "requirements": [
+        "REQ-104",
+        "REQ-105"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-app\", \"capture\"] exit=0",
+      "artifact": "evidence/0008-V-003.txt",
+      "artifact_hash": "7e79a19783b9cc23a7a0b2254687f345978deec88eae940bfa0735de7c978f2b"
+    },
+    {
+      "at": "2026-11-09T08:41:46+00:00",
+      "verification": "V-004",
+      "requirements": [
+        "REQ-101",
+        "REQ-106",
+        "REQ-107"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "argv=[\"bash\", \"-c\", \"test $(grep -Rl '/usr/sbin/screencapture' crates/ice-app/src | wc -l) -eq 1 && ! grep -Rn 'cfg(target_os' crates/ice-app/src/views\"] exit=0",
+      "artifact": "evidence/0009-V-004.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-09T08:41:46+00:00",
+      "verification": "V-007",
+      "requirements": [
+        "REQ-101",
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "argv=[\"bash\", \"-c\", \"test $(grep -Rl '\\\\.setLevel(' crates/ice-app/src | wc -l) -le 1 && ! (grep -Rn 'Fullscreen(true)' crates/ice-app/src --include='*.rs' | grep -vE ':[0-9]+: *//') | grep -q .\"] exit=0",
+      "artifact": "evidence/0010-V-007.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-09T08:41:46+00:00",
+      "verification": "V-005",
+      "requirements": [
+        "REQ-101",
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "六轮仓外探针读数（H1/H2/H5 + 抬层三档台阶 + 每屏一扇 + esc 靠激活），文件在仓外、探针不进仓",
+      "artifact": "evidence/0011-V-005.txt",
+      "artifact_hash": "db53dbf3d735a328c19568664480cd1eeeadf90f2eb26248132b29ca14319a3e"
+    },
+    {
+      "at": "2026-11-09T08:42:12+00:00",
+      "verification": "V-005",
+      "requirements": [
+        "REQ-101",
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "b99488955641ca41c2d0e90ca315fc1797d58b2c",
+        "tree_hash": "69391e669ee77485e8a76927ac0c54d8614e2af242f0e6f06967654cfa4138b5",
+        "dirty": true
+      },
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "observed",
+      "summary": "六轮仓外探针读数的**转录汇总**（原始 out.log 在 /tmp，跑完即弃；探针不进仓）。含：H1/H2/H5 三条成立、抬层三档台阶（0,63,1920x953 → 0,31,1920x1080 → layer=25 整屏）、每屏一扇可行、esc 靠应用激活且激活异步、AppKit 与窗口服务器短时不一致、多屏抓屏必须点名 -D 且 -R 不吃负坐标。一条读数作废：Swift 自建进程没能激活，故'收尾后焦点回不回'仍无结论（W-6.6）",
+      "artifact": "evidence/0012-V-005.txt",
+      "artifact_hash": "0fb328a1ec14da812a46882580224dd429248580c469860247bae02b314aafd4"
+    }
+  ]
 }

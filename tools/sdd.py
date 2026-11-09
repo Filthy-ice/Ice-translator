@@ -27,7 +27,11 @@ SECRETS = {
     'credential': re.compile(r'(?i)\b(?:password|api[_-]?key|secret|access[_-]?token)\s*[=:]\s*["\']?(?!\[REDACTED\]|<|\$)[A-Za-z0-9+/_.-]{12,}'),
     'private-ip': re.compile(r'\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b'),
     'email': re.compile(r'\b[A-Za-z0-9._%+-]+@(?!example\.(?:com|org|net)\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'),
-    'phone-cn': re.compile(r'(?<!\d)1[3-9]\d{9}(?!\d)'),
+    # 前后都不许挨着十六进制字符：内容寻址的 `artifact_hash` 里会出现
+    # `...32819568664480...` 这种 11 位数字串，按老写法它就叫"疑似手机号"，
+    # 于是每一次正常留档都会被自己的门禁拦下。真正的手机号出现在文本里时
+    # 两侧不会是 a-f；这里收窄的只有"嵌在哈希里的一串数字"这一种误报。
+    'phone-cn': re.compile(r'(?<![0-9a-f])1[3-9]\d{9}(?![0-9a-f])'),
     'internal-host': re.compile(r'https?://[^\s/]+\.(?:internal|local|corp)(?:[/\s]|$)'),
 }
 

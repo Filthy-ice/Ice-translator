@@ -1,0 +1,69 @@
+
+running 22 tests
+test state::tests::clearing_a_selection_is_a_write_not_a_no_op ... ok
+test state::tests::a_selection_yields_text_or_nothing_not_an_empty_string ... ok
+test system::selection::tests::a_click_on_blank_keeps_the_previous_box_for_the_window_hit ... ok
+test system::selection::tests::a_blank_drag_makes_a_selection_whose_label_matches_its_pixels ... ok
+test system::selection::tests::a_drag_that_leaves_the_screen_is_clamped_not_lost ... ok
+test system::selection::tests::a_handle_moves_only_the_edges_it_should ... ok
+test system::selection::tests::a_recognised_window_is_confirmed_and_clamped ... ok
+test system::selection::tests::cancelling_drops_the_box_and_lands_in_one_terminal_state ... ok
+test system::selection::tests::confirming_an_empty_selection_does_nothing ... ok
+test system::selection::tests::crossing_the_slop_turns_a_click_into_a_drag ... ok
+test system::selection::tests::dragging_inside_moves_the_box_and_keeps_its_size ... ok
+test system::selection::tests::one_press_lands_on_exactly_one_of_the_three_cases ... ok
+test system::selection::tests::the_action_bar_flips_above_when_it_would_not_fit_below ... ok
+test system::selection::tests::the_left_screen_with_negative_coordinates_uses_the_same_rules ... ok
+test system::selection::tests::the_point_to_pixel_conversion_happens_once_and_refuses_to_guess ... ok
+test app::tests::a_drag_selection_lands_on_its_own_pin_only ... ok
+test views::settings::tests::manual_values_survive_a_preset_selection_and_still_win ... ok
+test views::settings::tests::the_collapsed_row_counts_the_selection_instead_of_naming_it ... ok
+test app::tests::bare_c_dispatches_between_text_and_image_by_selection ... ok
+test state::tests::cancelling_a_capture_leaves_no_selection_and_no_path ... ok
+test state::tests::a_selection_belongs_to_the_screen_it_was_started_on ... ok
+test state::tests::a_confirmed_selection_crops_to_the_size_the_label_promised ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 484 filtered out; finished in 0.02s
+
+
+warning: variant `ScreenCapture` is never constructed
+   --> crates/ice-app/src/state.rs:288:5
+    |
+259 | pub enum Job {
+    |          --- variant in this enum
+...
+288 |     ScreenCapture {
+    |     ^^^^^^^^^^^^^
+    |
+    = note: `Job` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `id` is never read
+   --> crates/ice-app/src/state.rs:596:9
+    |
+594 | pub struct Capture {
+    |            ------- field in this struct
+595 |     /// 这次截图的序号，与识别/翻译那三条互不作废（第四条通道的那一条纪律）
+596 |     pub id: RequestId,
+    |         ^^
+    |
+    = note: `Capture` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `confirmed_capture` is never used
+    --> crates/ice-app/src/state.rs:1645:12
+     |
+1008 | impl AppState {
+     | ------------- method in this implementation
+...
+1645 |     pub fn confirmed_capture(&self) -> Option<&std::path::PathBuf> {
+     |            ^^^^^^^^^^^^^^^^^
+
+warning: function `is_click` is never used
+   --> crates/ice-app/src/system/selection.rs:158:8
+    |
+158 | pub fn is_click(from: egui::Pos2, to: egui::Pos2) -> bool {
+    |        ^^^^^^^^
+
+warning: `ice-app` (bin "ice-translator" test) generated 4 warnings
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.50s
+     Running unittests src/main.rs (target/debug/deps/ice_translator-fec042200a847954)

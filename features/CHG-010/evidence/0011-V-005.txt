@@ -1,0 +1,28 @@
+BOOT ppp=1.00 screen=[[0.0 0.0] - [400.0 300.0]] radius=10
+t=0.126 MASK-OPEN pid=60050
+t=1.400 DRAG-START #0
+t=1.413 DRAG-UP #0
+t=2.313 DRAG-START #1
+t=2.317 DRAG-UP #1
+t=3.217 DRAG-START #2
+t=3.217 DRAG-UP #2
+t=4.118 DRAG-START #3
+t=4.121 DRAG-UP #3
+t=5.021 DRAG-START #4
+t=5.024 DRAG-UP #4
+t=5.925 DRAG-START #5
+t=5.928 DRAG-UP #5
+t=6.500 NUDGE OuterPosition(0,0) + InnerSize(1920,1080)
+t=6.828 DRAG-START #6
+t=6.832 DRAG-UP #6
+t=8.001 LEVEL-BUMP level=25 frame 0,-31,1920x1080 -> 0,0,1920x1080 screen=0,0,1920x1080
+t=8.601 DRAG-START #5
+t=8.604 DRAG-UP #5
+t=9.505 DRAG-START #6
+t=9.508 DRAG-UP #6
+t=21.010 ROOT-HIDE Visible(false)
+t=23.002 HOLD-END 遮罩单独在屏（外部在此刻前后各抓一次整屏区域）
+t=25.004 ROOT-SHOW-AGAIN Visible(true)
+t=26.507 MASK-MAKE-KEY requested from side thread
+t=26.508 MASK-MAKE-KEY key=false visible=true
+t=28.010 ESC-POSTED

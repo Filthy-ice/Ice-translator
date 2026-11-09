@@ -51,8 +51,10 @@
         "REQ-102"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/selection.rs"
+      ]
     },
     {
       "id": "T-005",
@@ -62,8 +64,10 @@
         "REQ-102"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/app.rs"
+      ]
     },
     {
       "id": "T-006",
@@ -72,8 +76,10 @@
         "REQ-103"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/selection.rs"
+      ]
     },
     {
       "id": "T-007",
@@ -83,8 +89,10 @@
         "REQ-102"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/app.rs"
+      ]
     },
     {
       "id": "T-008",
@@ -94,8 +102,10 @@
         "REQ-106"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/app.rs"
+      ]
     },
     {
       "id": "T-009",

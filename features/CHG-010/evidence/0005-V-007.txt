@@ -1,0 +1,2 @@
+crates/ice-app/src/system/cover.rs:18://! 3. **不拿 `Fullscreen(true)` 顶替**：那是切一个 Space、带切换动画，为截图这一件事动系统级状态
+
