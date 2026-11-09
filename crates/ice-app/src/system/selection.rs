@@ -57,6 +57,10 @@ pub const CLICK_SLOP: f32 = 3.0;
 /// 只有用户的眼睛能定，改这一格不动任何逻辑。
 pub const DIM: u8 = 140;
 
+/// 认出的那扇窗的边色（REQ-108）。与选区的白边分开：白边是"我自己框的"，
+/// 这一圈是"系统替我认的，单击就拿走"，两种含义不该用同一种颜色说。
+pub const HOVER_EDGE: egui::Color32 = egui::Color32::from_rgb(90, 170, 255);
+
 /// 一块屏 + 它的像素尺寸。**点↔像素的换算只能从这里过**（[`Field::to_pixels`]）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Field {
@@ -232,7 +236,7 @@ impl Selection {
         match self.grab {
             Grab::Blank => {
                 // 没超过阈值的"拖"还是单击：不许一抖就把用户的旧框顶掉
-                if !self.moved && (to - self.anchor).length() <= CLICK_SLOP {
+                if !self.moved && is_click(self.anchor, to) {
                     return;
                 }
                 self.moved = true;
@@ -802,12 +806,14 @@ fn slot_of(ctx: &egui::Context, display: u8) -> std::sync::Arc<std::sync::Mutex<
 
 /// 一扇遮罩这一帧要画的东西。
 pub struct MaskScreen {
-    /// 第几块屏（也是 `Selection` 的坐标归属）
-    pub screen: usize,
     /// `-D` 的序号，用来命名窗口与配对
     pub display: u8,
     /// 那块屏的点尺寸
     pub points: Vec2,
+    /// 那块屏的全局左上角（与系统窗口表同一坐标系）。认窗靠它把全局矩形换回本地。
+    pub origin: Pos2,
+    /// 认窗那一份快照（整段遮罩期间不变，见 `system::windows::Snapshot`）
+    pub windows: std::sync::Arc<crate::system::windows::Snapshot>,
     /// 冻结帧的纹理（**由根上下文加载**，与贴图那一条同一个做法）
     pub texture: egui::TextureId,
 }
@@ -827,14 +833,16 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         .with_transparent(false)
         .with_has_shadow(false)
         // 这一档只是**下限**：真盖住 Dock 与菜单栏靠 `system::cover` 那一次原生抬层，
-        // 每帧幂等重下。留着它是为了让抬层失败时退回"至少还置顶在普通窗之上"。
+        // 头几帧幂等重下、收敛即收手。留着它是为了让抬层失败时退回"至少还置顶在普通窗之上"。
         .with_always_on_top()
         .with_position(egui::pos2(0.0, 0.0))
         .with_inner_size(screen.points);
 
     let texture = screen.texture;
     let points = screen.points;
-    // 闭包要 'static：把这一帧要用的三个数**按值**带走，不带引用
+    let origin = screen.origin;
+    let windows = screen.windows.clone();
+    // 闭包要 'static：把这一帧要用的几个数**按值**带走，不带引用
 
     let root = ctx.clone();
     let slot = slot_of(ctx, display);
@@ -847,6 +855,16 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             d.get_temp::<Selection>(sel_key(display))
                 .unwrap_or_default()
         });
+        let mut changed = false;
+        let here = ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO);
+        let holding = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+        // 认窗（REQ-108）：**还没框、也没在拖**的时候，鼠标底下那扇应用窗亮出来。
+        // 已经有框就不再认——那会儿用户在调自己那个框，亮另一扇窗只会跟他抢注意力。
+        let hover = if next.rect.is_none() && !holding {
+            windows.candidate(origin, here, field.bounds)
+        } else {
+            None
+        };
         let full = ui.max_rect();
         // 整屏压暗
         ui.painter().image(
@@ -855,6 +873,21 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
             egui::Color32::from_rgb(DIM, DIM, DIM),
         );
+        // 认出的那扇窗：按原亮度亮出来 + 一圈强调色边。**不画把手**——它不是给用户调的，
+        // 单击就整扇拿下（画了把手反而像在说"你可以拖它"）。
+        if let (None, Some(rect)) = (next.rect, hover) {
+            let uv = Rect::from_min_max(
+                Pos2::new(rect.min.x / points.x, rect.min.y / points.y),
+                Pos2::new(rect.max.x / points.x, rect.max.y / points.y),
+            );
+            ui.painter().image(texture, rect, uv, egui::Color32::WHITE);
+            ui.painter().rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(2.0, HOVER_EDGE),
+                egui::StrokeKind::Inside,
+            );
+        }
         // 选区那块按原亮度 + 白边 + 八个把手
         if let Some(rect) = next.rect {
             let uv = Rect::from_min_max(
@@ -878,8 +911,10 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             }
         }
 
-        // 键盘：esc 取消、回车钉住。收不收得到取决于应用是否前台——那一步在 `cover::focus`，
-        // 每帧幂等重下（实测激活要一两帧才落地，"发一次就当成功"是错的）。
+        // 键盘：esc 取消、回车确认。收不收得到取决于应用是否前台——那一步在 `cover::focus`，
+        // 头几帧重下、收敛即收手（实测激活要一两帧才落地，"发一次就当成功"是错的）。
+        // **两个键都先过状态机再交意图**：esc 要把这一扇窗自己的框清掉，状态各窗自持，
+        // 主窗不会替它清，留着它下一次开遮罩就带着上一次的框。
         let keys: Vec<MaskOut> = child.input(|i| {
             i.events
                 .iter()
@@ -888,17 +923,24 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                         key: egui::Key::Escape,
                         pressed: true,
                         ..
-                    } => Some(MaskOut::Cancel),
+                    } => {
+                        next.cancel();
+                        Some(MaskOut::Cancel)
+                    }
                     egui::Event::Key {
                         key: egui::Key::Enter,
                         pressed: true,
                         ..
-                    } => next.rect.map(|rect| MaskOut::Confirm { display, rect }),
+                    } => {
+                        next.confirm();
+                        next.rect.map(|rect| MaskOut::Confirm { display, rect })
+                    }
                     _ => None,
                 })
                 .collect()
         });
         if !keys.is_empty() {
+            changed = true;
             if let Ok(mut queue) = slot.lock() {
                 queue.extend(keys);
             }
@@ -907,14 +949,9 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
 
         // 鼠标：按下落在哪 → 拖动 → 抬起。**状态就在这一扇窗自己身上读写**，
         // 不经过主窗一圈（上一版经过，于是"拖了没框"、"一闪一闪"、"左屏拖右屏跳框"）
-        let mut next = ui.ctx().data(|d| {
-            d.get_temp::<Selection>(sel_key(display))
-                .unwrap_or_default()
-        });
         let pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
-        let here = ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO);
-        let mut changed = false;
+        let had_box = next.rect.is_some();
         if pressed {
             next.press(&field, here, HANDLE_RADIUS);
             changed = true;
@@ -925,6 +962,19 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         }
         if released {
             next.release(&field, here);
+            // 空白单击 = 要鼠标底下那扇窗（REQ-108，用户原话"单击就相当于对整个应用界面
+            // 一样的大小进行了截图"）。**认不出来就什么都不做**：`release` 已经把押着的旧框
+            // 还回来了，不许顺手清掉它，也不许猜一个全屏框交出去。
+            if next.clicked() && !had_box {
+                if let Some(rect) = windows.candidate(origin, here, field.bounds) {
+                    next.take_window(&field, rect);
+                    tracing::info!("遮罩：单击认窗，整扇拿下 {rect:?}");
+                    if let Ok(mut queue) = slot.lock() {
+                        queue.push(MaskOut::Confirm { display, rect });
+                    }
+                    root.request_repaint();
+                }
+            }
             changed = true;
         }
         if changed {

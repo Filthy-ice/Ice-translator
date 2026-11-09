@@ -66,6 +66,7 @@ fn grab_one(temp: &std::path::Path, seq: u64, display: u8) -> Option<crate::stat
         // `apply_frozen` 用真实屏的矩形覆盖——**换算的真相在屏那一侧，不在这张图里**。
         points,
         appkit: egui::Rect::ZERO,
+        origin: egui::Pos2::ZERO,
         image: std::sync::Arc::new(image),
     })
 }
@@ -87,8 +88,6 @@ pub struct JobRunner {
 }
 
 impl JobRunner {
-    /// 测试用：把框选的执行体换成桩，**任何测试都不该真去起那个全屏交互工具**
-    #[cfg(test)]
     /// 换掉"抓一块屏"这件事的执行体（无头测试用，理由见 [`FreezeRun`]）。
     #[cfg(test)]
     pub fn set_freeze_runner<F>(&mut self, f: F)
@@ -98,6 +97,8 @@ impl JobRunner {
         self.freeze_run = Arc::new(f);
     }
 
+    /// 测试用：把框选的执行体换成桩，**任何测试都不该真去起那个全屏交互工具**
+    #[cfg(test)]
     pub fn set_capture_runner<F>(&mut self, f: F)
     where
         F: Fn(&std::path::Path, u64) -> capture::Outcome + Send + Sync + 'static,

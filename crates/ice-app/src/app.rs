@@ -87,7 +87,7 @@ pub struct IceApp {
     /// 只给测试用：无头环境里没有真的 `NSScreen` 可问，屏列表由测试喂进来
     /// （与 `JobRunner::set_capture_runner` 同一条理由：会问到真屏幕的路径不许被测试撞上）
     #[cfg(test)]
-    test_screens: Option<Vec<(u8, egui::Rect)>>,
+    test_screens: Option<Vec<crate::state::ScreenSpec>>,
     pending_save: PendingSave,
     /// 单实例锁。`on_exit` 里显式释放，进程被杀时靠 `Drop`（REQ-009）
     lock: Option<InstanceLock>,
@@ -1310,51 +1310,86 @@ impl IceApp {
     /// 开哪几扇窗、抬到哪一层、这一刻是不是前台，都是"这一帧的屏幕事实"，
     /// 所以放在帧循环而不是回信里（`apply_outcome` 只改状态，REQ-005 那条分层纪律）。
     fn draw_capture(&mut self, ctx: &egui::Context, effects: &mut Effects) {
+        if !self.state.capturing() {
+            return;
+        }
         let Some(capture) = self.state.capture.clone() else {
             return;
         };
         let mut outs: Vec<crate::system::selection::MaskOut> = Vec::new();
-        for (index, frame) in capture.frames.iter().enumerate() {
+        // 认窗那一份快照：整段遮罩期间只问系统一次（画面已冻结，问第二遍只会认出图里
+        // 不存在的窗）。问的动作放在帧循环而不是回信里——它要主线程，且属于"这一刻的屏幕事实"
+        let windows = match capture.windows.clone() {
+            Some(snapshot) => snapshot,
+            None => {
+                let snapshot = std::sync::Arc::new(crate::system::windows::Snapshot::take());
+                tracing::info!(
+                    "认窗：在线 {} 扇，自家归属名认作 {}",
+                    snapshot.entries.len(),
+                    snapshot.self_owner
+                );
+                if let Some(live) = self.state.capture.as_mut() {
+                    live.windows = Some(snapshot.clone());
+                }
+                snapshot
+            }
+        };
+        // 原生那两下（抬层 / 激活）只在头几帧重下。**配额是真的会减的**：减到 0 或已收敛
+        // 就一次都不再问，主窗也跟着睡——每帧枚举窗口、重设 frame 正是 D-31~D-34 把主线程
+        // 拖死的那条路（`Capture::push_frames`）
+        let pushing = capture.push_frames > 0;
+        let mut covers = true;
+        for frame in capture.frames.iter() {
             let title = crate::system::selection::mask_title(frame.display);
             crate::system::selection::show(
                 ctx,
                 &crate::system::selection::MaskScreen {
-                    screen: index,
                     display: frame.display,
                     points: frame.points,
+                    origin: frame.origin,
+                    windows: windows.clone(),
                     texture: freeze_texture(ctx, frame),
                 },
             );
-            // 抬层每帧幂等重下：实测 AppKit 与窗口服务器会短时不一致，
-            // 而且框架自己也会按 viewport 设置重摆这扇窗（与 D-26/D-27 同族）
-            let raised = crate::system::cover::cover_display(&title, frame.appkit);
-            if index == 0 {
-                self.state.set_raised(raised.covers);
+            if pushing {
+                // 幂等重下：实测 AppKit 与窗口服务器会短时不一致，而且框架自己也会按
+                // viewport 设置重摆这扇窗（与 D-26/D-27 同族）
+                covers &= crate::system::cover::cover_display(&title, frame.appkit).covers;
             }
             outs.extend(crate::system::selection::take_outs(ctx, frame.display));
         }
-        // esc 收不收得到取决于我们是不是前台（事实 9/16）。激活是异步的，
-        // 所以这句也每帧重下，读回来的值进状态、不当成功记账
-        let focus = crate::system::cover::focus(&crate::system::selection::mask_title(
-            capture.frames.first().map_or(1, |f| f.display),
-        ));
-        let had = self.state.capture_has_keyboard();
-        self.state.capture_key = focus.key;
-        if had != focus.key {
-            ctx.request_repaint();
+        let mut key = self.state.capture_has_keyboard();
+        if pushing {
+            self.state.set_raised(covers);
+            // esc 收不收得到取决于我们是不是前台（事实 9/16）。激活是异步的，
+            // 所以这几帧里重下，读回来的值进状态、不当成功记账
+            let focus = crate::system::cover::focus(&crate::system::selection::mask_title(
+                capture.frames.first().map_or(1, |f| f.display),
+            ));
+            if key != focus.key {
+                ctx.request_repaint();
+            }
+            key = focus.key;
+            self.state.capture_key = focus.key;
+            let settled = covers && key;
+            self.state.consume_push_frame(settled);
+            let left = self.state.capture.as_ref().map_or(0, |c| c.push_frames);
+            if settled {
+                tracing::info!("遮罩：抬层与激活已收敛，原生那两下收手");
+            } else if left == 0 {
+                tracing::warn!(
+                    "遮罩：重下 {} 帧仍没收敛（盖住={} 键盘={}），停手不再骚扰窗口服务器",
+                    crate::state::PUSH_FRAMES,
+                    covers,
+                    key
+                );
+            } else {
+                // 还没收敛就继续要帧：主窗一睡，这两下再也不会重试
+                ctx.request_repaint();
+            }
         }
         for out in outs {
             self.apply_mask_out(out, ctx, effects);
-        }
-        // 重下配额还没用完就一直要帧：不然主窗一睡，`push_frames` 永远不会减到 0，
-        // 抬层/激活再也不会重试，而日志里连"用尽"那行都不会出现（上一轮正是这个现象）
-        if self
-            .state
-            .capture
-            .as_ref()
-            .is_some_and(|c| c.push_frames > 0)
-        {
-            ctx.request_repaint();
         }
     }
 
@@ -1430,7 +1465,9 @@ impl IceApp {
         let Some(field) = capture.field() else {
             return false;
         };
-        capture.sel = crate::system::selection::Selection::from_rect(&field, rect);
+        let sel = crate::system::selection::Selection::from_rect(&field, rect);
+        // 选区与"它归哪块屏"只在状态层这一处写，测试走的也是同一个入口
+        self.state.apply_selection(index, sel);
         true
     }
 
@@ -1446,6 +1483,16 @@ impl IceApp {
         match capture::save_shot(&dir, &image, seq) {
             Ok(path) => {
                 self.state.capture_seq += 1;
+                // 确认即收尾：像素从状态里撤掉、遮罩那几扇窗跟着关，再走 CHG-009 那条钉图链
+                // （REQ-104）。**「对勾」与「固定」是同一件事**（用户 2026-11-09 晚原话），
+                // 所以这里不留"已确认还没钉"那一格给 F3——除非真钉不上（满了），
+                // 那就退回那一格并说一句，不许把已经落在盘上的这张悄悄丢掉
+                if self.state.pin_confirmed_capture(path.clone()).is_none() {
+                    self.state.confirm_capture(path.clone());
+                    self.state
+                        .toast(Tone::Warn, "屏幕上已经钉满 6 张，先 esc 关掉一张");
+                }
+                self.age_shots();
                 Some(path)
             }
             Err(kind) => {
@@ -2002,25 +2049,30 @@ const PIN_GONE_TEXT: &str = "那张贴图已经不在了，这张没保存";
 /// 屏序号按 `NSScreen` 列表的位置从 1 编（`-D1` 是主屏），并用**像素尺寸回核**绑定
 /// （见 `features/CHG-010/design.md` 那节追加）：两屏像素尺寸完全相同时这一核对分辨不出来，
 /// 那种情况下宁可只盖主屏并说一句，也不猜。
-fn capture_screens(_app: &IceApp) -> Vec<(u8, egui::Rect)> {
+fn capture_screens(_app: &IceApp) -> Vec<crate::state::ScreenSpec> {
     // 无头测试里没有真 `NSScreen` 可问，也不该让测试去猜这台机器插了几块屏：
     // 屏列表由测试喂（与 `set_capture_runner` 同一条理由）
     #[cfg(test)]
     if let Some(seeded) = &_app.test_screens {
         return seeded.clone();
     }
-    crate::system::screen::probe()
-        .unwrap_or_default()
+    let probed = crate::system::screen::probe().unwrap_or_default();
+    // 翻坐标系要主屏高度，而主屏就是列表第一块（`NSScreen.screens[0]`）。
+    // 只在这里翻一次：抬层用 AppKit 那份、认窗用左上原点那份，两份都跟着屏规格走。
+    let main_height = probed.first().map_or(0.0, |screen| screen.frame.h);
+    probed
         .into_iter()
         .enumerate()
         .map(|(index, screen)| {
-            (
-                index as u8 + 1,
-                egui::Rect::from_min_size(
-                    egui::pos2(screen.frame.x, screen.frame.y),
-                    egui::vec2(screen.frame.w, screen.frame.h),
-                ),
-            )
+            let appkit = egui::Rect::from_min_size(
+                egui::pos2(screen.frame.x, screen.frame.y),
+                egui::vec2(screen.frame.w, screen.frame.h),
+            );
+            crate::state::ScreenSpec {
+                display: index as u8 + 1,
+                origin: crate::system::screen::flip(screen.frame, main_height).min,
+                appkit,
+            }
         })
         .collect()
 }
@@ -2730,20 +2782,26 @@ mod tests {
         // 冻结那一支同样要接缝：默认给"两块屏"的形状（本机实测：主屏 + 左置那块），
         // 于是无头测试既不真抓屏、也不依赖测试机到底插了几块屏
         app.test_screens = Some(vec![
-            (
-                1,
-                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0)),
-            ),
-            (
-                2,
-                egui::Rect::from_min_size(egui::pos2(-2240.0, -320.0), egui::vec2(2240.0, 1400.0)),
-            ),
+            crate::state::ScreenSpec {
+                display: 1,
+                appkit: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0)),
+                origin: egui::Pos2::ZERO,
+            },
+            crate::state::ScreenSpec {
+                display: 2,
+                appkit: egui::Rect::from_min_size(
+                    egui::pos2(-2240.0, -320.0),
+                    egui::vec2(2240.0, 1400.0),
+                ),
+                origin: egui::pos2(-2240.0, 0.0),
+            },
         ]);
         app.runner.set_freeze_runner(|_path, _seq, display| {
             Some(crate::state::Freeze {
                 display,
                 points: egui::vec2(1920.0, 1080.0),
                 appkit: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0)),
+                origin: egui::Pos2::ZERO,
                 image: std::sync::Arc::new(image::RgbaImage::from_pixel(
                     8,
                     4,
@@ -5017,5 +5075,93 @@ mod tests {
             app.state.capture_stage,
             crate::state::CaptureStage::Capturing
         );
+    }
+
+    /// 遮罩开着、一块 40×30 的冻结帧、选区还没框。**认窗那份快照喂空的**：
+    /// 真去读在线窗口表就把这台机器的窗请进测试了，而这两条要锁的事与窗口表无关。
+    fn frozen_app(dir: &std::path::Path) -> IceApp {
+        let mut app = app(dir, plain_state());
+        app.state.capture = Some(crate::state::Capture {
+            frames: vec![crate::state::Freeze {
+                display: 1,
+                points: egui::vec2(40.0, 30.0),
+                appkit: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(40.0, 30.0)),
+                origin: egui::Pos2::ZERO,
+                image: std::sync::Arc::new(image::RgbaImage::from_pixel(
+                    40,
+                    30,
+                    image::Rgba([9, 8, 7, 255]),
+                )),
+            }],
+            screen: 0,
+            sel: crate::system::selection::Selection::fresh(),
+            raised: true,
+            push_frames: crate::state::PUSH_FRAMES,
+            windows: Some(std::sync::Arc::new(
+                crate::system::windows::Snapshot::default(),
+            )),
+        });
+        app.state.capture_stage = crate::state::CaptureStage::Frozen;
+        app
+    }
+
+    /// 确认之后**遮罩必须关、图必须钉上去**。这两件事我都漏过：裁完落盘就 return，
+    /// 状态里的 `capture` 还在，于是屏上那扇遮罩一动不动，用户以为"点对勾没反应"
+    /// （他 2026-11-09 晚原话："点了对号也不固定图片到屏幕上也不退出截图模式"）。
+    /// 「对勾」与「固定」是同一件事，所以钉上去之后那一次"只识别"也要派得出去。
+    #[test]
+    fn confirming_closes_the_mask_and_pins_the_shot() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = frozen_app(dir.path());
+        assert!(app.focus_capture(
+            1,
+            egui::Rect::from_min_max(egui::pos2(2.0, 3.0), egui::pos2(22.0, 18.0))
+        ));
+
+        let path = app.confirm_capture().expect("确认该裁得出一张");
+        assert!(path.exists(), "确认之前不许落盘，确认之后必须落盘");
+        assert!(
+            app.state.capture.is_none(),
+            "确认之后遮罩还留着：用户会以为对勾没生效"
+        );
+        assert!(!app.state.capturing());
+        assert_eq!(app.state.pins.len(), 1, "对勾就是固定，不许只落盘不钉");
+        assert_eq!(
+            app.state.pins_new.len(),
+            1,
+            "钉上去之后那一次只识别要派得出去（与另两条来源同一个出口）"
+        );
+        assert_eq!(app.state.capture_stage, crate::state::CaptureStage::Pinned);
+    }
+
+    /// 抬层/激活那两下**只在头几帧重下**，而且配额由帧循环真的减掉。
+    /// 上一版帧循环读了 `push_frames > 0` 却从不减它，于是遮罩开着就每帧枚举窗口、
+    /// 重设 frame，把主线程拖死（D-31~D-34）。这条锁的是**接线**，不是那个减法本身
+    /// （减法自己另有 `the_native_repush_quota_is_spent_and_then_stops`）。
+    #[test]
+    fn the_frame_loop_spends_the_native_repush_quota() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = frozen_app(dir.path());
+        let c = ctx();
+        let before = app.state.capture.as_ref().unwrap().push_frames;
+        // 遮罩要画在真的一个 egui pass 里（deferred viewport 当场就要字体），
+        // 裸 Context 上直接调会在 egui 内部 panic，那不是本条要测的事
+        c.run_ui(egui::RawInput::default(), |_ui| {
+            app.draw_capture(&c, &mut Effects::default());
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(
+            app.state.capture.as_ref().unwrap().push_frames,
+            before - 1,
+            "跑了一帧却没减配额：遮罩会永远每帧重下原生命令"
+        );
+
+        // 配额用尽之后那一帧：不再减（不许回绕）
+        app.state.capture.as_mut().unwrap().push_frames = 0;
+        c.run_ui(egui::RawInput::default(), |_ui| {
+            app.draw_capture(&c, &mut Effects::default());
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(app.state.capture.as_ref().unwrap().push_frames, 0);
     }
 }

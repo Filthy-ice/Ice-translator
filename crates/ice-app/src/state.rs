@@ -285,6 +285,10 @@ pub enum Job {
     /// 发起一次区域截图（CHG-009 REQ-001）。**只带自增号，不带路径**：历史目录在哪
     /// 只有 `system::capture` 知道，状态层不许知道文件系统的事（REQ-005 那条分层纪律）。
     /// 跑在 `spawn_blocking` 里，因为它会**阻塞到用户画完为止**。
+    ///
+    /// CHG-010 之后派发口只发 [`Job::Freeze`]，这一支**留着不接线**：新旧两条链的切换
+    /// 就改 `submit_capture` 那一格，真机再报缺陷时退回来只动一行（用户 2026-11-09 定的纪律）。
+    #[allow(dead_code)]
     ScreenCapture {
         id: RequestId,
         /// 历史文件名的第三段（同 pid 同秒的两次连点靠它分开）
@@ -565,6 +569,17 @@ impl Pin {
     }
 }
 
+/// 发起一次截图时点名的一块屏：`-D` 序号 + 两个坐标系里的位置。
+/// 两份位置都要，因为抬层问的是 AppKit（左下原点），认窗问的是系统窗口表（左上原点）；
+/// 只存一份就得在用的时候现翻，而翻的时候要主屏高度——那个数不该在遮罩开着期间再去问一次。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScreenSpec {
+    pub display: u8,
+    pub appkit: Rect,
+    /// 全局左上角（左上原点、y 向下）
+    pub origin: Pos2,
+}
+
 /// 一块屏的冻结帧。**像素只活在遮罩开着这段时间**：确认时裁完就清，取消时整批清
 /// （CHG-010 REQ-102：确认之前盘上不许有东西，那这一份内存就是它唯一的容身之处）。
 #[derive(Clone)]
@@ -575,6 +590,10 @@ pub struct Freeze {
     pub points: Vec2,
     /// 那块屏在 AppKit 坐标里的矩形（抬层与对位要用，见 `system::cover`）
     pub appkit: Rect,
+    /// 那块屏的**全局左上角**（左上原点、y 向下，与系统窗口表同一坐标系）。
+    /// 认窗要把表里的全局矩形换回这块屏的本地坐标，靠的就是它；AppKit 那份是左下原点，
+    /// 两者差一个主屏高度，混用就会整块偏移（`system::screen::flip` 是唯一换算处）。
+    pub origin: Pos2,
     /// 抓回来的物理像素
     pub image: std::sync::Arc<image::RgbaImage>,
 }
@@ -592,8 +611,6 @@ impl std::fmt::Debug for Freeze {
 /// 一次"冻结后自选"的进行中状态（CHG-010）。**只在遮罩开着这段时间存在**。
 #[derive(Debug, Clone)]
 pub struct Capture {
-    /// 这次截图的序号，与识别/翻译那三条互不作废（第四条通道的那一条纪律）
-    pub id: RequestId,
     pub frames: Vec<Freeze>,
     /// 选区落在第几块屏（`frames` 的下标）。**选区只在这一块屏内**（Q-004）
     pub screen: usize,
@@ -607,6 +624,9 @@ pub struct Capture {
     /// 每帧枚举窗口、重设 frame，把主线程拖死了。改成**头几帧重下、之后停**：
     /// 收敛实测在 0.02 秒内完成（约一两帧），给 12 帧余量足够，之后不再动。
     pub push_frames: u8,
+    /// 认窗那一份快照（REQ-108）。`None` = 这一轮还没问过系统；帧循环在遮罩开的第一帧
+    /// 问一次就存进来，之后整段不再问（画面已冻结，问第二遍只会认出图里不存在的窗）。
+    pub windows: Option<std::sync::Arc<crate::system::windows::Snapshot>>,
 }
 
 /// 原生抬层与激活重下的帧数上限。之后不再下发（见 `Capture::push_frames`）。
@@ -988,8 +1008,8 @@ pub struct AppState {
     /// 这一刻遮罩是不是当前键盘窗（帧循环每帧回读）。**一帧一变，不进 `Capture`**：
     /// 遮罩一关就该忘掉，留着它会让下一次按 esc 被上一轮的判断骗过去
     pub capture_key: bool,
-    /// 这次要点名抓哪几块屏（`-D` 序号 + 那块屏的点尺寸），回信按它配对
-    capture_screens: Vec<(u8, Rect)>,
+    /// 这次要点名抓哪几块屏（序号 + 两个坐标系里的位置），回信按它配对
+    capture_screens: Vec<ScreenSpec>,
     pub capture_request_id: RequestId,
     pub capture_in_flight: Option<RequestId>,
     /// 历史文件名的自增段。**从 1 起**，0 留给"一次都没发过"那个读法
@@ -1476,7 +1496,7 @@ impl AppState {
     ///
     /// 一次框选在飞时**不发起第二次**（REQ-001 末句：后到的直接忽略）。这一条不靠
     /// `capture_gate` 的灰按钮兜住，因为热键那一下不经过按钮。
-    pub fn submit_capture(&mut self, screens: Vec<(u8, Rect)>) -> Option<Job> {
+    pub fn submit_capture(&mut self, screens: Vec<ScreenSpec>) -> Option<Job> {
         if self.capture_gate().is_some() {
             return None;
         }
@@ -1502,7 +1522,7 @@ impl AppState {
         Some(Job::Freeze {
             id,
             seq: self.capture_seq,
-            displays: screens.into_iter().map(|(display, _)| display).collect(),
+            displays: screens.into_iter().map(|spec| spec.display).collect(),
             // 发起前要收起哪些窗，账跟着任务走：子进程结束时由**那条线程**放回来
             hidden: self.capture_hidden_record(),
         })
@@ -1551,22 +1571,23 @@ impl AppState {
         let frames: Vec<Freeze> = grabbed
             .into_iter()
             .filter_map(|frame| {
-                let (_, appkit) = specs.iter().find(|(d, _)| *d == frame.display)?;
+                let spec = specs.iter().find(|spec| spec.display == frame.display)?;
                 Some(Freeze {
-                    points: appkit.size(),
-                    appkit: *appkit,
+                    points: spec.appkit.size(),
+                    appkit: spec.appkit,
+                    origin: spec.origin,
                     ..frame
                 })
             })
             .collect();
         let screens = frames.len();
         self.capture = Some(Capture {
-            id,
             frames,
             screen: 0,
             sel: crate::system::selection::Selection::fresh(),
             raised: false,
             push_frames: PUSH_FRAMES,
+            windows: None,
         });
         self.capture_stage = CaptureStage::Frozen;
         CaptureApplied::Frozen { screens }
@@ -1662,11 +1683,6 @@ impl AppState {
     pub fn end_capture(&mut self, stage: CaptureStage) {
         self.capture = None;
         self.capture_stage = stage;
-    }
-
-    /// 已经确认、还没钉住的那一张的路径（F3「固定」的落点，REQ-106）。
-    pub fn confirmed_capture(&self) -> Option<&std::path::PathBuf> {
-        self.unpinned_capture.as_ref()
     }
 
     pub fn capture_gate(&self) -> Option<&'static str> {
@@ -2653,16 +2669,19 @@ mod tests {
     /// 贴图那一支的识别回信同时带底图与文档（合成用的底图必须是入场那一份）
     /// 一次截图能点名的屏：给两块（主屏 1920×1080 + 左置 2240×1400，本机实测形状）。
     /// 测试里不写 `Vec::new()`：那样测的是"一块屏"，而负坐标那块屏才是这包容易错的地方。
-    fn two_screens() -> Vec<(u8, Rect)> {
+    fn two_screens() -> Vec<ScreenSpec> {
         vec![
-            (
-                1,
-                Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
-            ),
-            (
-                2,
-                Rect::from_min_size(Pos2::new(-2240.0, -320.0), Vec2::new(2240.0, 1400.0)),
-            ),
+            ScreenSpec {
+                display: 1,
+                appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
+                origin: Pos2::ZERO,
+            },
+            ScreenSpec {
+                display: 2,
+                appkit: Rect::from_min_size(Pos2::new(-2240.0, -320.0), Vec2::new(2240.0, 1400.0)),
+                // AppKit 左下原点翻成全局左上原点：主屏高 1080，这块屏高 1400、底边在 -320
+                origin: Pos2::new(-2240.0, 0.0),
+            },
         ]
     }
 
@@ -2917,6 +2936,7 @@ mod tests {
             display: 1,
             points: Vec2::new(1920.0, 1080.0),
             appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
+            origin: Pos2::ZERO,
             image: Arc::new(image::RgbaImage::from_pixel(
                 1920,
                 1080,
@@ -2945,6 +2965,46 @@ mod tests {
         );
     }
 
+    /// 原生重下的配额**真的会减**。D-31~D-34 的病因就是"每帧重下、永不收手"：
+    /// 帧循环读了 `push_frames > 0` 却一直没人减它，于是遮罩开着就一直枚举窗口、
+    /// 重设 frame，把主线程拖死。收敛那一帧提前归零，没收敛就一帧减一格，
+    /// 减到 0 之后再问也不许下溢回绕成 255（那等于永远收不了手）。
+    #[test]
+    fn the_native_repush_quota_is_spent_and_then_stops() {
+        let mut st = capture_state();
+        st.submit_capture(two_screens()).expect("该发得出");
+        st.apply_frozen(
+            1,
+            vec![Freeze {
+                display: 1,
+                points: Vec2::new(40.0, 30.0),
+                appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(40.0, 30.0)),
+                origin: Pos2::ZERO,
+                image: Arc::new(image::RgbaImage::from_pixel(
+                    40,
+                    30,
+                    image::Rgba([1, 1, 1, 255]),
+                )),
+            }],
+        );
+        assert_eq!(st.capture.as_ref().unwrap().push_frames, PUSH_FRAMES);
+        for left in (0..PUSH_FRAMES).rev() {
+            st.consume_push_frame(false);
+            assert_eq!(st.capture.as_ref().unwrap().push_frames, left);
+        }
+        st.consume_push_frame(false);
+        assert_eq!(
+            st.capture.as_ref().unwrap().push_frames,
+            0,
+            "用尽之后不许回绕成 255"
+        );
+
+        // 成为键盘窗那一刻提前收手，剩下的配额不再用
+        st.capture.as_mut().unwrap().push_frames = PUSH_FRAMES;
+        st.consume_push_frame(true);
+        assert_eq!(st.capture.as_ref().unwrap().push_frames, 0);
+    }
+
     /// 选区归"按下那一帧所在的那块屏"。换屏按下要丢掉旧框——旧框的坐标是
     /// 另一块屏的本地坐标，留着它就裁到不该裁的地方（副屏还带负偏移）。
     #[test]
@@ -2956,6 +3016,7 @@ mod tests {
                 display,
                 points: Vec2::new(1000.0, 800.0),
                 appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0)),
+                origin: Pos2::ZERO,
                 image: Arc::new(image::RgbaImage::from_pixel(
                     1000,
                     800,
@@ -2985,6 +3046,7 @@ mod tests {
             display: 2,
             points: Vec2::new(1000.0, 800.0),
             appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0)),
+            origin: Pos2::ZERO,
             image: Arc::new(image::RgbaImage::from_pixel(
                 1000,
                 800,
@@ -3011,6 +3073,7 @@ mod tests {
                 display: 1,
                 points: Vec2::new(1000.0, 800.0),
                 appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0)),
+                origin: Pos2::ZERO,
                 image: Arc::new(image::RgbaImage::from_pixel(
                     3840,
                     2160,
