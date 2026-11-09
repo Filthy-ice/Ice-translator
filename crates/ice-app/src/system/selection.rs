@@ -49,6 +49,11 @@ pub const HANDLE_COUNT: u8 = 8;
 /// 这一档的最终值归走查 W-6.1，改动只许改这里。
 pub const HANDLE_RADIUS: f32 = 10.0;
 
+/// 把手画出来的边长（点）。**画的大小与命中的半径是两件事**：命中仍是 [`HANDLE_RADIUS`]
+/// 那一档（W-6.1 定），这里只管它看起来多大。它有一半探在选区外，所以会吃掉 [`GAP`]
+/// 那道缝——下面那条编译期断言就是不许它探进药丸里。
+pub const HANDLE_SIZE: f32 = 6.0;
+
 /// "按下到抬起没挪动多少算单击"的阈值（点）。REQ-108 的"单击截整窗"与 REQ-102 的
 /// "拖动=自由矩形"共用这一条判据，两处不许各写一个数。
 pub const CLICK_SLOP: f32 = 3.0;
@@ -388,8 +393,10 @@ pub fn bar_side(sel: egui::Rect, bar: Vec2, field: &Field) -> BarSide {
     }
 }
 
-/// 动作条与选区之间的缝（点）。
-pub const GAP: f32 = 8.0;
+/// 动作条与选区之间的缝（点）。**3 是他给的数**（2026-11-09 晚原话「距离贴图上/在下
+/// 大约 3px 的圆角的单独操作栏」，参照 某截图工具 / 某聊天软件截图）：贴着但不压住，一眼看得出
+/// 这条药丸是给这块选区用的。改这个数不动任何判定——两侧都从这一处读。
+pub const GAP: f32 = 3.0;
 
 /// 动作条那一块的矩形。**任何一侧都不许压住选区**——那条断言在下面这条函数里就是
 /// "矩形与选区不相交"，不是"看起来没压"。
@@ -413,6 +420,9 @@ const _: () = assert!(DIM >= 60 && DIM <= 200);
 const _: () = assert!(CLICK_SLOP > 0.0 && CLICK_SLOP < HANDLE_RADIUS);
 /// 八个把手 = 4 角 + 4 边。改了它，[`handle_center`] 的编号与 [`grab`] 的命中会一起分岔。
 const _: () = assert!(HANDLE_COUNT == 8);
+/// 药丸不许被把手压住：把手有一半探在选区外，缝至少得有那一半宽。取等号时
+/// 正下方那颗把手的外缘正好贴上药丸的上缘（相接、不相叠）；要把把手画大，缝也得跟着大。
+const _: () = assert!(GAP >= HANDLE_SIZE / 2.0);
 
 #[cfg(test)]
 mod tests {
@@ -904,7 +914,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             for handle in 0..HANDLE_COUNT {
                 let center = handle_center(rect, handle);
                 ui.painter().rect_filled(
-                    Rect::from_center_size(center, Vec2::splat(6.0)),
+                    Rect::from_center_size(center, Vec2::splat(HANDLE_SIZE)),
                     0.0,
                     egui::Color32::WHITE,
                 );

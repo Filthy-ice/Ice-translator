@@ -69,3 +69,18 @@ Spec-Hash: a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
 
 - 2026-11-09T10:40:12+00:00 V-007 **passed** VERIFIED_CODE/local
   argv=["bash", "-c", "test $(grep -Rl '\\.setLevel(' crates/ice-app/src | wc -l) -le 1 && ! (grep -Rn 'Fullscreen(true)' crates/ice-app/src --include='*.rs' | grep -vE ':[0-9]+: *//') | grep -q ."] exit=0；附件：evidence/0022-V-007.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T10:45:07+00:00 V-001 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "--workspace"] exit=0；附件：evidence/0023-V-001.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T10:45:08+00:00 V-002 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-app", "selection"] exit=0；附件：evidence/0024-V-002.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T10:45:08+00:00 V-003 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-app", "capture"] exit=0；附件：evidence/0025-V-003.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T10:45:08+00:00 V-004 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "test $(grep -Rl '/usr/sbin/screencapture' crates/ice-app/src | wc -l) -eq 1 && ! grep -Rn 'cfg(target_os' crates/ice-app/src/views"] exit=0；附件：evidence/0026-V-004.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T10:45:09+00:00 V-007 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "test $(grep -Rl '\\.setLevel(' crates/ice-app/src | wc -l) -le 1 && ! (grep -Rn 'Fullscreen(true)' crates/ice-app/src --include='*.rs' | grep -vE ':[0-9]+: *//') | grep -q ."] exit=0；附件：evidence/0027-V-007.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
