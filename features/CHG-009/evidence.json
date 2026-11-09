@@ -593,6 +593,204 @@
       "summary": "argv=[\"./sdd\", \"scan\"] exit=0",
       "artifact": "evidence/0021-V-007.txt",
       "artifact_hash": "0aeba1998fea21b35462abc8486766f93bf061a7339e02280daffb374af459de"
+    },
+    {
+      "at": "2026-11-09T02:28:24+00:00",
+      "verification": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009",
+        "REQ-010",
+        "REQ-011"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "8ff610f6a96909d5153644c34c65fd8d8b4a0080",
+        "tree_hash": "a0b990d2955ef4a6ec40f25873915bfad576a961971df3eca287920f5d61855a",
+        "dirty": false
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-009",
+        "version": "v0.6",
+        "spec_hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f"
+      },
+      "plan_hash": "6edab3b844c6de380c6e165de2f89e6cac2659a9a6985d67332c1ed58ad03081",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"--workspace\"] exit=0",
+      "artifact": "evidence/0022-V-001.txt",
+      "artifact_hash": "d278a0247ad56099ef7a75aeb681683f4475ec598e95f8d1ee51610fa6d55f13"
+    },
+    {
+      "at": "2026-11-09T02:28:25+00:00",
+      "verification": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "8ff610f6a96909d5153644c34c65fd8d8b4a0080",
+        "tree_hash": "a0b990d2955ef4a6ec40f25873915bfad576a961971df3eca287920f5d61855a",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-009",
+        "version": "v0.6",
+        "spec_hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f"
+      },
+      "plan_hash": "6edab3b844c6de380c6e165de2f89e6cac2659a9a6985d67332c1ed58ad03081",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-app\"] exit=0",
+      "artifact": "evidence/0023-V-002.txt",
+      "artifact_hash": "770f4667990ca100ae8163a69af5cb46adf97eb0368b5a20b66f9f5f498c1cb5"
+    },
+    {
+      "at": "2026-11-09T02:28:26+00:00",
+      "verification": "V-003",
+      "requirements": [
+        "REQ-008",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "8ff610f6a96909d5153644c34c65fd8d8b4a0080",
+        "tree_hash": "a0b990d2955ef4a6ec40f25873915bfad576a961971df3eca287920f5d61855a",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-009",
+        "version": "v0.6",
+        "spec_hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f"
+      },
+      "plan_hash": "6edab3b844c6de380c6e165de2f89e6cac2659a9a6985d67332c1ed58ad03081",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-core\", \"hotkey\"] exit=0",
+      "artifact": "evidence/0024-V-003.txt",
+      "artifact_hash": "fd4a16674b7bab63d16a704ba30fd458ea942c0e9a2823862d105e65cafdb180"
+    },
+    {
+      "at": "2026-11-09T02:28:26+00:00",
+      "verification": "V-004",
+      "requirements": [
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "8ff610f6a96909d5153644c34c65fd8d8b4a0080",
+        "tree_hash": "a0b990d2955ef4a6ec40f25873915bfad576a961971df3eca287920f5d61855a",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-009",
+        "version": "v0.6",
+        "spec_hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f"
+      },
+      "plan_hash": "6edab3b844c6de380c6e165de2f89e6cac2659a9a6985d67332c1ed58ad03081",
+      "result": "passed",
+      "summary": "argv=[\"bash\", \"-c\", \"! grep -Rn 'cfg(target_os' crates/ice-app/src/views\"] exit=0",
+      "artifact": "evidence/0025-V-004.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-09T02:28:26+00:00",
+      "verification": "V-005",
+      "requirements": [
+        "REQ-001",
+        "REQ-009"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "8ff610f6a96909d5153644c34c65fd8d8b4a0080",
+        "tree_hash": "a0b990d2955ef4a6ec40f25873915bfad576a961971df3eca287920f5d61855a",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-009",
+        "version": "v0.6",
+        "spec_hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f"
+      },
+      "plan_hash": "6edab3b844c6de380c6e165de2f89e6cac2659a9a6985d67332c1ed58ad03081",
+      "result": "passed",
+      "summary": "argv=[\"bash\", \"-c\", \"test $(grep -Rl '/usr/sbin/screencapture' crates/ice-app/src | wc -l) -eq 1\"] exit=0",
+      "artifact": "evidence/0026-V-005.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-09T02:28:26+00:00",
+      "verification": "V-006",
+      "requirements": [
+        "REQ-006",
+        "REQ-009",
+        "REQ-011"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "8ff610f6a96909d5153644c34c65fd8d8b4a0080",
+        "tree_hash": "a0b990d2955ef4a6ec40f25873915bfad576a961971df3eca287920f5d61855a",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-009",
+        "version": "v0.6",
+        "spec_hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f"
+      },
+      "plan_hash": "6edab3b844c6de380c6e165de2f89e6cac2659a9a6985d67332c1ed58ad03081",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"tree\", \"-p\", \"ice-app\", \"-e\", \"normal\"] exit=0",
+      "artifact": "evidence/0027-V-006.txt",
+      "artifact_hash": "52331e81cd6c7f838d5104e1041a85e103da59bdbd095643476cd24903e0ceba"
+    },
+    {
+      "at": "2026-11-09T02:28:27+00:00",
+      "verification": "V-007",
+      "requirements": [
+        "REQ-007",
+        "REQ-008",
+        "REQ-011"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "8ff610f6a96909d5153644c34c65fd8d8b4a0080",
+        "tree_hash": "a0b990d2955ef4a6ec40f25873915bfad576a961971df3eca287920f5d61855a",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-009",
+        "version": "v0.6",
+        "spec_hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f"
+      },
+      "plan_hash": "6edab3b844c6de380c6e165de2f89e6cac2659a9a6985d67332c1ed58ad03081",
+      "result": "passed",
+      "summary": "argv=[\"./sdd\", \"scan\"] exit=0",
+      "artifact": "evidence/0028-V-007.txt",
+      "artifact_hash": "0aeba1998fea21b35462abc8486766f93bf061a7339e02280daffb374af459de"
     }
   ]
 }

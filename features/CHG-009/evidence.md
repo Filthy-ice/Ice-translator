@@ -66,3 +66,24 @@ Spec-Hash: 890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f
 
 - 2026-11-09T02:26:13+00:00 V-007 **passed** VERIFIED_CODE/local
   argv=["./sdd", "scan"] exit=0；附件：evidence/0021-V-007.txt；Spec：890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f
+
+- 2026-11-09T02:28:24+00:00 V-001 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "--workspace"] exit=0；附件：evidence/0022-V-001.txt；Spec：890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f
+
+- 2026-11-09T02:28:25+00:00 V-002 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-app"] exit=0；附件：evidence/0023-V-002.txt；Spec：890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f
+
+- 2026-11-09T02:28:26+00:00 V-003 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-core", "hotkey"] exit=0；附件：evidence/0024-V-003.txt；Spec：890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f
+
+- 2026-11-09T02:28:26+00:00 V-004 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "! grep -Rn 'cfg(target_os' crates/ice-app/src/views"] exit=0；附件：evidence/0025-V-004.txt；Spec：890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f
+
+- 2026-11-09T02:28:26+00:00 V-005 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "test $(grep -Rl '/usr/sbin/screencapture' crates/ice-app/src | wc -l) -eq 1"] exit=0；附件：evidence/0026-V-005.txt；Spec：890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f
+
+- 2026-11-09T02:28:26+00:00 V-006 **passed** VERIFIED_CODE/local
+  argv=["cargo", "tree", "-p", "ice-app", "-e", "normal"] exit=0；附件：evidence/0027-V-006.txt；Spec：890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f
+
+- 2026-11-09T02:28:27+00:00 V-007 **passed** VERIFIED_CODE/local
+  argv=["./sdd", "scan"] exit=0；附件：evidence/0028-V-007.txt；Spec：890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f
