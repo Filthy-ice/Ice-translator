@@ -1,0 +1,112 @@
+{
+  "baseline": null,
+  "tasks": [
+    {
+      "id": "T-001",
+      "title": "批准前取证（仓外探针，不进仓不提交）：四档各跑一轮并把读数抄回 spec.md 事实表——① 只开子窗那一层透明（预期落进 glow_integration.rs:206-210 那条只记 error 照样建窗的路径，缝里黑块，用来证两层缺一不可）；② 两层都开且缝里不画（背后放纯色窗，只取探针窗那一块的像素比对，不整屏抓）；③ 透明区吃不吃点击 + 另起小窗的残留死区量级（往缝里/药丸两侧/圆角外各注入一次点击，看背后那扇窗收不收得到，并与 (a) 的 2×(图宽−药丸宽)/2×药丸高 对比）；④ 开进程级 alpha 之后主窗与贴图窗还实不实（停止条件 8）。任一档证伪 H1 或量出绕不开的死区就停下来报，不自行换 (c) 假装浮空",
+      "requirements": [
+        "REQ-001",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": [],
+      "verify_note": "探针量不到的两格明写：跟随的跟手与闪不闪归 W-7.2（注入件坐标本身就偏，拿它判跟随是伪证据）；本机两屏 backingScaleFactor 都是 1.0，2× 那一档只能无头断言。取证只许取我们自己探针窗那一块的像素，不许整屏抓（用户 2026-11-09 之前定过的纪律）。"
+    },
+    {
+      "id": "T-002",
+      "title": "新建 system/bar.rs：把 selection.rs 里那两条纯几何（bar_side/bar_rect）与 GAP=3.0 搬过来共用，bar_side 的 field 参数从 &Field 换成 Rect（它本来只读 bounds.max.y），加 width_for(n) 按内容定宽与编译期断言 width_for(3) < BAR_W；把私有的 icon_button 提成 glyph_button 并加 Glyph::Translate 一支（双气泡线稿，比例照 tray.rs:216-222，不动 tray.rs 的栅格化）。selection.rs 改成调共用件，BAR_W/BAR_H/BAR_ICONS 与 Area 那一套一字不动",
+      "requirements": [
+        "REQ-001",
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": [],
+      "verify_note": "抽公共不改行为：CHG-010 V-002 的断言语义必须原样绿，只许改调用点的参数形式。若发现任何一条断言的含义需要改口，那就是命中停止条件 6（动另一包的已批准行为），停下来走 revise，不在本包里顺手改。"
+    },
+    {
+      "id": "T-003",
+      "title": "新建 system/pill.rs：药丸窗自己那一扇——视口号唯一构造点、with_transparent(true)/with_active(false)/with_has_shadow(false)/with_always_on_top、外接框 = 药丸矩形四周各留 SHADOW_PAD=6 点（提示弹出来时再长出那一块）、跟随由贴图窗子回调直推 send_viewport_cmd_to（不绕主窗）、位置与尺寸命令都只在真变了那一刻发一次（照 inner_size_command 的 0.5 点容差）、esc 转交所属那张贴图的意图槽并 request_repaint 主窗、收起那一帧起不再 show。形状核查：本模块 OuterPosition 恰好 1 次且值只来自纯函数、movable_by_background 0 次",
+      "requirements": [
+        "REQ-001",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": [],
+      "verify_note": "每帧发位置命令会每帧 request_repaint_of 把药丸窗叫醒（context.rs:4570），那是 D-31~D-35 那一族的 egui 版，必须去重。六张贴图各跟各的 outer_rect、各推各的槽，串格由键控 + 子窗直推两道挡住。跟随四件事（拖动/置顶/关闭/收放）真机上坏了任一件即命中停止条件 3，退回旧路径。"
+    },
+    {
+      "id": "T-004",
+      "title": "改 system/pin.rs：pin_layout 去掉 +BAND_H 那一支（窗口恒等于图片那块）并去掉 band_rect（药丸几何整体搬进 bar/pill），像素到点仍只除一次；band_buttons 改名 pill_buttons 且仍遍历 BAND_ACTIONS 那一张表、绘制改调 bar::glyph_button；PinAction 加 glyph() 映射；子窗回调里读自己的 outer_rect 后调 pill::follow；pin.rs 里 OuterPosition 仍 0 次、StartDrag 仍恰好 1 次、movable_by_background 仍 0 次（原断言一字不删）；顺手修 image_area 那段与实际代码相反的注释 rot（它还写着 movable_by_background(true) 是选中的路）",
+      "requirements": [
+        "REQ-002",
+        "REQ-003",
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": [],
+      "verify_note": "允许改的既有断言只有编码了被改口契约的那几条（the_open_band_sits_below_the_image_and_grows_the_window、a_closed_band_shrinks_the_window_itself_and_leaves_no_dead_strip、以及三处用到 BAND_H 的算式），改的是契约换了不是迁就实现；both_the_band_and_the_menu_iterate_the_one_table 只跟着改函数名，两条语义不动。其余无关断言一律不许动，实施前后各录一次全量数与失败数做差集比对。"
+    },
+    {
+      "id": "T-005",
+      "title": "改 main.rs 一格：NativeOptions::viewport 加 with_transparent(true)（事实 16：glow 的 GL alpha 只从这一份读、每进程一次，不开它药丸窗必然黑块）。主窗与贴图窗各自的 with_transparent(false) 保持不动（子窗显式值不继承）。改完按 T-001 第四档复核主窗仍实心、失焦半透明那一档 setAlphaValue 行为未变；任一露出桌面即命中停止条件 8，停下来报",
+      "requirements": [
+        "REQ-001",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": [],
+      "verify_note": "这一格是 H1 成立的必要条件，绕不开；但它动的是全进程的 GL 配置，所以必须复核主窗观感而不是只看药丸。他的冷灰白基底是已点头的观感，本包只许动贴图下方那条。"
+    },
+    {
+      "id": "T-006",
+      "title": "首用提示：state.rs 加 pin_hint 三态（NotShown / Showing{dont_show_again} / DoneThisRun）与 AckPinHint 意图，四条迁移（第一次钉上且配置 bool 为 false 且本进程没弹过才弹；勾了确认写配置并此后不弹；没勾确认不写配置、下次启动再弹；关掉那张图提示随之消失但本进程仍算弹过）；pill.rs 里画在药丸下方那一块（同一扇透明窗，放不下与药丸一起翻上方），两句文案 + 一个勾选 + 一颗「知道了」，文案与代码同源一处常量表；esc 走同一条 Close 意图一下做到两件（关提示也关图），不做两段式",
+      "requirements": [
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": [],
+      "verify_note": "提示画在药丸窗里 ⇒ 一定在用户正看着的那块屏上，主窗收在托盘里也看得见（Q-004）。不是 toast：现有 toast 会自己淡出、没有勾选、不持久化（事实 10），复用它会丢掉「以后不再提示」那一格。"
+    },
+    {
+      "id": "T-007",
+      "title": "config.rs 只加一个 bool：pin_hint_dismissed，默认 false（= 还要提示），形状照 clipboard_watch（:159/:182），sanitized() 那一层跟着走、旧配置文件缺这一格回默认。只加这一个：历史天数、张数上限、药丸尺寸、留白宽度都不进配置；它不承载任何用户内容（不含文本/路径/图像），docs/01 的 NFR-3 隐私口径一字不动",
+      "requirements": [
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": [],
+      "verify_note": "本条就是 CHG-009 停止条件 5 要的那一次批准请求：批准本包即批准这一个字段，不多不少。实施后与批准前的字段清单逐条比对，差集只许有这一个，写进 evidence。"
+    },
+    {
+      "id": "T-008",
+      "title": "跨平台分档与退回路径：平台判定不许散进 views（延续 CHG-010 V-004），透明那一格若有平台差异只许落在 system/ 这一层；Linux/Windows 与 HiDPI 2× 两格在 evidence 里明写本机给不出（NFR-7 只承诺 S 档）。若 T-001 证伪 H1 / 死区绕不开 / 主窗不再实心，则退回旧带子形态并 deviation 登记原因：pin.rs 恢复 +BAND_H 与带子绘制、app.rs 不再调 pill::show、main.rs 那一格撤回 false，bar.rs/pill.rs 留仓不接线，首用提示改画在带子下方那一块且四条迁移一字不改",
+      "requirements": [
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": [],
+      "verify_note": "不许用画成桌面色假装浮空（REQ-007 明令）。退回也不许让既有断言变红：退回路径同样跑全量。不用 git checkout --/restore 动任何带未提交工作的文件，看旧写法用只读的 git show HEAD:<path>。"
+    },
+    {
+      "id": "T-009",
+      "title": "文档回写 + 旧契约改口 + 证据一次性留档：CHG-009 REQ-003 那句 SHALL NOT 与 design.md 开放点 1 不改写当年那行、各加一条带日期的补正并登记沿革（批准快照不动，若 validate 报哈希漂移走 deviation 而不是改快照）；回写 docs/02（bar.rs/pill.rs 两格 + pin.rs 改口）、docs/03（3pt 缝、药丸宽度按内容定、首用提示的样子与文案）、docs/05（§6 加一条可核查的硬规矩：透明窗里没画东西的地方仍吃命中，所以浮空物件的外接框只许比本体大一个阴影留白，量级要写出来）、docs/06（新 TC 与 W-7.1~W-7.3）、docs/07、docs/traceability.md；docs/01 的 NFR-3 不动。次序必须是文档定稿 → 走查登记 → check/record 一次性做完 → 之后不再动树内文件 → commit",
+      "requirements": [
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": [],
+      "verify_note": "docs/ 在树指纹内（sdd.py:164-188，LEDGER 只排除 features/quick/incidents/STATE.md/.sdd/），改文档会让已录证据过期；commit 与录证据都不改 tree_hash，所以留档必须在文档定稿之后一次性做完。W-7.1~W-7.3 只有用户的眼睛和手能定，不计开发工时，也不许替他写成已验。"
+    }
+  ]
+}

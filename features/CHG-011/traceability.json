@@ -1,0 +1,221 @@
+{
+  "baseline": null,
+  "design": [
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    },
+    {
+      "requirement": "REQ-007",
+      "section": "## REQ-007 实现与验证"
+    },
+    {
+      "requirement": "REQ-008",
+      "section": "## REQ-008 实现与验证"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "note": "全量回归锁：批准前先录一次基线数（当前 740 通过 / 0 失败 / 6 忽略），实施后再录一次做差集。允许变的只有 design.md「影响与回滚」里写死的那三类（编码了被改口契约的 pin 版式断言、跟着改名的形状核查函数名、selection 调用点的参数形式）；其余无关断言一律不许动，任何一条变红即视为越界（CHG-010 V-001 同一口径）。退回旧形态那一档也要跑这条"
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app",
+        "bar"
+      ],
+      "note": "共用件那一块的无头锁：缝恒等于 3、药丸矩形与锚点两侧都不相交、宽度按内容定不随锚点宽变、放不下翻上方且翻上去也不相交、锚点比药丸窄时仍以中线对齐、width_for(3) < BAR_W 的编译期断言；线稿四颗（对勾/复制/保存/翻译）、两条药丸都从共用件读、画法只有一处（形状核查）。ice-app 是纯二进制 crate，不许加 --lib"
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-001",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app",
+        "pill"
+      ],
+      "note": "药丸窗那一扇的无头锁：外接框包含药丸与提示块、四周留白恒等于 SHADOW_PAD、位置命令只在真变了那一刻发一次（0.4 点抖动不发）、提示长出来时尺寸命令只发一次、收起那一帧起不再 show、esc 只推所属那一张的意图槽（两张同时在时各推各的）、药丸窗不取空格与 C；形状核查：本模块 OuterPosition 恰好 1 次且值只来自纯函数、movable_by_background 0 次。涉及 show_viewport_deferred 的用例必须包在真实 pass 里（ctx.run_ui(...).drop_without_applying_deltas()），否则 0.37 inline 跑回调时字体还没初始化"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-002",
+        "REQ-003",
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app",
+        "pin"
+      ],
+      "note": "贴图窗那一块的无头锁：pin_layout 三档（窗口恒等于图片点尺寸、像素到点只除一次、ppp 坏了退回 1 不退回 0、不自己造位置）、三颗是哪三颗且不含关闭、右键仍恰好四项、每颗给哪条意图、key_intent 矩阵不变、真实 pass 里 esc → Close 与空格 → 收放；形状核查三条原样保留（pin.rs 里 OuterPosition 0 次、StartDrag 恰好 1 次、movable_by_background 0 次）+ 清单只一份（pill_buttons 与 image_menu 都遍历 ACTIONS，「翻译」仍只出现 1 次）"
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-003",
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app",
+        "state"
+      ],
+      "note": "状态层无头锁：首用提示四条迁移（第一次钉上才弹 / 勾了确认此后不弹 / 没勾确认不写持久化且下次启动还弹 / 提示开着 esc 仍一下关掉提示与那张图）+ 同一进程钉第二张不再弹 + 关掉那张图后本进程仍算弹过；空格只翻焦点那张（app.rs 那两条「第二张收了第一张不被牵连」继续绿）、刚钉上时是展开的"
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-core",
+        "config"
+      ],
+      "note": "配置面无头锁：新 bool 默认 false、serde 往返不丢、旧配置文件缺这一格回默认、sanitized() 不把它夹坏；并核对配置字段清单与批准前的差集只许有这一个（历史天数/张数上限/药丸尺寸/留白宽度都不许进配置）。它不承载用户内容，docs/01 的 NFR-3 口径不动"
+    },
+    {
+      "id": "V-007",
+      "requirements": [
+        "REQ-004",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "static",
+      "required": true,
+      "command": [
+        "bash",
+        "-c",
+        "test $(grep -Rl '\\.setLevel(' crates/ice-app/src | wc -l) -le 1 && ! grep -Rn 'cfg(target_os' crates/ice-app/src/views"
+      ],
+      "note": "延续 CHG-010 V-004/V-007 的两条静态判据：写窗口层级仍只一个出处（system/cover.rs），平台判定不许散进 views。本包若要有平台差异只许落在 system/ 这一层。药丸窗靠 with_always_on_top()（层级 3）就够，不许为它新开一处原生 setLevel"
+    },
+    {
+      "id": "V-008",
+      "requirements": [
+        "REQ-008"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "static",
+      "required": true,
+      "command": [
+        "./sdd",
+        "validate",
+        "CHG-011",
+        "--offline"
+      ],
+      "note": "门禁与追溯矩阵：Requirement ↔ Design ↔ Task ↔ 必需 Verification 四边覆盖（sdd.py:195-238 的 plan_valid），生成视图与 JSON 一致，CHG-009 REQ-003 的改口已登记沿革且批准快照未被动过。只校验本包（带 id），不让别的包的证据过期把这一条带红。validate 不走写锁（sdd.py:609-612），所以在 check 里跑它不会自锁"
+    },
+    {
+      "id": "V-009",
+      "requirements": [
+        "REQ-001",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "T-001 四档探针读数（仓外探针，不进仓不提交）：① 只开子窗那一层 → 预期黑块 + 那条 error 日志；② 两层都开且缝里不画 → 缝里透出背后纯色窗（只取探针窗那一块的像素，不整屏抓）；③ 透明区吃不吃点击 + (b) 的残留死区量级与 (a) 对比；④ 开进程级 alpha 后主窗与贴图窗仍实心、失焦半透明那一档未变。读数用 record 导入，逐条抄回 spec.md 事实表把 H1/H2/H3 改成 FACT 或写明证伪。量不到的两格明写：跟手与闪不闪归 W-7.2、本机无 HiDPI 档"
+    },
+    {
+      "id": "V-010",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "真机走查 W-7.1（浮空观感：缝是不是真透明、圆角干不干净、淡阴影有没有层次、三颗线稿看不看得懂）、W-7.2（五件既有行为 + 跟随四件事：拖动时药丸 lag/闪不闪、置顶一致不一致、关图有没有留下药丸孤窗、收放后错不错位、esc 只关焦点那张）、W-7.3（首用提示弹在正看着的那块屏上、勾选与「知道了」各做各的事、esc 一下做到两件）。只有用户的眼睛和手能定，不计开发工时，不许替他写成已验；任一跟随件坏了即命中停止条件 3，D-29 那一族再现即命中停止条件 7，都退回旧路径"
+    }
+  ]
+}
