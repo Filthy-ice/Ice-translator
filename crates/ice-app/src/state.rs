@@ -3007,7 +3007,7 @@ mod tests {
         let from = source
             .find("fn freeze_texture")
             .expect("纹理那一处得有个出处");
-        let body = &source[from..source.len().min(from + 1600)];
+        let body: String = source[from..].chars().take(1600).collect();
         assert!(
             body.contains("old_gen == frozen_id"),
             "缓存必须认这一轮的号，而不是认像素尺寸"
