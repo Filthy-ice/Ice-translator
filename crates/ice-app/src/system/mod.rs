@@ -20,3 +20,4 @@ pub mod titlebar;
 pub mod tray;
 #[cfg(target_os = "macos")]
 pub mod window;
+pub mod windows;
