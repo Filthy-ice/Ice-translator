@@ -37,7 +37,17 @@ fn select_edge() -> egui::Stroke {
 /// 摆出来的带子对不上，就会留下几像素的死区（就是第 2 条硬规矩要防的东西）。
 pub const BAND_H: f32 = 34.0;
 
-/// 带子里那四颗，**顺序就是显示顺序**。
+/// 带子里那三颗（`ACTIONS` 去掉「关闭」），**顺序就是显示顺序**。
+///
+/// 单独一张表而不是在带子里 `filter`：这样"带子上没有关闭"这件事写在类型里，
+/// 谁把 Close 塞回来会少一颗，断言立刻响。
+pub const BAND_ACTIONS: [PinAction; 3] = [
+    PinAction::Translate,
+    PinAction::CopyImage,
+    PinAction::SaveImage,
+];
+
+/// 右键菜单那四项，**顺序就是显示顺序**。
 ///
 /// 一处声明、长度锁 4：用户明说"只要四项"（Q-006 默认 翻译 / 复制图像 / 保存图像 / 关闭），
 /// 带子和右键菜单读同一张表。加第五项要改这一处，而 `exactly_four_actions` 那条断言会先响。
@@ -194,7 +204,9 @@ pub fn inner_size_command(previous: Option<Vec2>, now: Vec2) -> Option<Vec2> {
 /// 命中区——两种防线都留着。
 pub fn band_buttons(ui: &mut Ui, sink: &mut Vec<PinIntent>) {
     ui.horizontal(|ui| {
-        for action in ACTIONS {
+        // **带子上没有「关闭」**（用户 2026-11-09 晚：不需要在界面上搞一个关闭的按钮）。
+        // 关闭只走两条：esc 关当前这张、右键菜单那颗。右键仍读完整的 `ACTIONS` 四项。
+        for action in BAND_ACTIONS {
             // 「关」按下去就是把这张从状态里摘掉，别的什么都不动（历史文件照旧）
             if ui.button(action.label()).clicked() {
                 sink.push(PinIntent::from_action(action));
@@ -821,6 +833,28 @@ mod tests {
     }
 
     /// 带子四颗与右键菜单四项**发same的意图**：一条 `from_action` 映射，两处不各写一遍。
+    /// 带子三颗、右键四项：**只差「关闭」这一颗**，且带子上那颗必须没有。
+    /// 这条钉的是用户那句"不需要在界面上搞一个关闭的按钮，右键的可以留下"。
+    #[test]
+    fn the_band_drops_only_the_close_action() {
+        assert_eq!(BAND_ACTIONS.len(), 3);
+        assert!(
+            !BAND_ACTIONS.contains(&PinAction::Close),
+            "带子上不许有「关闭」"
+        );
+        assert_eq!(ACTIONS.len(), 4, "右键菜单仍要四项齐全");
+        let missing: Vec<PinAction> = ACTIONS
+            .iter()
+            .copied()
+            .filter(|a| !BAND_ACTIONS.contains(a))
+            .collect();
+        assert_eq!(missing, vec![PinAction::Close]);
+        // 两处仍读同一份 from_action 映射，不各写一套
+        for action in ACTIONS {
+            let _ = PinIntent::from_action(action);
+        }
+    }
+
     #[test]
     fn the_band_and_the_menu_emit_the_same_four_intents() {
         let from_band: Vec<PinIntent> = ACTIONS

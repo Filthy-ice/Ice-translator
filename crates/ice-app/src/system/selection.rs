@@ -925,13 +925,15 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen, sel: Selection) {
                         egui::Color32::from_rgba_premultiplied(28, 28, 30, 235),
                     );
                     ui.horizontal(|ui| {
-                        for label in BAR_ACTIONS {
-                            if ui.button(label).clicked() {
-                                let out = match label {
-                                    "钉住" => MaskOut::Pin,
-                                    "复制" => MaskOut::Copy,
-                                    "保存" => MaskOut::Save,
-                                    _ => MaskOut::Cancel,
+                        // 三颗：**对勾 / 复制 / 保存**。对勾就是"完成并钉住"（他原话
+                        // "点对勾和固定到屏幕上是一样的"）；栏里不放「取消」——esc 与右键
+                        // 承担。图标全是**线稿**，不用字符（本仓出过字符显示成方块的缺陷）。
+                        for icon in BAR_ICONS {
+                            if icon_button(ui, icon).clicked() {
+                                let out = match icon {
+                                    BarIcon::Check => MaskOut::Pin,
+                                    BarIcon::Copy => MaskOut::Copy,
+                                    BarIcon::Save => MaskOut::Save,
                                 };
                                 if let Ok(mut queue) = slot.lock() {
                                     queue.push(out);
@@ -949,9 +951,108 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen, sel: Selection) {
     });
 }
 
-/// 动作条那一排：四颗、顺序就是显示顺序（Q-001 的默认档）。
-/// **只有这四颗**——加第五颗要改这张表，而 `the_bar_has_exactly_the_four_actions` 会先响。
-pub const BAR_ACTIONS: [&str; 4] = ["钉住", "复制", "保存", "取消"];
+/// 栏里那三颗，顺序就是显示顺序（用户 2026-11-09 晚逐条定下：对勾取代「钉住」、
+/// 栏里不放「取消」）。加一颗要改这张表，`the_bar_has_three_icons_in_this_order` 会先响。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BarIcon {
+    /// 完成 = 钉到屏幕上
+    Check,
+    Copy,
+    Save,
+}
+
+pub const BAR_ICONS: [BarIcon; 3] = [BarIcon::Check, BarIcon::Copy, BarIcon::Save];
+
+/// 一颗线稿图标按钮：自己画（两段线/两块圆角框/一个盘子加一支箭头），返回是否被点。
+///
+/// 为什么不用 `ui.button("✔")`：字符依赖字体，本仓因为字符图标出过显示成方块的缺陷（D-5 那一族）。
+fn icon_button(ui: &mut egui::Ui, icon: BarIcon) -> egui::Response {
+    let size = egui::vec2(26.0, 26.0);
+    let (id, rect) = ui.allocate_space(size);
+    let response = ui.interact(rect, id, egui::Sense::click());
+    let rect = rect.shrink(4.0);
+    let ink = if response.hovered() {
+        egui::Color32::WHITE
+    } else {
+        egui::Color32::from_rgb(0xC8, 0xCA, 0xCF)
+    };
+    let stroke = egui::Stroke::new(1.6, ink);
+    let painter = ui.painter();
+    match icon {
+        BarIcon::Check => {
+            // 两段线，短的那段从左边起头——和 某截图工具 那颗对勾同一个读法
+            let start = egui::pos2(rect.min.x, rect.center().y);
+            let knee = egui::pos2(rect.min.x + rect.width() * 0.35, rect.max.y);
+            let end = egui::pos2(rect.max.x, rect.min.y);
+            // 两段线，短的那段从左边起头——和 某截图工具 那颗对勾同一个读法。
+            // 不用 `Shape::convex_polyline`：0.37 没有它，且折线本来就两处端点。
+            painter.line_segment([start, knee], stroke);
+            painter.line_segment([knee, end], stroke);
+        }
+        BarIcon::Copy => {
+            let back = egui::Rect::from_min_size(
+                egui::pos2(rect.min.x, rect.min.y),
+                egui::vec2(rect.width() * 0.62, rect.height() * 0.74),
+            );
+            let front = back.translate(egui::vec2(rect.width() * 0.3, rect.height() * 0.26));
+            painter.rect_stroke(front, 3.0, stroke, egui::StrokeKind::Inside);
+            painter.rect_stroke(back, 3.0, stroke, egui::StrokeKind::Inside);
+        }
+        BarIcon::Save => {
+            // 一支向下的箭头落进一个盘子（"存到别处"的通行读法）
+            let top = egui::pos2(rect.center().x, rect.min.y);
+            let bottom = egui::pos2(rect.center().x, rect.center().y + rect.height() * 0.12);
+            painter.line_segment([top, bottom], stroke);
+            painter.line_segment(
+                [
+                    egui::pos2(
+                        rect.min.x + rect.width() * 0.24,
+                        rect.min.y + rect.height() * 0.3,
+                    ),
+                    bottom,
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(
+                        rect.max.x - rect.width() * 0.24,
+                        rect.min.y + rect.height() * 0.3,
+                    ),
+                    bottom,
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(rect.min.x, rect.center().y),
+                    egui::pos2(rect.min.x, rect.max.y),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(rect.min.x, rect.max.y),
+                    egui::pos2(rect.max.x, rect.max.y),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(rect.max.x, rect.max.y),
+                    egui::pos2(rect.max.x, rect.center().y),
+                ],
+                stroke,
+            );
+        }
+    }
+    let tip = match icon {
+        BarIcon::Check => "钉到屏幕上（与按回车相同）",
+        BarIcon::Copy => "复制这张图到剪贴板",
+        BarIcon::Save => "存成文件",
+    };
+    response.on_hover_text(tip)
+}
 
 /// 动作条的尺寸（药丸）。宽度按四颗按钮 + 一句尺寸读数估的固定值：
 /// 它 SHALL NOT 跟着选区宽度变（用户那句"标注按钮怎么有背景"要的就是浮着的小条，不是一条 bar）。

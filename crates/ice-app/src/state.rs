@@ -602,7 +602,15 @@ pub struct Capture {
     /// 抬层那一步这一刻成没成（成=整屏盖住，含菜单栏与 Dock 那两条）。
     /// 不成也要能继续用，但界面 SHALL 说一句（REQ-101：不许静默当成功）。
     pub raised: bool,
+    /// 原生那两下（抬层 / 激活）还要不要再重下。**缺陷 D-31~D-34 的病因就在这格**：
+    /// 探针里"写完不等于生效"量的是一次性动作，我照它做成每帧重下，于是几张贴图加遮罩
+    /// 每帧枚举窗口、重设 frame，把主线程拖死了。改成**头几帧重下、之后停**：
+    /// 收敛实测在 0.02 秒内完成（约一两帧），给 12 帧余量足够，之后不再动。
+    pub push_frames: u8,
 }
+
+/// 原生抬层与激活重下的帧数上限。之后不再下发（见 `Capture::push_frames`）。
+pub const PUSH_FRAMES: u8 = 12;
 
 impl Capture {
     /// 这次截图当前那块屏的作业面（给纯函数用的 `Field`）。拿不到就是没有选区可算。
@@ -1488,14 +1496,14 @@ impl AppState {
         self.capture_in_flight = Some(id);
         self.capture_stage = CaptureStage::Capturing;
         self.capture_screens = screens.clone();
-        // ---- 2026-11-09 晚上：这条**退回旧路径**（用户实测五条缺陷 D-31~D-35）----
-        // 冻结 + 遮罩那条链在真应用里只跑到"画面已冻结"：日志里五次冻结、零条遮罩意图，
-        // 说明按下/拖动/esc 都没进遮罩那扇窗。半接通的版本不能挂在他每天用的入口上。
-        // 新链路（`Job::Freeze`）与它的无头断言全部保留，修好再切回来——
-        // 切换点只有这一处，正是当初把派发收在一格的原因。
-        Some(Job::ScreenCapture {
+        // 派发口就这一格（切新旧两条链都只改这里）。
+        // 2026-11-09 夜里：真机报 D-31~D-34 后曾退回旧路径；本轮按诊断改掉病因
+        // （原生重下从"每帧"收成"头几帧"，见 `Capture::push_frames`）再切回新链。
+        Some(Job::Freeze {
             id,
             seq: self.capture_seq,
+            displays: screens.into_iter().map(|(display, _)| display).collect(),
+            // 发起前要收起哪些窗，账跟着任务走：子进程结束时由**那条线程**放回来
             hidden: self.capture_hidden_record(),
         })
     }
@@ -1558,6 +1566,7 @@ impl AppState {
             screen: 0,
             sel: crate::system::selection::Selection::fresh(),
             raised: false,
+            push_frames: PUSH_FRAMES,
         });
         self.capture_stage = CaptureStage::Frozen;
         CaptureApplied::Frozen { screens }
@@ -1601,6 +1610,17 @@ impl AppState {
     pub fn pin_confirmed_capture(&mut self, path: PathBuf) -> Option<RequestId> {
         self.capture = None;
         self.pin_from_history(path)
+    }
+
+    /// 用掉一帧原生重下的配额。成为键盘窗之后提前收手，不再骚扰窗口服务器。
+    pub fn consume_push_frame(&mut self, settled: bool) {
+        if let Some(capture) = self.capture.as_mut() {
+            if settled {
+                capture.push_frames = 0;
+            } else {
+                capture.push_frames = capture.push_frames.saturating_sub(1);
+            }
+        }
     }
 
     /// 正在遮罩里吗。帧循环用它决定要不要每帧重下抬层与激活。

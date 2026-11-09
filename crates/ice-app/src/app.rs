@@ -1406,7 +1406,10 @@ impl IceApp {
     /// 裁不出来就说那一句并关掉遮罩——留一扇截不出东西的遮罩在屏上比一次失败更糟。
     fn confirm_capture(&mut self) -> Option<std::path::PathBuf> {
         let dir = self.shots_dir.clone()?;
-        let image = self.state.crop_selection()?;
+        let Some(image) = self.state.crop_selection() else {
+            tracing::warn!("确认时裁不出图：遮罩没收到选区（拖动没进来的话就是这一格）");
+            return None;
+        };
         let seq = self.state.capture_seq + 1;
         match capture::save_shot(&dir, &image, seq) {
             Ok(path) => {
