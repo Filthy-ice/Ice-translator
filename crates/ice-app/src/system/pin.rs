@@ -19,6 +19,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::system::wake_root;
 use egui::{Id, Key, Modifiers, Pos2, Rect, Response, Sense, Ui, Vec2};
 
 /// 文字层选中块的高亮：淡蓝底 + 一档深一点的边。颜色跟应用自己的图标同一族（不新造色系）。
@@ -449,9 +450,15 @@ pub fn take_intents(ctx: &egui::Context, id: u64) -> Vec<PinIntent> {
 /// 算好传进来：**贴图不自己去读 `AppState`**，也不留一份全局可变的"当前进度"——
 /// 六张贴图各有自己的进度，靠键去查迟早查错对象。
 ///
-/// 首张落在哪儿没有判据：`screencapture` 只交回一个文件，不交回用户框的那块矩形。
-/// 这里因此不给 `position`，让系统按默认位摆放，**用户靠拖动定位**（实测拖得动、
-/// 位置读 `outer_rect` 跟得上，事实 29/32）。攒一份"我们以为它在哪"的坐标是禁止的。
+/// 首张落在哪儿：**由状态层给**（`pin.at` = 确认那一刻选区的全局左上角），本模块不猜、
+/// 也不攒坐标。给不出（「打开上一次」、满了之后 F3 补钉那两张）就照旧让系统按默认位摆，
+/// 用户靠拖动定位（实测拖得动、位置读 `outer_rect` 跟得上，事实 29/32）。
+///
+/// 这一格兑现的是 CHG-009 REQ-001 那句"选完**原地**钉成一张浮在屏幕上的图"：系统框选那个
+/// 年代拿不到那块矩形（`screencapture -i` 只交回一个文件），当时只能交给默认位；
+/// 自绘遮罩（CHG-010）交得出矩形，就该钉回用户框住的那一块。
+/// 每帧传的仍是同一个值——egui 只在 builder 的 `position` **变了**的时候才发位置命令，
+/// 所以用户拖动之后窗不会被弹回原地（攒一份"我们以为它在哪"的坐标仍然是禁止的）。
 pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<String>) {
     let id = pin.id;
     let band_open = pin.band_open;
@@ -465,7 +472,7 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
     let resize = inner_size_command(previous, layout.window_size);
 
     let viewport = viewport_id(id);
-    let builder = egui::ViewportBuilder::default()
+    let mut builder = egui::ViewportBuilder::default()
         .with_inner_size(layout.window_size)
         .with_decorations(false)
         .with_transparent(false)
@@ -476,6 +483,9 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
         // 右键菜单弹不出来，窗口也从来没成为 key window——键盘事件（esc、空格）同样进不来。
         // 用户报的"三个关法都不管用"就是这一个原因。拖动改按下面那一处 `StartDrag`。
         .with_title("贴图");
+    if let Some(at) = pin.at {
+        builder = builder.with_position(at);
+    }
 
     let texture = visual.texture;
     let root = ctx.clone();
@@ -509,8 +519,11 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
             if let Ok(mut queue) = slot.lock() {
                 queue.extend(fired);
             }
-            // 意图是主窗下一帧要取的：**回调里必须叫主窗**（与 Carbon 回调同一条纪律）
-            root.request_repaint();
+            // 意图是主窗下一帧要取的：**回调里必须点名叫主窗那一扇视口**。
+            // 先前这里写的是 `root.request_repaint()`——egui 按当前视口 id 派发，那句只会
+            // 重画这张贴图自己，主窗一次都不醒。真机读数就是用户报的那句"点关闭要么没反应、
+            // 要么二十来秒才关上"：那二十秒是主窗下一次恰好重画的时刻，不是关闭慢。
+            wake_root(&root);
         }
         // 收放带子要改的是**窗口本身**的尺寸（事实 26），只在真的变了那一刻发一次
         if let Some(size) = resize {
@@ -615,8 +628,9 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
             if let Ok(mut queue) = slot.lock() {
                 queue.extend(local);
             }
-            // 意图是主窗下一帧要取的：**推完必须叫主窗**（同一条纪律的第三处）
-            root.request_repaint();
+            // 意图是主窗下一帧要取的：**推完必须点名叫主窗那一扇视口**（同一条纪律的第三处，
+            // 理由见上面键盘那一处：`request_repaint()` 在子窗闭包里只叫得醒子窗自己）
+            wake_root(&root);
         }
     });
 }
@@ -659,19 +673,7 @@ pub fn probe_document() -> ice_core::document::OcrDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 把注释行与测试模块之前的部分留下：形状核查要看的是**代码里写了什么**，
-    /// 不是注释里讨论了什么（本文件就专门解释过为什么不用另一条拖动路）。
-    fn implementation_lines(source: &str) -> String {
-        source
-            .split("#[cfg(test)]")
-            .next()
-            .unwrap_or(source)
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
+    use crate::system::implementation_lines;
 
     fn px(w: f32, h: f32) -> Vec2 {
         Vec2::new(w, h)
@@ -1028,6 +1030,25 @@ mod tests {
         );
     }
 
+    /// **形状核查：推意图的两处出口都必须点名叫主窗那一扇视口。**
+    ///
+    /// `ctx.request_repaint()` 在子窗闭包里按"当前视口 id"派发，只会重画这张贴图自己；
+    /// 主窗不醒，槽里那份意图就一直没人取。真机上的表现是用户报的那句
+    /// "点关闭要么没反应，要么二十来秒才关上"——二十秒是主窗下一次恰好重画的时刻。
+    #[test]
+    fn intents_are_delivered_by_waking_the_root_viewport() {
+        let body = implementation_lines(include_str!("pin.rs"));
+        assert!(
+            !body.contains("root.request_repaint()"),
+            "拿主窗的 ctx 调 request_repaint 只会叫醒当前这扇子窗，是个假动作"
+        );
+        assert_eq!(
+            body.matches("wake_root(&root)").count(),
+            2,
+            "键盘与带子按钮两个推意图的出口，一个不多一个不少"
+        );
+    }
+
     /// **形状核查：一份清单。** 带子与右键菜单两处都只许遍历 `ACTIONS`，
     /// 不许各自再写一遍按钮名——那句"只要四项"要被钉住，不是被打折理解。
     #[test]
@@ -1113,5 +1134,24 @@ mod tests {
             "文字层没长出来，Shift 也不该冒出第二种手势"
         );
         assert!(!selection_gesture(true, true, false));
+    }
+
+    /// **形状核查：贴图的落点只有一个来源——状态给的那一个。**
+    ///
+    /// 本模块不许自己算位置（`the_layout_never_invents_a_position` 钉住了 `pin_layout`
+    /// 那一半），也不许在拖动之后把窗弹回原地：egui 只在 builder 的 `position` **变了**
+    /// 的时候才发位置命令，所以每帧传的都是 `pin.at` 这一个定值，绝不传 `outer_rect` 读回来的值。
+    #[test]
+    fn the_place_comes_from_the_state_and_never_from_our_own_guess() {
+        let body = implementation_lines(include_str!("pin.rs"));
+        assert_eq!(
+            body.matches("with_position").count(),
+            1,
+            "建窗那一处，只此一处"
+        );
+        assert!(
+            body.contains("if let Some(at) = pin.at"),
+            "落点只认状态给的那一格；没有就交给系统摆"
+        );
     }
 }

@@ -488,6 +488,13 @@ pub struct Pin {
     pub document: Option<ice_core::document::OcrDocument>,
     /// 带子开着还是收着（REQ-003：收起 = 窗口缩到图片本身）
     pub band_open: bool,
+    /// 这张**该钉在哪儿**：确认那一刻选区的左上角，全局点坐标。
+    ///
+    /// CHG-009 REQ-001 原话是"选完**原地**钉成一张浮在屏幕上的图"。系统框选那个年代拿不到
+    /// 那块矩形（`screencapture -i` 只交回一个文件），所以当时交给了系统默认位；
+    /// 自绘遮罩（CHG-010）交得出矩形，这一格就该兑现。
+    /// `None` = 这条入口本来就没有位置（「打开上一次」、满了之后 F3 补钉那两张），照旧让系统摆。
+    pub at: Option<Pos2>,
     /// 这张的像素（识别回信带回来的那一份，与图片页的 `AppState::image` 同一种东西）。
     /// 合成要有底图，而底图**必须是屏上正在显示的那一张**——现读文件会读到没换成品之前的旧图。
     pub source: Option<Admitted>,
@@ -528,10 +535,10 @@ impl Pin {
     /// 测试与本模块内部构造用（贴图窗的端到端用例要造一张真贴图）
     #[cfg(test)]
     pub fn for_test(id: RequestId, path: PathBuf) -> Self {
-        Self::new(id, path)
+        Self::new(id, path, None)
     }
 
-    fn new(id: RequestId, path: PathBuf) -> Self {
+    fn new(id: RequestId, path: PathBuf, at: Option<Pos2>) -> Self {
         Self {
             id,
             path,
@@ -539,6 +546,7 @@ impl Pin {
             stage: RecognitionStage::Idle,
             document: None,
             band_open: true,
+            at,
             source: None,
             translate_stage: TranslateStage::Idle,
             translate_in_flight: None,
@@ -1629,8 +1637,19 @@ impl AppState {
 
     /// 钉住遮罩里确认的那一张（走的是与老流程同一条 `pin_from_history`，不开第二条钉图路）
     pub fn pin_confirmed_capture(&mut self, path: PathBuf) -> Option<RequestId> {
+        // 「原地」那一格在这里兑现：确认这一刻选区在哪，钉出来就在那儿。
+        // 换算只在这一处：那块屏的全局原点 + 选区在那块屏里的左上角。
+        // 先算再清 `capture`——清完就没有这份几何了。
+        let at = self.capture.as_ref().and_then(|capture| {
+            let frame = capture.frames.get(capture.screen)?;
+            let sel = capture.sel.rect?;
+            Some(Pos2::new(
+                frame.origin.x + sel.min.x,
+                frame.origin.y + sel.min.y,
+            ))
+        });
         self.capture = None;
-        self.pin_from_history(path)
+        self.pin_from_history(path, at)
     }
 
     /// 用掉一帧原生重下的配额。成为键盘窗之后提前收手，不再骚扰窗口服务器。
@@ -1737,7 +1756,7 @@ impl AppState {
                     self.capture_stage = CaptureStage::Failed(text.clone());
                     return CaptureApplied::Failed(text);
                 }
-                let pin = self.push_pin(path.clone());
+                let pin = self.push_pin(path.clone(), None);
                 self.capture_stage = CaptureStage::Pinned;
                 if let Some(id) = pin {
                     self.pins_new.push(id);
@@ -1762,13 +1781,13 @@ impl AppState {
     ///
     /// 号只往前走、不复用：窗口关掉之后那个号不会被下一张顶替，所以任何一条晚到的回信
     /// 都不可能落在一张新贴图上（[`Pin::recognize_gen`] 是同一族纪律的第二层）。
-    pub fn push_pin(&mut self, path: PathBuf) -> Option<RequestId> {
+    pub fn push_pin(&mut self, path: PathBuf, at: Option<Pos2>) -> Option<RequestId> {
         if self.pins.len() >= PIN_MAX {
             return None;
         }
         self.next_pin_id += 1;
         let id = self.next_pin_id;
-        self.pins.push(Pin::new(id, path));
+        self.pins.push(Pin::new(id, path, at));
         Some(id)
     }
 
@@ -1777,7 +1796,8 @@ impl AppState {
     /// 这把键是"打开上一次"，两把键就成一把了）
     pub fn pin_last_capture(&mut self) -> Option<RequestId> {
         let path = self.unpinned_capture.take()?;
-        let id = self.push_pin(path)?;
+        // 这一格没有矩形可给：那是"满了之后补钉"那一档，位置只能交给系统
+        let id = self.push_pin(path, None)?;
         self.pins_new.push(id);
         self.capture_stage = CaptureStage::Pinned;
         Some(id)
@@ -1785,8 +1805,8 @@ impl AppState {
 
     /// 「打开上一次截图」那一格：把历史里最新那张钉出来。**取图那一条路不重开**——
     /// 这张已经在盘上，走的还是 `push_pin` + 派识别那一套
-    pub fn pin_from_history(&mut self, path: PathBuf) -> Option<RequestId> {
-        let id = self.push_pin(path)?;
+    pub fn pin_from_history(&mut self, path: PathBuf, at: Option<Pos2>) -> Option<RequestId> {
+        let id = self.push_pin(path, at)?;
         self.pins_new.push(id);
         self.capture_stage = CaptureStage::Pinned;
         Some(id)
@@ -2698,7 +2718,7 @@ mod tests {
 
     /// 让一张贴图走到"识别已回来"的状态
     fn recognized_pin(st: &mut AppState) -> u64 {
-        st.push_pin(PathBuf::from("/tmp/history/pin.png"))
+        st.push_pin(PathBuf::from("/tmp/history/pin.png"), None)
             .expect("能钉一张")
     }
 
@@ -2770,7 +2790,7 @@ mod tests {
         let before = std::fs::read(&file).unwrap();
 
         let mut st = capture_state();
-        let pin = st.push_pin(file.clone()).unwrap();
+        let pin = st.push_pin(file.clone(), None).unwrap();
         let (admitted, document) = pixels_and_doc(60, 40);
         let mut document = document;
         document.blocks = pin_doc().blocks;
@@ -2899,8 +2919,8 @@ mod tests {
         }
 
         let mut st = capture_state();
-        st.push_pin(PathBuf::from("/tmp/history/a.png"));
-        st.push_pin(PathBuf::from("/tmp/history/b.png"));
+        st.push_pin(PathBuf::from("/tmp/history/a.png"), None);
+        st.push_pin(PathBuf::from("/tmp/history/b.png"), None);
         let job = st.submit_capture(two_screens()).expect("空闲时该发得出");
         // 两条路（系统框选 / 自绘遮罩）都必须带这份账：断言对两支都成立，
         // 免得切换派发口时这组测试变成"只有某一条路能过"
@@ -2924,6 +2944,59 @@ mod tests {
             unreachable!()
         };
         assert!(hidden.root_was_hidden);
+    }
+
+    /// **确认之后钉回原地**（CHG-009 REQ-001 那句"选完**原地**钉成一张浮在屏幕上的图"）。
+    ///
+    /// 系统框选那个年代拿不到那块矩形（`screencapture -i` 只交回一个文件），只能交给默认位；
+    /// 自绘遮罩（CHG-010）交得出矩形，这一格就该兑现。故意用一块**原点不是 (0,0)** 的屏来量：
+    /// 只算本地坐标会得出 `(100,80)`，而用户框住的那一块在 `(-2140,80)`——副屏在左那一档
+    /// 就是这么算的（CHG-009 事实 34 同一课）。
+    /// 另一半：从历史里取的那一张本来就没有"原地"可给，`at` 必须是 `None`。
+    #[test]
+    fn a_confirmed_pin_is_placed_where_the_box_was() {
+        let mut st = capture_state();
+        st.submit_capture(two_screens()).expect("该发得出");
+        let frames = vec![Freeze {
+            display: 2,
+            points: Vec2::new(1920.0, 1080.0),
+            appkit: Rect::from_min_size(Pos2::new(-1920.0, 0.0), Vec2::new(1920.0, 1080.0)),
+            origin: Pos2::new(-1920.0, 0.0),
+            image: Arc::new(image::RgbaImage::from_pixel(
+                1920,
+                1080,
+                image::Rgba([1, 1, 1, 255]),
+            )),
+        }];
+        assert!(matches!(
+            st.apply_frozen(1, frames),
+            CaptureApplied::Frozen { screens: 1 }
+        ));
+        let field = st.capture.as_ref().unwrap().field().unwrap();
+        st.apply_selection(
+            0,
+            crate::system::selection::Selection::from_rect(
+                &field,
+                Rect::from_min_max(Pos2::new(100.0, 80.0), Pos2::new(300.0, 200.0)),
+            ),
+        );
+
+        let id = st
+            .pin_confirmed_capture(PathBuf::from("/tmp/x.png"))
+            .expect("该钉上一张");
+        let pin = st.pins.iter().find(|p| p.id == id).expect("钉完就在集合里");
+        assert_eq!(
+            pin.at,
+            Some(Pos2::new(-2140.0, 80.0)),
+            "那块屏的全局原点 (-2240,0) + 选区在那块屏里的左上角 (100,80)，两处都得算"
+        );
+
+        // 「打开上一次」那一张：没有原地可给，交给系统摆，不许拿上一张的位置顶替
+        let other = st
+            .pin_from_history(PathBuf::from("/tmp/y.png"), None)
+            .expect("历史里那张也该钉上");
+        let other = st.pins.iter().find(|p| p.id == other).expect("同上");
+        assert_eq!(other.at, None, "这条入口本来就没有矩形");
     }
 
     /// 遮罩里的三个动作各自落到哪一格（REQ-102/105/106）。
@@ -3235,7 +3308,7 @@ mod tests {
             .map(|i| PathBuf::from(format!("/tmp/history/{i}.png")))
             .collect();
         for path in &before {
-            st.push_pin(path.clone()).expect("前六张该钉得上");
+            st.push_pin(path.clone(), None).expect("前六张该钉得上");
         }
         assert_eq!(st.pins.len(), PIN_MAX);
         assert_eq!(
@@ -3266,7 +3339,7 @@ mod tests {
     #[test]
     fn a_late_pin_reply_cannot_overwrite_the_newer_generation() {
         let mut st = capture_state();
-        st.push_pin(PathBuf::from("/tmp/history/a.png"));
+        st.push_pin(PathBuf::from("/tmp/history/a.png"), None);
         // 第一代：派发 → 落地，文档是那一份 8×8
         let gen1 = match st.submit_pin_recognize(1) {
             Some(Job::PinRecognize { generation, .. }) => generation,
@@ -3308,7 +3381,7 @@ mod tests {
     fn a_pin_with_no_text_is_not_a_failure_and_has_nothing_to_select() {
         use ice_vision::error::VisionError;
         let mut st = capture_state();
-        st.push_pin(PathBuf::from("/tmp/history/b.png"));
+        st.push_pin(PathBuf::from("/tmp/history/b.png"), None);
         st.submit_pin_recognize(1);
         let applied = st.apply_pin_recognized(1, 1, Err(VisionError::NoTextFound));
         assert!(applied);
@@ -3332,22 +3405,25 @@ mod tests {
     #[test]
     fn closing_a_pin_reports_whether_it_was_actually_there() {
         let mut st = capture_state();
-        st.push_pin(PathBuf::from("/tmp/history/1.png"));
-        st.push_pin(PathBuf::from("/tmp/history/2.png"));
+        st.push_pin(PathBuf::from("/tmp/history/1.png"), None);
+        st.push_pin(PathBuf::from("/tmp/history/2.png"), None);
         assert!(st.close_pin(1));
         assert!(!st.close_pin(1), "再关一次要说没关掉（它本来就不在）");
         assert!(!st.close_pin(99), "不存在的号不许装作成功");
         assert_eq!(st.pins.len(), 1);
         assert_eq!(st.pins[0].id, 2);
         // 关过的号不会被下一张顶替
-        assert_eq!(st.push_pin(PathBuf::from("/tmp/history/3.png")), Some(3));
+        assert_eq!(
+            st.push_pin(PathBuf::from("/tmp/history/3.png"), None),
+            Some(3)
+        );
     }
 
     /// 带子开合只认真存在的贴图（REQ-003 那条"收起=窗口缩到图片本身"的状态面）。
     #[test]
     fn the_band_toggle_refuses_a_pin_that_is_not_there() {
         let mut st = capture_state();
-        st.push_pin(PathBuf::from("/tmp/history/1.png"));
+        st.push_pin(PathBuf::from("/tmp/history/1.png"), None);
         assert!(st.pins[0].band_open, "刚钉上时带子是开着的");
         assert!(st.set_pin_band(1, false));
         assert!(!st.pins[0].band_open);
@@ -3360,7 +3436,7 @@ mod tests {
     #[test]
     fn the_text_layer_only_counts_when_recognition_finished() {
         let mut st = capture_state();
-        st.push_pin(PathBuf::from("/tmp/history/1.png"));
+        st.push_pin(PathBuf::from("/tmp/history/1.png"), None);
         let pin = &mut st.pins[0];
         assert!(!pin.text_ready(), "刚钉上时还没有文字层");
         pin.stage = RecognitionStage::Recognizing;
@@ -3377,7 +3453,7 @@ mod tests {
     #[test]
     fn a_selection_yields_text_or_nothing_not_an_empty_string() {
         let mut st = capture_state();
-        st.push_pin(PathBuf::from("/tmp/history/1.png"));
+        st.push_pin(PathBuf::from("/tmp/history/1.png"), None);
         let pin = &mut st.pins[0];
         pin.stage = RecognitionStage::Done { blocks: 1 };
         pin.document = Some(pin_doc());
@@ -3399,7 +3475,7 @@ mod tests {
     #[test]
     fn clearing_a_selection_is_a_write_not_a_no_op() {
         let mut st = capture_state();
-        st.push_pin(PathBuf::from("/tmp/history/1.png"));
+        st.push_pin(PathBuf::from("/tmp/history/1.png"), None);
         st.pins[0].selected = vec![0];
         assert!(st.set_pin_selection(1, vec![0, 1]));
         assert_eq!(st.pins[0].selected, vec![0, 1]);
@@ -3427,7 +3503,7 @@ mod tests {
         assert_eq!(st.capture_gate(), Some("上一次截图还没完"));
         st.capture_in_flight = None;
         for i in 0..PIN_MAX {
-            st.push_pin(PathBuf::from(format!("/tmp/history/{i}.png")));
+            st.push_pin(PathBuf::from(format!("/tmp/history/{i}.png")), None);
         }
         assert_eq!(
             st.capture_gate(),

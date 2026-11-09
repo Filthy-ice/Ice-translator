@@ -259,7 +259,8 @@ impl IceApp {
             }
             Action::ReopenLast => match self.newest_shot() {
                 Some(path) => {
-                    self.state.pin_from_history(path);
+                    // 从历史里取的那一张没有"原地"可给：那块矩形早随着上一次遮罩过去了
+                    self.state.pin_from_history(path, None);
                 }
                 None => self.state.toast(Tone::Info, "还没有截图记录"),
             },
@@ -4789,7 +4790,7 @@ mod tests {
         image::RgbImage::from_pixel(8, 6, image::Rgb([3, 4, 5]))
             .save(&shot)
             .unwrap();
-        state.push_pin(shot);
+        state.push_pin(shot, None);
 
         let out = dir.path().join("out.png");
         let (tone, text) = save_pin_image(&state, 1, out.to_str().unwrap());
@@ -4807,7 +4808,7 @@ mod tests {
         // 贴图还在但文件被老化删了：同一档，不造第二套失败话
         let mut orphan = plain_state();
         let missing = dir.path().join("aged-out.png");
-        orphan.push_pin(missing.clone());
+        orphan.push_pin(missing.clone(), None);
         let (tone, text) =
             save_pin_image(&orphan, 1, dir.path().join("never.png").to_str().unwrap());
         assert_eq!(tone, Tone::Warn);
@@ -4819,7 +4820,7 @@ mod tests {
     #[test]
     fn the_band_says_what_c_will_give_and_only_after_the_text_layer_grew() {
         let mut state = plain_state();
-        state.push_pin(std::path::PathBuf::from("/tmp/a.png"));
+        state.push_pin(std::path::PathBuf::from("/tmp/a.png"), None);
         let pin = state.pins.first_mut().unwrap();
 
         pin.stage = crate::state::RecognitionStage::Recognizing;
@@ -4857,7 +4858,7 @@ mod tests {
     fn bare_c_dispatches_between_text_and_image_by_selection() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = plain_state();
-        state.push_pin(dir.path().join("a.png"));
+        state.push_pin(dir.path().join("a.png"), None);
         {
             let pin = state.pins.first_mut().unwrap();
             pin.stage = crate::state::RecognitionStage::Done { blocks: 2 };
@@ -4887,8 +4888,8 @@ mod tests {
     fn a_drag_selection_lands_on_its_own_pin_only() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = plain_state();
-        state.push_pin(dir.path().join("a.png"));
-        state.push_pin(dir.path().join("b.png"));
+        state.push_pin(dir.path().join("a.png"), None);
+        state.push_pin(dir.path().join("b.png"), None);
         state.set_pin_selection(1, vec![0, 1]);
         state.set_pin_selection(2, vec![0]);
         assert_eq!(state.pins[0].selected, vec![0, 1]);
@@ -4913,8 +4914,8 @@ mod tests {
     #[test]
     fn the_save_source_is_decided_at_press_time_and_cleared_on_cancel() {
         let mut state = plain_state();
-        state.push_pin(std::path::PathBuf::from("/tmp/a.png"));
-        state.push_pin(std::path::PathBuf::from("/tmp/b.png"));
+        state.push_pin(std::path::PathBuf::from("/tmp/a.png"), None);
+        state.push_pin(std::path::PathBuf::from("/tmp/b.png"), None);
         let mut app = app(std::env::temp_dir().as_path(), state);
         assert_eq!(app.pending_save, PendingSave::None);
 
@@ -4940,7 +4941,7 @@ mod tests {
         let before = std::fs::read(&file).unwrap();
 
         let mut state = plain_state();
-        let pin = state.push_pin(file.clone()).unwrap();
+        let pin = state.push_pin(file.clone(), None).unwrap();
         let mut app = app(dir.path(), state);
         let mut effects = Effects::default();
 
@@ -4966,7 +4967,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut state = plain_state();
         for name in ["a.png", "b.png"] {
-            state.push_pin(dir.path().join(name)).unwrap();
+            state.push_pin(dir.path().join(name), None).unwrap();
         }
         let mut app = app(dir.path(), state);
         let mut effects = Effects::default();
@@ -5046,7 +5047,7 @@ mod tests {
     fn a_frame_without_the_capture_intent_hides_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = app(dir.path(), plain_state());
-        app.state.push_pin(dir.path().join("a.png"));
+        app.state.push_pin(dir.path().join("a.png"), None);
         let c = ctx();
 
         app.run_effects(&c, Effects::default());

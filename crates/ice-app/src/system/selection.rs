@@ -9,6 +9,7 @@
 //! 3. **点 → 物理像素的换算只许存在一处**（[`Field::to_pixels`]）。CHG-009 事实 22 已经演示过
 //!    两处各除一次或都忘了除的现场：贴图大一倍、文字层整体错位。
 
+use crate::system::wake_root;
 use egui::{Id, Pos2, Rect, Vec2, pos2};
 use ice_core::document::PixelRect;
 
@@ -412,6 +413,19 @@ pub fn bar_rect(sel: egui::Rect, bar: Vec2, side: BarSide) -> egui::Rect {
     Rect::from_min_size(min, bar)
 }
 
+/// 这一刻药丸占的那一块矩形；**没有有效选区就没有药丸**。
+///
+/// 绘制与"按下落在哪"的判定都读这一处。两处各算一次迟早分岔——上一版正是分岔出来的：
+/// 按下落在药丸上被当成"在空白处起新框"，框缩成一个点、药丸那一帧没了位置，
+/// 那颗按钮再也收不到完整的按下—抬起。
+fn bar_of(sel: &Selection, field: &Field) -> Option<Rect> {
+    let rect = sel
+        .rect
+        .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)?;
+    let size = Vec2::new(BAR_W, BAR_H);
+    Some(bar_rect(rect, size, bar_side(rect, size, field)))
+}
+
 // 三条常量的边界钉在**编译期**：写成运行期断言会被判"常量比较恒真"而形同虚设，
 // 它要的效果从来不是"跑一下看看"，是"谁改坏了就编译不过"。
 /// 压暗不许等于"没压"(255)，也不许等于"看不见原图"(0)；具体档位由走查 W-6.2 定（Q-005）。
@@ -423,330 +437,6 @@ const _: () = assert!(HANDLE_COUNT == 8);
 /// 药丸不许被把手压住：把手有一半探在选区外，缝至少得有那一半宽。取等号时
 /// 正下方那颗把手的外缘正好贴上药丸的上缘（相接、不相叠）；要把把手画大，缝也得跟着大。
 const _: () = assert!(GAP >= HANDLE_SIZE / 2.0);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use egui::vec2;
-
-    /// 主屏：1920×1080 的点、2 倍像素（**故意用非 1.0 的比例**——本机在线两屏都是 1.0，
-    /// 无头里再写 1.0 就等于"拿 1.0 的读数冒充 2.0"，那是 CHG-009 事实 22 犯过的错）。
-    fn main_screen() -> Field {
-        Field::new(
-            Rect::from_min_max(pos2(0.0, 0.0), pos2(1920.0, 1080.0)),
-            vec2(3840.0, 2160.0),
-        )
-    }
-
-    /// 第二块屏：挂在左边、还往上多出 120（本机实测 `(-1920,-120) 1920x1200`）。
-    /// 遮罩窗与屏对齐后窗口内是 0 起点，但**全局矩形**要能被同一套函数处理，所以这里
-    /// 直接拿带负坐标的 bounds 喂进去——负 x 不许有任何特殊分支。
-    fn left_screen_global() -> Field {
-        Field::new(
-            Rect::from_min_max(pos2(-1920.0, -120.0), pos2(0.0, 1080.0)),
-            vec2(1920.0, 1200.0),
-        )
-    }
-
-    fn drag_all_the_way(field: &Field, from: Pos2, to: Pos2) -> Selection {
-        let mut sel = Selection::fresh();
-        sel.press(field, from, HANDLE_RADIUS);
-        sel.drag(field, to);
-        sel.release(field, to);
-        sel
-    }
-
-    /// 空白拖出新框，尺寸读数与矩形同源（同一个换算、同一份夹取）。
-    #[test]
-    fn a_blank_drag_makes_a_selection_whose_label_matches_its_pixels() {
-        let field = main_screen();
-        let sel = drag_all_the_way(&field, pos2(100.0, 100.0), pos2(300.0, 250.0));
-        assert_eq!(
-            sel.stage,
-            Stage::Ready,
-            "松手后必须停在原地等确认，不许自己落地"
-        );
-        let rect = sel.rect.expect("拖出来了就该有框");
-        assert_eq!(
-            (rect.min.x, rect.min.y, rect.max.x, rect.max.y),
-            (100.0, 100.0, 300.0, 250.0)
-        );
-        // 200×150 点，2 倍屏 → 400×300 像素。读数报的是**像素**，不是点
-        assert_eq!(sel.size_label(&field).as_deref(), Some("400 × 300"));
-    }
-
-    /// 越界一律夹在屏内：拖出去、拖过右缘、拖到屏外抬起，都只能是屏内那块。
-    #[test]
-    fn a_drag_that_leaves_the_screen_is_clamped_not_lost() {
-        let field = main_screen();
-        let sel = drag_all_the_way(&field, pos2(1800.0, 1000.0), pos2(5000.0, 5000.0));
-        let rect = sel.rect.expect("抬起在屏外也算一次正常松手");
-        assert_eq!(
-            (rect.max.x, rect.max.y),
-            (1920.0, 1080.0),
-            "右下一角死死停在屏角"
-        );
-        assert_eq!(sel.size_label(&field).as_deref(), Some("240 × 160"));
-    }
-
-    /// 副屏的**负坐标**没有特殊分支：同一套夹取与换算在那块屏上照样成立。
-    #[test]
-    fn the_left_screen_with_negative_coordinates_uses_the_same_rules() {
-        let field = left_screen_global();
-        let sel = drag_all_the_way(&field, pos2(-1900.0, -100.0), pos2(-1700.0, 100.0));
-        let rect = sel.rect.expect("负坐标那块屏照样能框");
-        assert_eq!((rect.min.x, rect.min.y), (-1900.0, -100.0));
-        // 1.0 倍屏：200×200 点 = 200×200 像素，且原点从**那块屏自己的左上角**量起
-        assert_eq!(sel.size_label(&field).as_deref(), Some("200 × 200"));
-        // 拖出这块屏的边界要夹住（它的顶边在全局 y=-120）
-        let out = drag_all_the_way(&field, pos2(-1900.0, -110.0), pos2(-999999.0, -999999.0));
-        assert_eq!(
-            out.rect.map(|r| (r.min.x, r.min.y)),
-            Some((-1920.0, -120.0))
-        );
-    }
-
-    /// **八个把手各只动该动的那两条边**：右下角跟着走，左上角钉住不动。
-    #[test]
-    fn a_handle_moves_only_the_edges_it_should() {
-        let field = main_screen();
-        let base = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
-        let mut sel = Selection {
-            stage: Stage::Ready,
-            rect: Some(base),
-            ..Selection::default()
-        };
-        assert_eq!(
-            sel.press(&field, pos2(300.0, 200.0), HANDLE_RADIUS),
-            Grab::Handle(4)
-        );
-        sel.drag(&field, pos2(360.0, 260.0));
-        sel.release(&field, pos2(360.0, 260.0));
-        assert_eq!(
-            sel.rect,
-            Some(Rect::from_min_max(pos2(100.0, 100.0), pos2(360.0, 260.0)))
-        );
-
-        // 只拖上边：x 不许动
-        let mut sel = Selection {
-            stage: Stage::Ready,
-            rect: Some(base),
-            ..Selection::default()
-        };
-        assert_eq!(
-            sel.press(&field, pos2(200.0, 100.0), HANDLE_RADIUS),
-            Grab::Handle(1)
-        );
-        sel.drag(&field, pos2(233.0, 60.0));
-        assert_eq!(
-            sel.rect,
-            Some(Rect::from_min_max(pos2(100.0, 60.0), pos2(300.0, 200.0)))
-        );
-    }
-
-    /// 框内拖动 = 平移：**尺寸一格不变**，也不许被推出屏外。
-    #[test]
-    fn dragging_inside_moves_the_box_and_keeps_its_size() {
-        let field = main_screen();
-        let base = Rect::from_min_max(pos2(1800.0, 1000.0), pos2(1900.0, 1070.0));
-        let mut sel = Selection {
-            stage: Stage::Ready,
-            rect: Some(base),
-            ..Selection::default()
-        };
-        assert_eq!(
-            sel.press(&field, pos2(1850.0, 1030.0), HANDLE_RADIUS),
-            Grab::Inside
-        );
-        sel.drag(&field, pos2(2400.0, 2400.0));
-        let rect = sel.rect.expect("还在拖");
-        assert_eq!(rect.size(), base.size(), "移动不许改尺寸");
-        assert_eq!(
-            rect.max,
-            pos2(1920.0, 1080.0),
-            "往屏外推要停在屏角，而不是把框推出可见区"
-        );
-    }
-
-    /// 一次按下**只落一处判定**：把手优先于框内。反过来的话靠内那一圈把手永远点不到，
-    /// 而这个缺陷在无头里就能测出来，不该留到手感走查。
-    #[test]
-    fn one_press_lands_on_exactly_one_of_the_three_cases() {
-        let rect = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
-        // 右下角上：是把手 4，不是 Inside
-        assert_eq!(
-            grab(Some(rect), pos2(300.0, 200.0), HANDLE_RADIUS),
-            Grab::Handle(4)
-        );
-        // 角内一格：仍然是把手（优先级）
-        assert_eq!(
-            grab(Some(rect), pos2(295.0, 195.0), HANDLE_RADIUS),
-            Grab::Handle(4)
-        );
-        // 框的正中：Inside
-        assert_eq!(
-            grab(Some(rect), pos2(200.0, 150.0), HANDLE_RADIUS),
-            Grab::Inside
-        );
-        // 框外：Blank
-        assert_eq!(
-            grab(Some(rect), pos2(400.0, 150.0), HANDLE_RADIUS),
-            Grab::Blank
-        );
-        // 还没有框时任何东西都是 Blank
-        assert_eq!(grab(None, pos2(100.0, 100.0), HANDLE_RADIUS), Grab::Blank);
-        // 八个把手编号覆盖完整，且两两不同
-        let seen: Vec<Grab> = (0..HANDLE_COUNT)
-            .map(|i| grab(Some(rect), handle_center(rect, i), HANDLE_RADIUS))
-            .collect();
-        assert!(seen.iter().all(|g| matches!(g, Grab::Handle(_))));
-        let ids: Vec<u8> = seen
-            .iter()
-            .filter_map(|g| match g {
-                Grab::Handle(i) => Some(*i),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(ids.len(), HANDLE_COUNT as usize);
-        assert!(
-            ids.iter().collect::<std::collections::HashSet<_>>().len() == HANDLE_COUNT as usize
-        );
-    }
-
-    /// **单击不许把上一个框弄没**：空白单击是"要鼠标底下那扇窗"（REQ-108），
-    /// 不是"取消选中"。真取消走 esc 或那颗按钮（REQ-105）。
-    #[test]
-    fn a_click_on_blank_keeps_the_previous_box_for_the_window_hit() {
-        let field = main_screen();
-        let base = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
-        let mut sel = Selection {
-            stage: Stage::Ready,
-            rect: Some(base),
-            ..Selection::default()
-        };
-        sel.press(&field, pos2(800.0, 700.0), HANDLE_RADIUS);
-        sel.release(&field, pos2(801.0, 701.0));
-        assert!(sel.clicked(), "没挪动就是单击，调用方要拿它去认窗");
-        assert_eq!(sel.rect, Some(base), "旧框要原样回来");
-    }
-
-    /// 抖一下（超过阈值）就算拖动，不再当单击——两条的边界只有一条常量在管。
-    #[test]
-    fn crossing_the_slop_turns_a_click_into_a_drag() {
-        let field = main_screen();
-        let base = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
-        let mut sel = Selection {
-            stage: Stage::Ready,
-            rect: Some(base),
-            ..Selection::default()
-        };
-        sel.press(&field, pos2(800.0, 700.0), HANDLE_RADIUS);
-        sel.drag(&field, pos2(900.0, 800.0));
-        sel.release(&field, pos2(900.0, 800.0));
-        assert!(!sel.clicked());
-        assert_eq!(
-            sel.rect,
-            Some(Rect::from_min_max(pos2(800.0, 700.0), pos2(900.0, 800.0)))
-        );
-    }
-
-    /// 认出的那扇窗 → 直接 `Confirmed`，且夹在那块屏内（半屏在屏幕外的窗也截得对）。
-    #[test]
-    fn a_recognised_window_is_confirmed_and_clamped() {
-        let field = main_screen();
-        let mut sel = Selection::fresh();
-        sel.take_window(
-            &field,
-            Rect::from_min_max(pos2(1800.0, 1000.0), pos2(4000.0, 4000.0)),
-        );
-        assert_eq!(sel.stage, Stage::Confirmed);
-        assert_eq!(
-            sel.rect,
-            Some(Rect::from_min_max(
-                pos2(1800.0, 1000.0),
-                pos2(1920.0, 1080.0)
-            ))
-        );
-    }
-
-    /// 取消是**一个出口**（esc、点遮罩外、点「取消」三条都汇到这儿）：框没了、状态是终态。
-    #[test]
-    fn cancelling_drops_the_box_and_lands_in_one_terminal_state() {
-        let field = main_screen();
-        let mut sel = drag_all_the_way(&field, pos2(10.0, 10.0), pos2(200.0, 300.0));
-        assert_eq!(sel.stage, Stage::Ready);
-        sel.cancel();
-        assert_eq!(sel.stage, Stage::Cancelled);
-        assert!(sel.rect.is_none());
-        assert!(sel.size_label(&field).is_none(), "取消了就不该还有尺寸可报");
-    }
-
-    /// 没选区时 `confirm` 不许凭空造一个：确认要有东西可裁，否则历史目录里会多一张空气。
-    #[test]
-    fn confirming_an_empty_selection_does_nothing() {
-        let field = main_screen();
-        let mut sel = Selection::fresh();
-        assert_eq!(sel.confirm(), Stage::Idle);
-        assert!(sel.rect.is_none());
-        // 取消之后也一样：终态不许被"确认"救回来
-        sel.take_window(&field, Rect::from_min_max(pos2(0.0, 0.0), pos2(10.0, 10.0)));
-        sel.cancel();
-        assert_eq!(sel.confirm(), Stage::Cancelled);
-    }
-
-    /// **点→像素只有一处换算**（REQ-104 的判据形状）：尺寸、裁剪、以及"这块屏能不能算"
-    /// 都走同一个函数。这里锁住"2 倍屏裁出的像素是点框的两倍"与"零尺寸屏不猜 1.0"。
-    #[test]
-    fn the_point_to_pixel_conversion_happens_once_and_refuses_to_guess() {
-        let field = main_screen();
-        assert_eq!(field.scale(), Some(2.0));
-        let px = field
-            .to_pixels(Rect::from_min_max(pos2(100.0, 200.0), pos2(300.0, 400.0)))
-            .expect("换算得出");
-        assert_eq!((px.x, px.y, px.w, px.h), (200.0, 400.0, 400.0, 400.0));
-
-        // 零宽/零高的屏：不许把 scale 默认成 1.0（那是"看着 1:1 像普遍规律"的老错）
-        assert_eq!(
-            Field::new(
-                Rect::from_min_max(pos2(0.0, 0.0), pos2(0.0, 0.0)),
-                vec2(0.0, 0.0)
-            )
-            .scale(),
-            None
-        );
-        // 横纵比例不一致（旋转/非等比）也判"不可信"，不挑一个轴用
-        assert_eq!(
-            Field::new(
-                Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 1000.0)),
-                vec2(2000.0, 1000.0)
-            )
-            .scale(),
-            None
-        );
-    }
-
-    /// 动作条：**放不下就翻到上方，两侧都不许压住选区**（REQ-103 那条断言）。
-    #[test]
-    fn the_action_bar_flips_above_when_it_would_not_fit_below() {
-        let field = main_screen();
-        let bar = vec2(240.0, 34.0);
-        let high = Rect::from_min_max(pos2(100.0, 100.0), pos2(400.0, 200.0));
-        assert_eq!(bar_side(high, bar, &field), BarSide::Below);
-        let rect = bar_rect(high, bar, BarSide::Below);
-        assert_eq!(rect.min.y, high.max.y + GAP, "紧贴选区下方");
-        assert!(!rect.intersects(high), "下方那一档不许压住选区");
-
-        let low = Rect::from_min_max(pos2(100.0, 900.0), pos2(400.0, 1070.0));
-        assert_eq!(
-            bar_side(low, bar, &field),
-            BarSide::Above,
-            "下面放不下就翻上去"
-        );
-        let flipped = bar_rect(low, bar, BarSide::Above);
-        assert_eq!(flipped.max.y, low.min.y - GAP);
-        assert!(!flipped.intersects(low), "翻上去那一档同样不许压住选区");
-    }
-}
 
 // ---- 遮罩那一扇窗（egui 侧） ----
 
@@ -954,15 +644,20 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             if let Ok(mut queue) = slot.lock() {
                 queue.extend(keys);
             }
-            root.request_repaint();
+            wake_root(&root);
         }
 
         // 鼠标：按下落在哪 → 拖动 → 抬起。**状态就在这一扇窗自己身上读写**，
         // 不经过主窗一圈（上一版经过，于是"拖了没框"、"一闪一闪"、"左屏拖右屏跳框"）
+        //
+        // **落在药丸上的那一下不算框选手势。** 先前没有这一条：按下落在对勾上，`press` 先把
+        // 旧框换成一个零尺寸的点，药丸那一块下一帧就没了位置，那颗按钮收不到完整的
+        // "按下—抬起"——真机上的表现就是"点了对勾什么都不钉"（用户 2026-11-09 晚第二条原话）。
+        let bar_now = bar_of(&next, &field);
+        let on_bar = bar_now.is_some_and(|bar| bar.contains(here));
         let pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
-        let had_box = next.rect.is_some();
-        if pressed {
+        if pressed && !on_bar {
             next.press(&field, here, HANDLE_RADIUS);
             changed = true;
         } else if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
@@ -970,19 +665,26 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             next.drag(&field, here);
             changed = next.rect != before;
         }
-        if released {
+        // 抬起只在"真的拖过"之后交给状态机：没进 Dragging 的抬起（药丸上那一下）不许去动框，
+        // 它会把 `previous` 那份旧值当结果还回来。
+        if released && next.dragging {
             next.release(&field, here);
             // 空白单击 = 要鼠标底下那扇窗（REQ-108，用户原话"单击就相当于对整个应用界面
             // 一样的大小进行了截图"）。**认不出来就什么都不做**：`release` 已经把押着的旧框
             // 还回来了，不许顺手清掉它，也不许猜一个全屏框交出去。
-            if next.clicked() && !had_box {
+            //
+            // "手上还有没有框"这一条**只能在 release 之后问**：按下与抬起通常落在不同帧，
+            // 按下那一帧已经把旧框押进 `previous`、把 `rect` 换成了一个零尺寸的点，
+            // 在抬起那一帧的开头去看 `rect` 只会看到那个点——真机读数就是"单击认窗从不触发"。
+            // `release` 之后 `rect` 恰好等于 gesture 之前的那份值，问它才是问对了东西。
+            if next.clicked() && next.rect.is_none() {
                 if let Some(rect) = windows.candidate(origin, here, field.bounds) {
                     next.take_window(&field, rect);
                     tracing::info!("遮罩：单击认窗，整扇拿下 {rect:?}");
                     if let Ok(mut queue) = slot.lock() {
                         queue.push(MaskOut::Confirm { display, rect });
                     }
-                    root.request_repaint();
+                    wake_root(&root);
                 }
             }
             changed = true;
@@ -992,23 +694,23 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             // 自己叫醒自己：指针事件只到这一扇子窗，不叫它重画，框就停在上一次画出来的样子
             // （"拖了没框/一闪一闪"的根在这儿，与绕不绕主窗无关）
             child.request_repaint();
-            // 选区是画在这扇窗里的，但按钮要点得动、主窗也要知道还活着
-            root.request_repaint();
+            // 这里**不**叫主窗：拖动与悬停每帧都在变，主窗那一侧没有要跟着变的东西，
+            // 每帧把它叫醒一次正是 D-31~D-35 那一族。要它醒的只有"推进槽里的那一刻"。
         }
 
         // 动作条：**圆角药丸，浮在选区下方，放不下翻上方**；不许铺满整幅图宽（REQ-103）
-        if let Some(rect) = next.rect.filter(|r| r.width() > 0.0 && r.height() > 0.0) {
-            let size = Vec2::new(BAR_W, BAR_H);
-            let side = bar_side(rect, size, &field);
-            let bar = bar_rect(rect, size, side);
-            let _ = side;
+        if let Some(bar) = bar_of(&next, &field) {
             // 用 Area 浮在遮罩之上：药丸的位置跟着选区算，不占窗口布局（占位会把图片挤走）
             egui::Area::new(Id::NULL.with("ice-selection.bar"))
                 .fixed_pos(bar.min)
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| {
+                    // 底色就画在 `bar` 那一块。这里曾经写成 `Rect::from_min_size(Pos2::ZERO, bar.size())`，
+                    // 而 Area 的 painter 用的是**全局**坐标——于是 300×34 的底色跑到屏幕左上角去了，
+                    // 药丸本体只剩三颗线稿浮在画面上（真机逐点量到：(0,0) 处有一块 36 的暗档，
+                    // 而选区下方那一块仍是 132 的画面对比）。
                     ui.painter().rect_filled(
-                        Rect::from_min_size(Pos2::ZERO, bar.size()),
+                        bar,
                         bar.height() / 2.0,
                         egui::Color32::from_rgba_premultiplied(28, 28, 30, 235),
                     );
@@ -1035,7 +737,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                                 if let Ok(mut queue) = slot.lock() {
                                     queue.push(out);
                                 }
-                                root.request_repaint();
+                                wake_root(&root);
                             }
                         }
                         // 尺寸读数与裁剪同源（同一个 `Field`），这里只报一次
@@ -1155,3 +857,448 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon) -> egui::Response {
 /// 它 SHALL NOT 跟着选区宽度变（用户那句"标注按钮怎么有背景"要的就是浮着的小条，不是一条 bar）。
 pub const BAR_W: f32 = 300.0;
 pub const BAR_H: f32 = 34.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::vec2;
+
+    /// 主屏：1920×1080 的点、2 倍像素（**故意用非 1.0 的比例**——本机在线两屏都是 1.0，
+    /// 无头里再写 1.0 就等于"拿 1.0 的读数冒充 2.0"，那是 CHG-009 事实 22 犯过的错）。
+    fn main_screen() -> Field {
+        Field::new(
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1920.0, 1080.0)),
+            vec2(3840.0, 2160.0),
+        )
+    }
+
+    /// 第二块屏：挂在左边、还往上多出 120（本机实测 `(-1920,-120) 1920x1200`）。
+    /// 遮罩窗与屏对齐后窗口内是 0 起点，但**全局矩形**要能被同一套函数处理，所以这里
+    /// 直接拿带负坐标的 bounds 喂进去——负 x 不许有任何特殊分支。
+    fn left_screen_global() -> Field {
+        Field::new(
+            Rect::from_min_max(pos2(-1920.0, -120.0), pos2(0.0, 1080.0)),
+            vec2(1920.0, 1200.0),
+        )
+    }
+
+    fn drag_all_the_way(field: &Field, from: Pos2, to: Pos2) -> Selection {
+        let mut sel = Selection::fresh();
+        sel.press(field, from, HANDLE_RADIUS);
+        sel.drag(field, to);
+        sel.release(field, to);
+        sel
+    }
+
+    /// 空白拖出新框，尺寸读数与矩形同源（同一个换算、同一份夹取）。
+    #[test]
+    fn a_blank_drag_makes_a_selection_whose_label_matches_its_pixels() {
+        let field = main_screen();
+        let sel = drag_all_the_way(&field, pos2(100.0, 100.0), pos2(300.0, 250.0));
+        assert_eq!(
+            sel.stage,
+            Stage::Ready,
+            "松手后必须停在原地等确认，不许自己落地"
+        );
+        let rect = sel.rect.expect("拖出来了就该有框");
+        assert_eq!(
+            (rect.min.x, rect.min.y, rect.max.x, rect.max.y),
+            (100.0, 100.0, 300.0, 250.0)
+        );
+        // 200×150 点，2 倍屏 → 400×300 像素。读数报的是**像素**，不是点
+        assert_eq!(sel.size_label(&field).as_deref(), Some("400 × 300"));
+    }
+
+    /// 越界一律夹在屏内：拖出去、拖过右缘、拖到屏外抬起，都只能是屏内那块。
+    #[test]
+    fn a_drag_that_leaves_the_screen_is_clamped_not_lost() {
+        let field = main_screen();
+        let sel = drag_all_the_way(&field, pos2(1800.0, 1000.0), pos2(5000.0, 5000.0));
+        let rect = sel.rect.expect("抬起在屏外也算一次正常松手");
+        assert_eq!(
+            (rect.max.x, rect.max.y),
+            (1920.0, 1080.0),
+            "右下一角死死停在屏角"
+        );
+        assert_eq!(sel.size_label(&field).as_deref(), Some("240 × 160"));
+    }
+
+    /// 副屏的**负坐标**没有特殊分支：同一套夹取与换算在那块屏上照样成立。
+    #[test]
+    fn the_left_screen_with_negative_coordinates_uses_the_same_rules() {
+        let field = left_screen_global();
+        let sel = drag_all_the_way(&field, pos2(-1900.0, -100.0), pos2(-1700.0, 100.0));
+        let rect = sel.rect.expect("负坐标那块屏照样能框");
+        assert_eq!((rect.min.x, rect.min.y), (-1900.0, -100.0));
+        // 1.0 倍屏：200×200 点 = 200×200 像素，且原点从**那块屏自己的左上角**量起
+        assert_eq!(sel.size_label(&field).as_deref(), Some("200 × 200"));
+        // 拖出这块屏的边界要夹住（它的顶边在全局 y=-120）
+        let out = drag_all_the_way(&field, pos2(-1900.0, -110.0), pos2(-999999.0, -999999.0));
+        assert_eq!(
+            out.rect.map(|r| (r.min.x, r.min.y)),
+            Some((-1920.0, -120.0))
+        );
+    }
+
+    /// **八个把手各只动该动的那两条边**：右下角跟着走，左上角钉住不动。
+    #[test]
+    fn a_handle_moves_only_the_edges_it_should() {
+        let field = main_screen();
+        let base = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
+        let mut sel = Selection {
+            stage: Stage::Ready,
+            rect: Some(base),
+            ..Selection::default()
+        };
+        assert_eq!(
+            sel.press(&field, pos2(300.0, 200.0), HANDLE_RADIUS),
+            Grab::Handle(4)
+        );
+        sel.drag(&field, pos2(360.0, 260.0));
+        sel.release(&field, pos2(360.0, 260.0));
+        assert_eq!(
+            sel.rect,
+            Some(Rect::from_min_max(pos2(100.0, 100.0), pos2(360.0, 260.0)))
+        );
+
+        // 只拖上边：x 不许动
+        let mut sel = Selection {
+            stage: Stage::Ready,
+            rect: Some(base),
+            ..Selection::default()
+        };
+        assert_eq!(
+            sel.press(&field, pos2(200.0, 100.0), HANDLE_RADIUS),
+            Grab::Handle(1)
+        );
+        sel.drag(&field, pos2(233.0, 60.0));
+        assert_eq!(
+            sel.rect,
+            Some(Rect::from_min_max(pos2(100.0, 60.0), pos2(300.0, 200.0)))
+        );
+    }
+
+    /// 框内拖动 = 平移：**尺寸一格不变**，也不许被推出屏外。
+    #[test]
+    fn dragging_inside_moves_the_box_and_keeps_its_size() {
+        let field = main_screen();
+        let base = Rect::from_min_max(pos2(1800.0, 1000.0), pos2(1900.0, 1070.0));
+        let mut sel = Selection {
+            stage: Stage::Ready,
+            rect: Some(base),
+            ..Selection::default()
+        };
+        assert_eq!(
+            sel.press(&field, pos2(1850.0, 1030.0), HANDLE_RADIUS),
+            Grab::Inside
+        );
+        sel.drag(&field, pos2(2400.0, 2400.0));
+        let rect = sel.rect.expect("还在拖");
+        assert_eq!(rect.size(), base.size(), "移动不许改尺寸");
+        assert_eq!(
+            rect.max,
+            pos2(1920.0, 1080.0),
+            "往屏外推要停在屏角，而不是把框推出可见区"
+        );
+    }
+
+    /// 一次按下**只落一处判定**：把手优先于框内。反过来的话靠内那一圈把手永远点不到，
+    /// 而这个缺陷在无头里就能测出来，不该留到手感走查。
+    #[test]
+    fn one_press_lands_on_exactly_one_of_the_three_cases() {
+        let rect = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
+        // 右下角上：是把手 4，不是 Inside
+        assert_eq!(
+            grab(Some(rect), pos2(300.0, 200.0), HANDLE_RADIUS),
+            Grab::Handle(4)
+        );
+        // 角内一格：仍然是把手（优先级）
+        assert_eq!(
+            grab(Some(rect), pos2(295.0, 195.0), HANDLE_RADIUS),
+            Grab::Handle(4)
+        );
+        // 框的正中：Inside
+        assert_eq!(
+            grab(Some(rect), pos2(200.0, 150.0), HANDLE_RADIUS),
+            Grab::Inside
+        );
+        // 框外：Blank
+        assert_eq!(
+            grab(Some(rect), pos2(400.0, 150.0), HANDLE_RADIUS),
+            Grab::Blank
+        );
+        // 还没有框时任何东西都是 Blank
+        assert_eq!(grab(None, pos2(100.0, 100.0), HANDLE_RADIUS), Grab::Blank);
+        // 八个把手编号覆盖完整，且两两不同
+        let seen: Vec<Grab> = (0..HANDLE_COUNT)
+            .map(|i| grab(Some(rect), handle_center(rect, i), HANDLE_RADIUS))
+            .collect();
+        assert!(seen.iter().all(|g| matches!(g, Grab::Handle(_))));
+        let ids: Vec<u8> = seen
+            .iter()
+            .filter_map(|g| match g {
+                Grab::Handle(i) => Some(*i),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids.len(), HANDLE_COUNT as usize);
+        assert!(
+            ids.iter().collect::<std::collections::HashSet<_>>().len() == HANDLE_COUNT as usize
+        );
+    }
+
+    /// **单击认窗这一判只能在 release 之后问**——按下与抬起分属两帧，帧开头那份 `rect`
+    /// 早就被按下换成了零尺寸的点。
+    ///
+    /// 真机读数：悬停高亮是对的（同一处 `candidate`），单击却永远不钉整扇窗。原因就是旧判定
+    /// 在抬起那一帧的开头读 `rect.is_some()`，读到的是那个点 ⇒ 一律当成"手上还有框"。
+    #[test]
+    fn a_single_click_across_two_frames_still_asks_for_the_window_hit() {
+        let field = main_screen();
+        let at = pos2(1500.0, 300.0);
+
+        let mut sel = Selection::fresh();
+        sel.press(&field, at, HANDLE_RADIUS);
+        assert!(
+            sel.rect.is_some_and(|rect| rect.width() <= 0.0),
+            "按下那一帧手上只有一个零尺寸的点"
+        );
+        sel.release(&field, at);
+        assert!(sel.clicked(), "没拖过就是单击");
+        assert!(
+            sel.rect.is_none(),
+            "release 把这次手势之前的那份值还回来了——本来就没有框"
+        );
+
+        // 代码形状：判定必须在 release 之后，且不许再回到"帧开头猜"
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        assert!(
+            body.contains("next.clicked() && next.rect.is_none()"),
+            "认窗那一下只能在 release 之后判定"
+        );
+        assert!(
+            !body.contains("let had_box"),
+            "不许在帧开头读 rect 来当'手上还有框'"
+        );
+    }
+
+    /// **单击不许把上一个框弄没**：空白单击是"要鼠标底下那扇窗"（REQ-108），
+    /// 不是"取消选中"。真取消走 esc 或那颗按钮（REQ-105）。
+    #[test]
+    fn a_click_on_blank_keeps_the_previous_box_for_the_window_hit() {
+        let field = main_screen();
+        let base = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
+        let mut sel = Selection {
+            stage: Stage::Ready,
+            rect: Some(base),
+            ..Selection::default()
+        };
+        sel.press(&field, pos2(800.0, 700.0), HANDLE_RADIUS);
+        sel.release(&field, pos2(801.0, 701.0));
+        assert!(sel.clicked(), "没挪动就是单击，调用方要拿它去认窗");
+        assert_eq!(sel.rect, Some(base), "旧框要原样回来");
+    }
+
+    /// 抖一下（超过阈值）就算拖动，不再当单击——两条的边界只有一条常量在管。
+    #[test]
+    fn crossing_the_slop_turns_a_click_into_a_drag() {
+        let field = main_screen();
+        let base = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
+        let mut sel = Selection {
+            stage: Stage::Ready,
+            rect: Some(base),
+            ..Selection::default()
+        };
+        sel.press(&field, pos2(800.0, 700.0), HANDLE_RADIUS);
+        sel.drag(&field, pos2(900.0, 800.0));
+        sel.release(&field, pos2(900.0, 800.0));
+        assert!(!sel.clicked());
+        assert_eq!(
+            sel.rect,
+            Some(Rect::from_min_max(pos2(800.0, 700.0), pos2(900.0, 800.0)))
+        );
+    }
+
+    /// 认出的那扇窗 → 直接 `Confirmed`，且夹在那块屏内（半屏在屏幕外的窗也截得对）。
+    #[test]
+    fn a_recognised_window_is_confirmed_and_clamped() {
+        let field = main_screen();
+        let mut sel = Selection::fresh();
+        sel.take_window(
+            &field,
+            Rect::from_min_max(pos2(1800.0, 1000.0), pos2(4000.0, 4000.0)),
+        );
+        assert_eq!(sel.stage, Stage::Confirmed);
+        assert_eq!(
+            sel.rect,
+            Some(Rect::from_min_max(
+                pos2(1800.0, 1000.0),
+                pos2(1920.0, 1080.0)
+            ))
+        );
+    }
+
+    /// 取消是**一个出口**（esc、点遮罩外、点「取消」三条都汇到这儿）：框没了、状态是终态。
+    #[test]
+    fn cancelling_drops_the_box_and_lands_in_one_terminal_state() {
+        let field = main_screen();
+        let mut sel = drag_all_the_way(&field, pos2(10.0, 10.0), pos2(200.0, 300.0));
+        assert_eq!(sel.stage, Stage::Ready);
+        sel.cancel();
+        assert_eq!(sel.stage, Stage::Cancelled);
+        assert!(sel.rect.is_none());
+        assert!(sel.size_label(&field).is_none(), "取消了就不该还有尺寸可报");
+    }
+
+    /// 没选区时 `confirm` 不许凭空造一个：确认要有东西可裁，否则历史目录里会多一张空气。
+    #[test]
+    fn confirming_an_empty_selection_does_nothing() {
+        let field = main_screen();
+        let mut sel = Selection::fresh();
+        assert_eq!(sel.confirm(), Stage::Idle);
+        assert!(sel.rect.is_none());
+        // 取消之后也一样：终态不许被"确认"救回来
+        sel.take_window(&field, Rect::from_min_max(pos2(0.0, 0.0), pos2(10.0, 10.0)));
+        sel.cancel();
+        assert_eq!(sel.confirm(), Stage::Cancelled);
+    }
+
+    /// **点→像素只有一处换算**（REQ-104 的判据形状）：尺寸、裁剪、以及"这块屏能不能算"
+    /// 都走同一个函数。这里锁住"2 倍屏裁出的像素是点框的两倍"与"零尺寸屏不猜 1.0"。
+    #[test]
+    fn the_point_to_pixel_conversion_happens_once_and_refuses_to_guess() {
+        let field = main_screen();
+        assert_eq!(field.scale(), Some(2.0));
+        let px = field
+            .to_pixels(Rect::from_min_max(pos2(100.0, 200.0), pos2(300.0, 400.0)))
+            .expect("换算得出");
+        assert_eq!((px.x, px.y, px.w, px.h), (200.0, 400.0, 400.0, 400.0));
+
+        // 零宽/零高的屏：不许把 scale 默认成 1.0（那是"看着 1:1 像普遍规律"的老错）
+        assert_eq!(
+            Field::new(
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(0.0, 0.0)),
+                vec2(0.0, 0.0)
+            )
+            .scale(),
+            None
+        );
+        // 横纵比例不一致（旋转/非等比）也判"不可信"，不挑一个轴用
+        assert_eq!(
+            Field::new(
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 1000.0)),
+                vec2(2000.0, 1000.0)
+            )
+            .scale(),
+            None
+        );
+    }
+
+    /// 动作条：**放不下就翻到上方，两侧都不许压住选区**（REQ-103 那条断言）。
+    #[test]
+    fn the_action_bar_flips_above_when_it_would_not_fit_below() {
+        let field = main_screen();
+        let bar = vec2(240.0, 34.0);
+        let high = Rect::from_min_max(pos2(100.0, 100.0), pos2(400.0, 200.0));
+        assert_eq!(bar_side(high, bar, &field), BarSide::Below);
+        let rect = bar_rect(high, bar, BarSide::Below);
+        assert_eq!(rect.min.y, high.max.y + GAP, "紧贴选区下方");
+        assert!(!rect.intersects(high), "下方那一档不许压住选区");
+
+        let low = Rect::from_min_max(pos2(100.0, 900.0), pos2(400.0, 1070.0));
+        assert_eq!(
+            bar_side(low, bar, &field),
+            BarSide::Above,
+            "下面放不下就翻上去"
+        );
+        let flipped = bar_rect(low, bar, BarSide::Above);
+        assert_eq!(flipped.max.y, low.min.y - GAP);
+        assert!(!flipped.intersects(low), "翻上去那一档同样不许压住选区");
+    }
+
+    /// **按下落在药丸上，不许当成"在空白处起一个新框"。**
+    ///
+    /// 分两步钉住。第一步是几何：药丸按定义就在选区外面（缝 3 点），所以那一点对状态机
+    /// 来说是 `Grab::Blank`——照旧写法走一遍 `press`，旧框会被换成一个零尺寸的点，药丸下一帧
+    /// 就没了位置，那颗按钮再也收不到完整的按下—抬起（真机读数：点了对勾什么都不钉）。
+    /// 第二步是代码形状：鼠标那一段必须先问 `on_bar`，抬起也必须只认"真的拖过"的那次。
+    #[test]
+    fn a_press_on_the_bar_is_not_a_selection_gesture() {
+        let field = main_screen();
+        let box_rect = Rect::from_min_max(pos2(600.0, 300.0), pos2(900.0, 500.0));
+        let sel = Selection::from_rect(&field, box_rect);
+        let bar = bar_of(&sel, &field).expect("有框就该有药丸");
+        assert_eq!(bar.min.y, box_rect.max.y + GAP, "药丸浮在选区下方 3 点");
+        assert!(!bar.intersects(box_rect), "药丸不许压住选区");
+
+        // 反面写法照走一遍：那一下会被判成"空白处按下"，旧框当场被顶掉
+        let mut naive = sel;
+        let grab = naive.press(&field, bar.center(), HANDLE_RADIUS);
+        assert_eq!(grab, Grab::Blank, "药丸那一点在选区外，状态机眼里就是空白");
+        assert!(
+            naive.rect.is_some_and(|r| r.width() <= 0.0),
+            "这一条是在记录那个陷阱：不加护栏，旧框就是会被换成一个点"
+        );
+
+        // 代码形状：护栏必须在
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        assert!(
+            body.contains("if pressed && !on_bar"),
+            "落在药丸上的那一下不许进状态机"
+        );
+        assert!(
+            body.contains("if released && next.dragging"),
+            "没真的拖过的抬起不许把 previous 那份旧值当结果还回来"
+        );
+        assert!(
+            body.contains("let on_bar = bar_now.is_some_and"),
+            "按下落点的判定与绘制必须读同一块矩形"
+        );
+    }
+
+    /// **形状核查：药丸的底色画在药丸那一块，不许画到屏幕角上。**
+    ///
+    /// `egui::Area` 里的 painter 用的是**全局**坐标，`fixed_pos` 只管排版不管画笔。
+    /// 这一条先前写成 `Rect::from_min_size(Pos2::ZERO, bar.size())`，真机逐点量到的是：
+    /// 选区下方那一块仍是画面色（132），而屏幕左上角 (0,0) 起 300×34 多出一块暗档（36）——
+    /// 也就是"三颗线稿浮在画面上、底色跑到角上"。注释里讨论过反面写法不算，只看代码行。
+    #[test]
+    fn the_bar_background_is_painted_on_the_bar_itself() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        let from = body
+            .find("ice-selection.bar")
+            .expect("药丸那一块得有个出处");
+        let fill = &body[from..];
+        let fill = &fill[..fill.find("ui.horizontal").unwrap_or(fill.len())];
+        assert!(fill.contains("rect_filled("), "底色那一笔就在这个块里");
+        assert!(
+            !fill.contains("Pos2::ZERO"),
+            "底色不许用原点算：Area 的 painter 是全局坐标，原点=屏幕左上角"
+        );
+    }
+
+    /// **形状核查：推进槽里的那一刻，必须点名叫主窗那一扇视口。**
+    ///
+    /// 子窗闭包里 `ctx.request_repaint()` 走的是"当前视口 id"，只会重画遮罩自己。
+    /// 真机上"esc 按了选区没了遮罩还在""对勾点了什么都不钉"就是这个形状——意图已经在槽里，
+    /// 主窗一次都没醒。所以三个出口都只能调 `wake_root`，一处不许漏，也不许多（拖动与悬停
+    /// 每帧都在变，那些不许把主窗叫醒，D-31~D-35 那一族）。
+    #[test]
+    fn every_intent_outlet_wakes_the_root_viewport() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        assert_eq!(
+            body.matches("wake_root(&root)").count(),
+            3,
+            "esc/回车、单击认窗、药丸三颗——三个推意图的出口，一个不多一个不少"
+        );
+        assert!(
+            !body.contains("root.request_repaint()"),
+            "拿主窗的 ctx 调 request_repaint 只会叫醒当前这一扇子窗，是个假动作"
+        );
+        assert_eq!(
+            body.matches("queue.push").count() + body.matches("queue.extend").count(),
+            3,
+            "推意图的地方每处都得配一次 wake_root，加了新出口要先改这条断言"
+        );
+    }
+}
