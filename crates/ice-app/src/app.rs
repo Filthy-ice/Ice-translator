@@ -1347,6 +1347,16 @@ impl IceApp {
         for out in outs {
             self.apply_mask_out(out, ctx, effects);
         }
+        // 重下配额还没用完就一直要帧：不然主窗一睡，`push_frames` 永远不会减到 0，
+        // 抬层/激活再也不会重试，而日志里连"用尽"那行都不会出现（上一轮正是这个现象）
+        if self
+            .state
+            .capture
+            .as_ref()
+            .is_some_and(|c| c.push_frames > 0)
+        {
+            ctx.request_repaint();
+        }
     }
 
     /// 遮罩那四颗 + esc 的落点。**五个入口汇到同一个出口**（REQ-105），
