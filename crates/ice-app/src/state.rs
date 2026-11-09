@@ -1488,11 +1488,14 @@ impl AppState {
         self.capture_in_flight = Some(id);
         self.capture_stage = CaptureStage::Capturing;
         self.capture_screens = screens.clone();
-        Some(Job::Freeze {
+        // ---- 2026-11-09 晚上：这条**退回旧路径**（用户实测五条缺陷 D-31~D-35）----
+        // 冻结 + 遮罩那条链在真应用里只跑到"画面已冻结"：日志里五次冻结、零条遮罩意图，
+        // 说明按下/拖动/esc 都没进遮罩那扇窗。半接通的版本不能挂在他每天用的入口上。
+        // 新链路（`Job::Freeze`）与它的无头断言全部保留，修好再切回来——
+        // 切换点只有这一处，正是当初把派发收在一格的原因。
+        Some(Job::ScreenCapture {
             id,
             seq: self.capture_seq,
-            displays: screens.into_iter().map(|(display, _)| display).collect(),
-            // 发起前要收起哪些窗，账跟着任务走：子进程结束时由**那条线程**放回来
             hidden: self.capture_hidden_record(),
         })
     }
@@ -2860,14 +2863,11 @@ mod tests {
         st.push_pin(PathBuf::from("/tmp/history/a.png"));
         st.push_pin(PathBuf::from("/tmp/history/b.png"));
         let job = st.submit_capture(two_screens()).expect("空闲时该发得出");
-        let Job::Freeze {
-            hidden, displays, ..
-        } = &job
-        else {
+        // 两条路（系统框选 / 自绘遮罩）都必须带这份账：断言对两支都成立，
+        // 免得切换派发口时这组测试变成"只有某一条路能过"
+        let (Job::ScreenCapture { hidden, .. } | Job::Freeze { hidden, .. }) = &job else {
             panic!("派出的必须是截图任务：{job:?}");
         };
-        // 两块屏都点名：少一块就是那一块屏的遮罩没画面，"整屏定格"这句在它上面不成立
-        assert_eq!(displays, &vec![1, 2]);
         // 主窗 + 两张贴图，一个都不能漏
         assert_eq!(hidden.viewports.len(), 3);
         assert!(hidden.viewports.contains(&egui::ViewportId::ROOT));
@@ -2881,7 +2881,7 @@ mod tests {
         let job = st
             .submit_capture(two_screens())
             .expect("上一次落地之后该再发得出");
-        let Job::Freeze { hidden, .. } = &job else {
+        let (Job::ScreenCapture { hidden, .. } | Job::Freeze { hidden, .. }) = &job else {
             unreachable!()
         };
         assert!(hidden.root_was_hidden);
@@ -3050,7 +3050,13 @@ mod tests {
         let job = st
             .submit_capture(two_screens())
             .expect("空闲时该发得出截图任务");
-        assert!(matches!(job, Job::Freeze { id: 1, seq: 1, .. }));
+        assert!(
+            matches!(
+                job,
+                Job::ScreenCapture { id: 1, seq: 1, .. } | Job::Freeze { id: 1, seq: 1, .. }
+            ),
+            "{job:?}"
+        );
         let applied = st.apply_capture(1, capture::Outcome::Captured(path.clone()));
         assert_eq!(applied, CaptureApplied::Pinned { pin: 1 });
         assert_eq!(st.pins.len(), 1);
