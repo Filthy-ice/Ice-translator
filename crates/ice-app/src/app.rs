@@ -1340,6 +1340,25 @@ impl IceApp {
             // 这颗按下走链：整条链（翻译→回填→成品）在 T-007 后半接，这一格先把意图
             // 原样带出去——**不在这里吞掉它**，吞掉的意图会让矩阵缺一格而没人发现
             PinIntent::Translate => effects.translate_pin = Some(id),
+            // 文字层那一次拖选收尾（REQ-005）。空表也要写：它就是"取消选中"
+            PinIntent::Select(ids) => {
+                self.state.set_pin_selection(id, ids);
+            }
+            // 裸 `C` 的分派点。判据只有这一条：这张自己有没有选中文字。
+            // 两条出路各回一条**既有**接缝（字走 `effects.copy`、图走 `effects.copy_pin`），
+            // 不开第三条剪贴板实现——剪贴板那条通道上已经栽过一次"两个落点"（REQ-003）。
+            PinIntent::Copy => {
+                let selected = self
+                    .state
+                    .pins
+                    .iter()
+                    .find(|pin| pin.id == id)
+                    .and_then(|pin| pin.selection_text());
+                match selected {
+                    Some(text) => effects.copy = Some(text),
+                    None => effects.copy_pin = Some(id),
+                }
+            }
         }
     }
 
@@ -1784,14 +1803,30 @@ const PIN_GONE_TEXT: &str = "那张贴图已经不在了，这张没保存";
 /// 一张贴图带子里那一行该说的话：识别段优先（"识别中…"、"未发现文字"），
 /// 其次翻译段（"翻译中 3/7"、"翻好 5 块，失败 2 块"）。两段都空闲就不说——
 /// 带子本来就窄，没事的时候不许占着那一格说话。
+/// 带子右半边那一格：这张自己的进度，加一句"现在按 `C` 会得到什么"（REQ-005 末段）。
+///
+/// 进度那条**识别段优先占位**——识别没回来时说"可选文字"是假话（REQ-005 原话）。
+/// 那一句 `C` 只在文字层真长出来之后才说；识别失败或"未发现文字"时文字层缺席，
+/// 这一格就一个字都不多说，免得用户按出一张图还以为按坏了。
 fn pin_band_line(pin: &crate::state::Pin) -> Option<String> {
-    match &pin.stage {
-        crate::state::RecognitionStage::Idle => {}
-        stage => return Some(stage.label()),
+    let mut parts: Vec<String> = Vec::new();
+    if !matches!(pin.stage, crate::state::RecognitionStage::Idle) {
+        parts.push(pin.stage.label());
     }
-    match &pin.translate_stage {
-        crate::state::TranslateStage::Idle => None,
-        stage => Some(stage.label()),
+    if !matches!(pin.translate_stage, crate::state::TranslateStage::Idle) {
+        parts.push(pin.translate_stage.label());
+    }
+    if pin.text_ready() {
+        parts.push(if pin.selected.is_empty() {
+            "Shift 拖选文字 · 按 C 复制这张图".to_string()
+        } else {
+            format!("已选中 {} 段 · 按 C 复制文字", pin.selected.len())
+        });
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
     }
 }
 
@@ -4431,6 +4466,98 @@ mod tests {
             save_pin_image(&orphan, 1, dir.path().join("never.png").to_str().unwrap());
         assert_eq!(tone, Tone::Warn);
         assert_eq!(text, PIN_GONE_TEXT);
+    }
+
+    /// 带子那一格要说清"现在按 `C` 会得到什么"，但**只在文字层真长出来之后说**
+    /// （REQ-005：识别没回来时说"可选文字"是假话；识别失败时一个字都不许多说）。
+    #[test]
+    fn the_band_says_what_c_will_give_and_only_after_the_text_layer_grew() {
+        let mut state = plain_state();
+        state.push_pin(std::path::PathBuf::from("/tmp/a.png"));
+        let pin = state.pins.first_mut().unwrap();
+
+        pin.stage = crate::state::RecognitionStage::Recognizing;
+        let line = pin_band_line(pin).expect("识别中要说一句");
+        assert!(line.contains("识别中"), "{line}");
+        assert!(
+            !line.contains("按 C"),
+            "识别在飞时不许说按 C 会得到什么：{line}"
+        );
+
+        pin.document = Some(crate::system::pin::probe_document());
+        pin.stage = crate::state::RecognitionStage::Done { blocks: 2 };
+        let line = pin_band_line(pin).unwrap();
+        assert!(line.contains("按 C 复制这张图"), "{line}");
+        assert!(line.contains("Shift"), "那一次拖选的手势要写出来：{line}");
+
+        pin.selected = vec![0, 1];
+        let line = pin_band_line(pin).unwrap();
+        assert!(line.contains("已选中 2 段 · 按 C 复制文字"), "{line}");
+
+        pin.selected = Vec::new();
+        pin.stage = crate::state::RecognitionStage::NoText;
+        let line = pin_band_line(pin).unwrap();
+        assert!(
+            !line.contains("按 C"),
+            "这张没出字就不许留一句会用错的提示：{line}"
+        );
+    }
+
+    /// 裸 `C` 的分派点：**有选中走文本那条接缝，没选中走图像那条**。
+    /// 两条都是既有的（`effects.copy` / `effects.copy_pin`），这里不开第三条剪贴板实现。
+    #[test]
+    fn bare_c_dispatches_between_text_and_image_by_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = plain_state();
+        state.push_pin(dir.path().join("a.png"));
+        {
+            let pin = state.pins.first_mut().unwrap();
+            pin.stage = crate::state::RecognitionStage::Done { blocks: 2 };
+            pin.document = Some(crate::system::pin::probe_document());
+        }
+        let mut app = app(dir.path(), state);
+
+        let mut none = Effects::default();
+        app.apply_pin_intent(1, crate::system::pin::PinIntent::Copy, &mut none);
+        assert_eq!(none.copy_pin, Some(1), "没选中就是复制这张图");
+        assert!(none.copy.is_none());
+
+        app.state.set_pin_selection(1, vec![1, 0]);
+        let mut picked = Effects::default();
+        app.apply_pin_intent(1, crate::system::pin::PinIntent::Copy, &mut picked);
+        assert_eq!(picked.copy_pin, None, "有选中时不许同时发图像那条");
+        assert_eq!(
+            picked.copy.as_deref(),
+            Some("上面那一行\n下面那一行"),
+            "倒着拖也要按阅读顺序交出去"
+        );
+    }
+
+    /// 拖选收尾写进的是**这一张**的选中集合：另一张不受影响（六张贴图各说各的）。
+    /// 空表是一次写入——它就是取消选中。
+    #[test]
+    fn a_drag_selection_lands_on_its_own_pin_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = plain_state();
+        state.push_pin(dir.path().join("a.png"));
+        state.push_pin(dir.path().join("b.png"));
+        state.set_pin_selection(1, vec![0, 1]);
+        state.set_pin_selection(2, vec![0]);
+        assert_eq!(state.pins[0].selected, vec![0, 1]);
+        assert_eq!(state.pins[1].selected, vec![0]);
+        let mut app = app(dir.path(), state);
+        let mut effects = Effects::default();
+        app.apply_pin_intent(
+            1,
+            crate::system::pin::PinIntent::Select(Vec::new()),
+            &mut effects,
+        );
+        assert!(app.state.pins[0].selected.is_empty(), "取消选中要落下去");
+        assert_eq!(app.state.pins[1].selected, vec![0], "另一张不受影响");
+        assert!(
+            effects.copy.is_none() && effects.copy_pin.is_none(),
+            "拖选不碰剪贴板"
+        );
     }
 
     /// 面板开着的那几秒里，来源要在按下那一刻定下来：回信按那一份存，

@@ -208,6 +208,138 @@
       "at": "2026-11-06T09:35:50+00:00",
       "action": "task-done",
       "detail": "T-012"
+    },
+    {
+      "at": "2026-11-09T02:23:26+00:00",
+      "action": "task-done",
+      "detail": "T-009"
+    },
+    {
+      "at": "2026-11-09T02:23:38+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:18+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:18+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-003",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:19+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-004",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:19+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-005",
+        "result": "failed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:19+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-006",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:19+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-007",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:40+00:00",
+      "action": "replan",
+      "detail": "V-005 那条静态核查的判据收窄（裸词 → 路径字面量），traceability 变了要重新封存计划"
+    },
+    {
+      "at": "2026-11-09T02:24:41+00:00",
+      "action": "seal-plan",
+      "detail": "6edab3b844c6de380c6e165de2f89e6cac2659a9a6985d67332c1ed58ad03081"
+    },
+    {
+      "at": "2026-11-09T02:24:41+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-11-09T02:24:51+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:52+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:53+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-003",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:53+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-004",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:53+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-005",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:53+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-006",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-09T02:24:54+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-007",
+        "result": "passed"
+      }
     }
   ],
   "approval": {
@@ -223,5 +355,5 @@
       "ice-translator": "main"
     }
   },
-  "plan_hash": "4649648fb176bb14109fd7af3961dd911e2aaa588d89ee056c9b9ab08c45a3ab"
+  "plan_hash": "6edab3b844c6de380c6e165de2f89e6cac2659a9a6985d67332c1ed58ad03081"
 }

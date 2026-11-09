@@ -21,6 +21,15 @@ use std::sync::{Arc, Mutex};
 
 use egui::{Id, Key, Modifiers, Pos2, Rect, Response, Sense, Ui, Vec2};
 
+/// 文字层选中块的高亮：淡蓝底 + 一档深一点的边。颜色跟应用自己的图标同一族（不新造色系）。
+fn select_tint() -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(0x2E, 0x6F, 0xF2, 60)
+}
+
+fn select_edge() -> egui::Stroke {
+    egui::Stroke::new(1.0, egui::Color32::from_rgb(0x2E, 0x6F, 0xF2))
+}
+
 /// 带子的高度：一颗按钮（与 E 区那排同源，同一个字号加同一套留白）加上下各 8 留白。
 ///
 /// 为什么是常量而不是按内容量：收起时窗口要缩到**图片那一块**，展开时窗口是
@@ -110,10 +119,10 @@ pub fn pin_layout(image_px: Vec2, band_open: bool, scale: f32) -> PinLayout {
     }
 }
 
-/// 一张贴图能对外发出的**全部意图**。带子里的按钮、右键菜单里的四项、键盘那几颗，
-/// 三处都只能落到这五种之一——矩阵一旦分叉，"点按钮有效、按键没反应"这类只对一半的
-/// 缺陷就回来了（图钉那次是两条通道，本包同一条纪律：一个枚举、一处映射）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 一张贴图能对外发出的**全部意图**。带子里的按钮、右键菜单里的四项、键盘那几颗、
+/// 文字层那一次拖选，四处都只能落到这七种之一——矩阵一旦分叉，"点按钮有效、按键没反应"
+/// 这类只对一半的缺陷就回来了（图钉那次是两条通道，本包同一条纪律：一个枚举、一处映射）。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PinIntent {
     Translate,
     CopyImage,
@@ -122,6 +131,12 @@ pub enum PinIntent {
     Close,
     /// 空格：收放带子
     ToggleBand,
+    /// 裸 `C`。这一层**不判**它该复制字还是图——选中集合在状态层，分派在 `app.rs`
+    /// （REQ-004 末段 + REQ-005：判据依赖文字层状态，而文字层状态不归这个模块持有）。
+    Copy,
+    /// 文字层一次拖选收尾：选中的块 id。**空表也算一次写入**——它就是"取消选中"，
+    /// 当"这帧没新信息"忽略掉的话，用户松开一个空拖之后界面还写着有选中。
+    Select(Vec<u32>),
 }
 
 impl PinIntent {
@@ -140,9 +155,9 @@ impl PinIntent {
 /// 三条不显然的：
 /// - **esc 无论带子开合都是关窗**。不做"先关带子再关窗"的两段式（REQ-004 末句：那是
 ///   会让人按第二下才发现的坑）。
-/// - 裸 `C` **这里不给动作**。它到底是"复制图像"还是"复制选中的字"要看那张贴图有没有
-///   选中文字（REQ-004 末段 + REQ-005），那个判断依赖文字层状态，由 `app.rs` 那一层按
-///   "选没选中"分支处理；这一层只认带修饰的那颗复制键。
+/// - 裸 `C` 给 [`PinIntent::Copy`]，**不给 `CopyImage`**：到底是"复制图像"还是"复制选中的
+///   字"要看这张有没有选中（REQ-004 末段 + REQ-005），那个判据在状态层，由 `app.rs` 分支。
+///   在这里直接判成图像，就是"选中了字却粘出一张图"——用户报过的第 3 类缺陷的形状。
 /// - 带 `Alt`/`Ctrl`(非 mac)/其他输入法组合的一律不抢，与 `system::hotkeys.rs` 同一条纪律。
 pub fn key_intent(key: Key, modifiers: Modifiers) -> Option<PinIntent> {
     let copy_chord = if cfg!(target_os = "macos") {
@@ -154,6 +169,7 @@ pub fn key_intent(key: Key, modifiers: Modifiers) -> Option<PinIntent> {
         Key::Escape => Some(PinIntent::Close),
         Key::Space => Some(PinIntent::ToggleBand),
         Key::C if copy_chord => Some(PinIntent::CopyImage),
+        Key::C if modifiers.is_none() => Some(PinIntent::Copy),
         _ => None,
     }
 }
@@ -197,6 +213,61 @@ pub fn band_buttons(ui: &mut Ui, sink: &mut Vec<PinIntent>) {
 /// **两条都留一份坐标计算迟早对不上**，所以这里只留一条，另一条不出现。
 pub fn image_area(ui: &mut Ui, size: Vec2) -> Response {
     ui.allocate_rect(Rect::from_min_size(Pos2::ZERO, size), Sense::click())
+}
+
+/// 文字层那一次拖选命中了哪些块（REQ-005）。**纯几何，无头可断言**。
+///
+/// 三条判据都在这个函数里，别处不许再算第二遍：
+/// - **块框从像素换算到点**只在这一处：`image` 那块矩形是点、`document` 的 `bbox` 是像素，
+///   比值由这两个数现算（不引第三个来源）。CHG-009 事实 22 那条纪律：两处各除一次或
+///   都忘了除，出的就是"选中的是上面那行、复制的是下面那行"。
+/// - **一个点也算命中**（拖出来的矩形退化成一个点时），所以单击能选中脚下那块，
+///   而点在空白处得到空表——空表是"取消选中"，不是"什么都没发生"。
+/// - 只认 `enabled` 且非空白的块：识别没出的块 SHALL NOT 选得中（不许给空字符串当选中）。
+pub fn hit_blocks(document: &ice_core::document::OcrDocument, image: Rect, drag: Rect) -> Vec<u32> {
+    let mut ids: Vec<u32> = document
+        .blocks
+        .iter()
+        .filter(|block| block.enabled && !block.text.trim().is_empty())
+        .filter(|block| block_rect(document, image, block.bbox).intersects(drag))
+        .map(|block| block.id)
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// 一个识别块此刻在屏上占哪一块（点坐标）。**命中判定与高亮绘制读同一个换算**，不各算一遍。
+///
+/// 比值由 `image`（点）与 `document.width`（像素）现算。CHG-009 事实 22 那条纪律：两处各除
+/// 一次或都忘了除，出的就是"选中的是上面那行、复制出去的是下面那行"。
+pub fn block_rect(
+    document: &ice_core::document::OcrDocument,
+    image: Rect,
+    bbox: ice_core::document::PixelRect,
+) -> Rect {
+    if document.width == 0 || image.width() <= 0.0 {
+        return Rect::NOTHING;
+    }
+    let scale = f64::from(document.width) / f64::from(image.width());
+    let point = |x: f32, y: f32| {
+        image.min + Vec2::new((f64::from(x) / scale) as f32, (f64::from(y) / scale) as f32)
+    };
+    Rect::from_min_max(
+        point(bbox.x, bbox.y),
+        point(bbox.x + bbox.w, bbox.y + bbox.h),
+    )
+}
+
+/// 拖选要不要接管这一帧的鼠标。**不满足就一条都不接管**：
+/// 裸按下图片仍然是"拖这扇窗"（D-29 的修法），文字层还没长出来时也不许出现第二种手势。
+pub fn selection_gesture(text_ready: bool, shift: bool, primary_pressed: bool) -> bool {
+    text_ready && shift && primary_pressed
+}
+
+/// 拖选期间这一帧该画的那个矩形：按下点与当前指针点的并。松手之前它只是**读数**，
+/// 选中集合要等 [`hit_blocks`] 在抬起那一刻算一次——每帧都算会让"擦过"的块全进选中。
+pub fn drag_rect(from: Pos2, to: Pos2) -> Rect {
+    Rect::from_two_pos(from, to)
 }
 
 /// 右键菜单：画在图片本体上，**恰好四项**，与带子里那四颗同一张表（[`ACTIONS`]）。
@@ -268,6 +339,12 @@ pub fn viewport_id(id: u64) -> egui::ViewportId {
 
 fn visual_key(id: u64) -> Id {
     Id::NULL.with("ice-translator.pin.visual").with(id)
+}
+
+/// 拖选起点（点坐标，本窗内）。存在这个窗自己的 egui 数据里，**不进 `AppState`**：
+/// 它是一帧级的中间量，抬起那一瞬就换成 `Pin::selected`，留着它等于让状态层多一份会过期的坐标。
+fn sel_start_key(id: u64) -> Id {
+    Id::NULL.with("ice-translator.pin.sel_start").with(id)
 }
 
 fn size_key(id: u64) -> Id {
@@ -391,6 +468,12 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
     let texture = visual.texture;
     let root = ctx.clone();
     let slot = intents_slot(ctx, id);
+    // 闭包要 `'static`，所以这一帧的三份读数**按值**带走：文档、选中集合、文字层是否长出来。
+    // 带 `&Pin` 进去是编译不过的，而带一份 `Arc<Pin>` 进去等于让状态层多一条生命周期——
+    // 下一帧重新取，本来就该是这一帧的快照。
+    let document = pin.document.clone();
+    let selected = pin.selected.clone();
+    let text_ready = pin.text_ready();
 
     ctx.show_viewport_deferred(viewport, builder, move |ui, _class| {
         let child = ui.ctx().clone();
@@ -441,10 +524,61 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
         // 带子那几颗不在这块矩形里，它们的按下不会被抢走。
         // `contains_pointer()` 是这一帧这块矩形上有没有指针（egui 自己算好的），
         // 再配上当前的左键按下——两个条件同时成立才把这一次按下交给系统去拖窗口
-        let image_pressed = area.contains_pointer()
+        // 按下那一下归谁：**默认仍是拖这扇窗**（D-29 的修法不许回退），只有"文字层已长出
+        // 来 + 按住 Shift"才改由本模块接管成拖选。裸按下就变成选字的话，用户昨天报的
+        // "关不掉/点不动"那一族会以另一种形式回来，而且这一次连拖动都没了。
+        let pressed = area.contains_pointer()
             && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
-        if image_pressed {
+        let shift = ui.input(|i| i.modifiers.shift);
+        let start = child.data(|d| d.get_temp::<Pos2>(sel_start_key(id)));
+        if selection_gesture(text_ready, shift, pressed) {
+            if let Some(at) = ui.input(|i| i.pointer.interact_pos()) {
+                child.data_mut(|d| d.insert_temp(sel_start_key(id), at));
+            }
+        } else if pressed {
             child.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+
+        // 文字层：选中那几块各涂一层淡高亮，正在拖的那一下画个白框。
+        // **绘制与选中集合是两件事**：高亮读的是状态层那份（上一帧抬起时算出来的），
+        // 拖框只是这一帧的读数——每帧都算命中会让"擦过去"的块全进选中。
+        if let Some(document) = document.as_ref() {
+            for block in &document.blocks {
+                if selected.contains(&block.id) {
+                    let rect = block_rect(document, layout.image_rect, block.bbox);
+                    ui.painter().rect_filled(rect, 0.0, select_tint());
+                    ui.painter()
+                        .rect_stroke(rect, 0.0, select_edge(), egui::StrokeKind::Inside);
+                }
+            }
+            let pointer = ui.input(|i| i.pointer.interact_pos());
+            if let (Some(from), Some(to)) = (start, pointer) {
+                let rect = drag_rect(from, to);
+                if !start.map(|p| p == to).unwrap_or(false) {
+                    ui.painter().rect_stroke(
+                        rect,
+                        0.0,
+                        egui::Stroke::new(1.0, egui::Color32::WHITE),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+            // 抬起那一下才算一次命中（**抬起在图片外也算**——拖出去松手是常态）
+            let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+            if released {
+                if let (Some(from), Some(to)) = (start, pointer) {
+                    let ids = hit_blocks(document, layout.image_rect, drag_rect(from, to));
+                    local.push(PinIntent::Select(ids));
+                }
+                if start.is_some() {
+                    child.data_mut(|d| d.remove::<Pos2>(sel_start_key(id)));
+                }
+            }
+        } else if let Some(from) = start {
+            // 文档没了（识别失败、或这张换成了成品又重识别中）：把手上那个起点擦掉，
+            // 不许留一个"下一次按下接着上一次"的幽灵拖框
+            let _ = from;
+            child.data_mut(|d| d.remove::<Pos2>(sel_start_key(id)));
         }
         // 右键：恰好四项，与带子同一张表
         area.context_menu(|ui| image_menu(ui, &mut local));
@@ -481,6 +615,29 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
 /// 自己错的日历不值得。号只往前走不复用，同一批里就不撞名。
 pub fn default_save_name(id: u64) -> String {
     format!("\u{8d34}\u{56fe}-{id}.png")
+}
+
+/// 测试夹具：一块 1000×400 像素的文档，上下两行可读文字（id 0 与 1）。
+/// 贴图文字层的用例（本模块与 `app.rs`）都从这里造，不各写一份字段。
+#[cfg(test)]
+pub fn probe_document() -> ice_core::document::OcrDocument {
+    use ice_core::document::{OcrDocument, PixelRect, TextBlock};
+    let mut document = OcrDocument::empty(1000, 400);
+    document.blocks = vec![
+        TextBlock::new(
+            0,
+            "上面那一行",
+            PixelRect::new(10.0, 10.0, 400.0, 30.0),
+            0.9,
+        ),
+        TextBlock::new(
+            1,
+            "下面那一行",
+            PixelRect::new(10.0, 200.0, 400.0, 30.0),
+            0.9,
+        ),
+    ];
+    document
 }
 
 #[cfg(test)]
@@ -631,8 +788,19 @@ mod tests {
             key_intent(Key::C, if cfg!(target_os = "macos") { cmd } else { ctrl }),
             Some(PinIntent::CopyImage)
         );
-        // 裸 C 不在这一层给动作：它是"图还是字"要看有没有选中文字（REQ-005）
-        assert_eq!(key_intent(Key::C, none), None);
+        // 裸 C 给的是 **Copy**（那一条分派），不是 CopyImage：图还是字要看有没有选中（REQ-005）
+        assert_eq!(key_intent(Key::C, none), Some(PinIntent::Copy));
+        // Shift+Shift 之外的组合键（⌥C 一类）不抢：留给别人，也免得与输入法打架
+        assert_eq!(
+            key_intent(
+                Key::C,
+                Modifiers {
+                    shift: true,
+                    ..Modifiers::NONE
+                }
+            ),
+            None
+        );
         // 输入法/Alt 组合一律不抢
         assert_eq!(
             key_intent(
@@ -844,5 +1012,68 @@ mod tests {
             1,
             "「翻译」这两个字出现了第二处：文案该由那张表一处给"
         );
+    }
+
+    /// 命中判定只认与拖框相交的块：**擦过另一行不算选中**（选中的是上面那行、
+    /// 复制出去的是下面那行，是这一格最容易出的错）。
+    #[test]
+    fn a_drag_only_collects_the_blocks_it_touches() {
+        let doc = probe_document();
+        let image = Rect::from_min_size(at(0.0, 0.0), px(500.0, 200.0)); // 2 倍：500 点 = 1000 像素
+        let one = Rect::from_min_max(at(20.0, 10.0), at(180.0, 20.0));
+        assert_eq!(hit_blocks(&doc, image, one), vec![0]);
+        let other = Rect::from_min_max(at(20.0, 100.0), at(180.0, 110.0));
+        assert_eq!(hit_blocks(&doc, image, other), vec![1]);
+        let both = Rect::from_min_max(at(0.0, 0.0), at(300.0, 200.0));
+        assert_eq!(hit_blocks(&doc, image, both), vec![0, 1]);
+    }
+
+    /// 点在空白处 = **空表**，而空表要被当作"取消选中"写下去（REQ-005：不许给一个
+    /// 空字符串当选中，也不许"什么都没发生"地留着上一次的选中）。
+    #[test]
+    fn a_click_on_blank_space_selects_nothing() {
+        let doc = probe_document();
+        let image = Rect::from_min_size(at(0.0, 0.0), px(500.0, 200.0));
+        let point = Rect::from_min_max(at(300.0, 60.0), at(300.0, 60.0));
+        assert_eq!(hit_blocks(&doc, image, point), Vec::<u32>::new());
+        // 同一个换算下，点在块上就是选中那块（单击与拖选共用一条判据）
+        let on_it = Rect::from_min_max(at(20.0, 10.0), at(20.0, 10.0));
+        assert_eq!(hit_blocks(&doc, image, on_it), vec![0]);
+    }
+
+    /// 命中换算与绘制换算必须是**同一个**：这里把两处都指到同一个函数上，
+    /// 一旦有人再写一份除法，这两条断言就会各说一套。
+    #[test]
+    fn the_hit_rect_and_the_painted_rect_use_one_conversion() {
+        let doc = probe_document();
+        let image = Rect::from_min_size(at(0.0, 0.0), px(500.0, 200.0));
+        let painted = block_rect(&doc, image, doc.blocks[1].bbox);
+        assert_eq!(painted.min, at(5.0, 100.0), "200 像素 ÷ 2 = 100 点");
+        assert_eq!(painted.max, at(205.0, 115.0));
+        // 点在它的右下角上就该命中这一块（说明命中用的确实是这一块矩形）
+        assert_eq!(
+            hit_blocks(
+                &doc,
+                image,
+                Rect::from_min_max(at(205.0, 115.0), at(205.0, 115.0))
+            ),
+            vec![1]
+        );
+    }
+
+    /// **裸按下仍然是拖这扇窗**（D-29 的修法）：只有"文字层长出来了 + 按住 Shift"
+    /// 才把这一帧的鼠标交给拖选。三个条件少一个都不接管。
+    #[test]
+    fn a_plain_press_still_belongs_to_the_window_drag() {
+        assert!(selection_gesture(true, true, true));
+        assert!(
+            !selection_gesture(true, false, true),
+            "没按 Shift 就还是拖窗"
+        );
+        assert!(
+            !selection_gesture(false, true, true),
+            "文字层没长出来，Shift 也不该冒出第二种手势"
+        );
+        assert!(!selection_gesture(true, true, false));
     }
 }

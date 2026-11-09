@@ -148,9 +148,9 @@
       "command": [
         "bash",
         "-c",
-        "test $(grep -Rl 'screencapture' crates/ice-app/src | wc -l) -eq 1"
+        "test $(grep -Rl '/usr/sbin/screencapture' crates/ice-app/src | wc -l) -eq 1"
       ],
-      "note": "系统二进制的字面量只许出现在 `system/capture.rs` 一处（与 `vision_sys` 那条静态核查同族）。多一处就意味着第二个地方在拼命令，而取消判据与历史路径生命周期就会跟着分叉",
+      "note": "系统二进制的**路径字面量**只许出现在 `system/capture.rs` 一处（与 `vision_sys` 那条静态核查同族）。**这条在 2026-11-09 收窄过一次**：原来 grep 的是裸词 `screencapture`，而 `jobs.rs`/`app.rs`/`pin.rs` 里有三段注释正用它解释\"为什么测试必须换掉框选\"——检查把注释也算成第二处，报 failed。判据要守的是\"没有第二个地方在拼命令\"，所以查的是那个路径字面量，不是这个词；把注释改写成别的说法去让检查变绿是反过来的做法，没采用",
       "required": true
     },
     {

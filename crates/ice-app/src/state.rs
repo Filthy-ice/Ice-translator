@@ -480,6 +480,9 @@ pub struct Pin {
     /// 为什么要一格"欠着合成"而不是让回信直接派：`apply_outcome` 只做状态，发任务是帧循环
     /// 的事（REQ-005 那条分层纪律）。
     pub compose_due: bool,
+    /// 这一张此刻在文字层上拖选了哪些块（REQ-005）。**每张一条**：选中集合跟着贴图走，
+    /// 共用一条就会出"在第一张上选的字，按 C 从第三张复制出去"。
+    pub selected: Vec<u32>,
 }
 
 impl Pin {
@@ -519,7 +522,26 @@ impl Pin {
             compose_in_flight: None,
             product: None,
             compose_due: false,
+            selected: Vec::new(),
         }
+    }
+
+    /// 文字层是不是已经长出来了（REQ-005 的那句"没长出来就不许假装能选"）。
+    ///
+    /// 判据是"识别完成 **且** 文档真在"，不是"文档非空"——`NoText` 那一档的文档是空的，
+    /// 而 `Failed` 那一档根本不该出现可选的暗示。
+    pub fn text_ready(&self) -> bool {
+        matches!(self.stage, RecognitionStage::Done { .. }) && self.document.is_some()
+    }
+
+    /// 按 `C` 会拿到的那段文字。没有选中、或选中的块已经不在文档里 → `None`
+    /// （调用方据此退回"复制图像"，**不许交出一个空串**）。
+    pub fn selection_text(&self) -> Option<String> {
+        let document = self.document.as_ref()?;
+        if self.selected.is_empty() {
+            return None;
+        }
+        document.joined_text(&self.selected)
     }
 }
 
@@ -1555,6 +1577,18 @@ impl AppState {
         match self.pins.iter_mut().find(|p| p.id == pin) {
             Some(p) => {
                 p.band_open = open;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 记下一张贴图此刻拖选了哪些块（REQ-005）。**空表也是一次合法写入**——它就是"取消选中"，
+    /// 不许把空表当"这一帧没有新信息"忽略掉，否则用户松开一个空拖之后界面还写着有选中。
+    pub fn set_pin_selection(&mut self, pin: RequestId, ids: Vec<u32>) -> bool {
+        match self.pins.iter_mut().find(|p| p.id == pin) {
+            Some(p) => {
+                p.selected = ids;
                 true
             }
             None => false,
@@ -2820,6 +2854,61 @@ mod tests {
         assert!(st.set_pin_band(1, false));
         assert!(!st.pins[0].band_open);
         assert!(!st.set_pin_band(77, true));
+    }
+
+    /// 文字层是不是"长出来了"：判据是**识别完成且文档真在**，两张都要。
+    /// 单独一条"文档非空"不够——`Failed`/`NoText` 那两档此刻什么都选不了，
+    /// 而 `Recognizing` 那一档文档是上一轮的残留时更危险（会拿旧图的字去选新图）。
+    #[test]
+    fn the_text_layer_only_counts_when_recognition_finished() {
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/1.png"));
+        let pin = &mut st.pins[0];
+        assert!(!pin.text_ready(), "刚钉上时还没有文字层");
+        pin.stage = RecognitionStage::Recognizing;
+        pin.document = Some(pin_doc());
+        assert!(!pin.text_ready(), "识别在飞时旧文档不算已经能选");
+        pin.stage = RecognitionStage::Done { blocks: 1 };
+        assert!(pin.text_ready());
+        pin.stage = RecognitionStage::NoText;
+        assert!(!pin.text_ready(), "未发现文字那一档不该给出可选的暗示");
+    }
+
+    /// 选中的块拼出去的是**那段文字**；没选中、或选中的块已经不在这一轮的文档里，
+    /// 交出来的是 `None`——调用方据此退回"复制图像"（不许交出一个空串当选中）。
+    #[test]
+    fn a_selection_yields_text_or_nothing_not_an_empty_string() {
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/1.png"));
+        let pin = &mut st.pins[0];
+        pin.stage = RecognitionStage::Done { blocks: 1 };
+        pin.document = Some(pin_doc());
+        assert_eq!(pin.selection_text(), None, "还没选就是没选");
+        pin.selected = vec![0];
+        assert_eq!(pin.selection_text().as_deref(), Some("hello world"));
+        pin.selected = vec![7];
+        assert_eq!(
+            pin.selection_text(),
+            None,
+            "不在文档里的 id 不许交出别处的文字"
+        );
+        pin.selected = vec![];
+        assert_eq!(pin.selection_text(), None);
+    }
+
+    /// **空表是一次合法写入**（它就是"取消选中"）。当成"这帧没新信息"忽略掉的话，
+    /// 用户松开一个空拖之后带子还写着"已选中 N 段"。
+    #[test]
+    fn clearing_a_selection_is_a_write_not_a_no_op() {
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/1.png"));
+        st.pins[0].selected = vec![0];
+        assert!(st.set_pin_selection(1, vec![0, 1]));
+        assert_eq!(st.pins[0].selected, vec![0, 1]);
+        assert!(st.set_pin_selection(1, Vec::new()));
+        assert!(st.pins[0].selected.is_empty(), "取消选中必须真的落下去");
+        // 不存在的贴图：返回 false，调用方不许凭空说"选好了"
+        assert!(!st.set_pin_selection(99, vec![1]));
     }
 
     /// 那颗按钮的话与状态行读**同一个来源**：三道门从上往下——这台机器没这件事、

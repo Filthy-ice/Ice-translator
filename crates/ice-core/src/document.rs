@@ -173,11 +173,116 @@ impl OcrDocument {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    /// 把选中的几块拼成一段文字，**按阅读顺序**（先比上缘、同一行再比左缘）。
+    ///
+    /// 返回 `None` 而不是空串：贴图那边要拿"有没有选中"当分派依据（复制字还是复制图），
+    /// 一个空串会让"没选中"和"选中了一块空文字"这两种状态长得一模一样。
+    /// 只认块 id 集合里**确实存在且非空白**的块——识别没出的块选不中，选中的块被老化
+    /// 清掉文档也不会交出一段来历不明的文字。
+    pub fn joined_text(&self, ids: &[u32]) -> Option<String> {
+        let mut picked: Vec<&TextBlock> = ids
+            .iter()
+            .filter_map(|id| self.blocks.iter().find(|b| b.id == *id))
+            // 与贴图那一侧的命中判定同一条口径：勾掉的块与空白块**都选不中**，
+            // 所以也不该被这段拼接悄悄带出去（两处各判一半就是"复制出来的多了没选的那行"）
+            .filter(|b| b.enabled && !b.text.trim().is_empty())
+            .collect();
+        if picked.is_empty() {
+            return None;
+        }
+        picked.sort_by(|a, b| {
+            a.bbox
+                .y
+                .partial_cmp(&b.bbox.y)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(
+                    a.bbox
+                        .x
+                        .partial_cmp(&b.bbox.x)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+                .then(a.id.cmp(&b.id))
+        });
+        picked.dedup_by(|a, b| a.id == b.id);
+        Some(
+            picked
+                .into_iter()
+                .map(|b| b.text.trim().to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 一块可识别的文字（贴图文字层的用例都从这里造，别处不重复这套字段）
+    fn block(id: u32, text: &str, x: f32, y: f32, w: f32, h: f32) -> TextBlock {
+        TextBlock {
+            id,
+            text: text.to_string(),
+            bbox: PixelRect::new(x, y, w, h),
+            polygon: None,
+            confidence: 0.9,
+            translation: None,
+            degraded: false,
+            enabled: true,
+            source_rows: vec![],
+        }
+    }
+
+    fn doc(blocks: Vec<TextBlock>) -> OcrDocument {
+        OcrDocument {
+            width: 1000,
+            height: 800,
+            blocks,
+            source_label: "probe".to_string(),
+        }
+    }
+
+    /// 拖选出来的文字按**阅读顺序**拼：先比上缘、同一行再比左缘，与传入的块 id 次序无关
+    /// （用户是从下往上倒着拖的，粘出去的字不该倒着读）。
+    #[test]
+    fn joined_text_follows_reading_order_not_click_order() {
+        let document = doc(vec![
+            block(1, "第一行", 0.0, 0.0, 200.0, 20.0),
+            block(2, "第二行", 0.0, 30.0, 200.0, 20.0),
+            block(3, "第三行", 0.0, 60.0, 200.0, 20.0),
+        ]);
+        assert_eq!(
+            document.joined_text(&[3, 1, 2]).as_deref(),
+            Some("第一行\n第二行\n第三行")
+        );
+        // 同一行里两块：左边的先出来
+        let same_row = doc(vec![
+            block(1, "右块", 300.0, 0.0, 100.0, 20.0),
+            block(2, "左块", 10.0, 0.0, 100.0, 20.0),
+        ]);
+        assert_eq!(same_row.joined_text(&[1, 2]).as_deref(), Some("左块\n右块"));
+    }
+
+    /// **空选择交出 `None`，不交出空串**：贴图那边拿"有没有值"分派复制字还是复制图，
+    /// 一个空串会让"没选中"与"选中了一块空文字"长得一模一样。
+    #[test]
+    fn an_empty_selection_is_none_rather_than_an_empty_string() {
+        let mut off = block(3, "被勾掉的", 0.0, 80.0, 50.0, 10.0);
+        off.enabled = false;
+        let document = doc(vec![
+            block(1, "有字", 0.0, 0.0, 50.0, 10.0),
+            block(2, "   ", 0.0, 40.0, 50.0, 10.0),
+            off,
+        ]);
+        assert_eq!(document.joined_text(&[]), None);
+        // 只选中空白块 / 被勾掉的块：仍然是"没选中"
+        assert_eq!(document.joined_text(&[2]), None);
+        assert_eq!(document.joined_text(&[3]), None);
+        // id 不在文档里（比如文档被新一轮识别换掉了）也不交出别处的文字
+        assert_eq!(document.joined_text(&[99]), None);
+        assert_eq!(document.joined_text(&[1, 1]).as_deref(), Some("有字"));
+    }
 
     #[test]
     fn rect_union_covers_both() {

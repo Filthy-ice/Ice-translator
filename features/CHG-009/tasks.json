@@ -132,8 +132,10 @@
         "REQ-005"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-core/src/document.rs"
+      ]
     },
     {
       "id": "T-010",
