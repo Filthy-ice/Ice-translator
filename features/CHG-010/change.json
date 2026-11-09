@@ -426,6 +426,21 @@
         "verification": "V-007",
         "result": "passed"
       }
+    },
+    {
+      "at": "2026-11-09T12:41:12+00:00",
+      "action": "task-done",
+      "detail": "T-001"
+    },
+    {
+      "at": "2026-11-09T12:41:12+00:00",
+      "action": "task-done",
+      "detail": "T-009"
+    },
+    {
+      "at": "2026-11-09T12:41:12+00:00",
+      "action": "task-done",
+      "detail": "T-010"
     }
   ],
   "approval": {

@@ -13,8 +13,12 @@
         "REQ-102"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": [],
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/cover.rs",
+        "crates/ice-app/src/system/selection.rs",
+        "crates/ice-app/src/jobs.rs"
+      ],
       "verify_note": "两条量不到 / 不能替他定的格子明写着：**H4 的 Retina 换算**（本机在线两屏 `backingScaleFactor` 都是 1.0，第四轮复测仍是 1.0）与**「跟不跟手」的手感**（`CGEventPost` 的注入件按下坐标本身就偏上百个点，拿它判命中半径是伪证据）。Q-004 / Q-006 的**技术那一半**已由事实 15/16 闭合，**代价与取舍仍归用户**，不许在实现里替他选。"
     },
     {
@@ -115,8 +119,15 @@
         "REQ-107"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "docs/01-requirements.md",
+        "docs/03-ui-design.md",
+        "docs/05-dev-guide.md",
+        "docs/06-test-cases.md",
+        "docs/07-acceptance.md",
+        "docs/traceability.md"
+      ]
     },
     {
       "id": "T-010",
@@ -125,8 +136,12 @@
         "REQ-108"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": [],
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/windows.rs",
+        "crates/ice-app/src/system/selection.rs",
+        "crates/ice-app/src/app.rs"
+      ],
       "verify_note": "停止条件 6/7 都压在这一格上：单击与拖动的分界判不清就回来重定手势；走 (b) 那条要先补测屏幕录制权限在我们进程上的归属（CHG-009 的 H2 至今没量过）。"
     }
   ]
