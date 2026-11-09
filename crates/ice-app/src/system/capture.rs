@@ -173,6 +173,76 @@ pub fn classify(path: &Path, exit_zero: bool, stderr: &str) -> Outcome {
     Outcome::Failed(Failure::Unknown)
 }
 
+/// 静默抓**一块屏**（CHG-010 REQ-001 的"先冻结"）。
+///
+/// 三条实测决定它的形状：
+/// - 不带 `-D` 只给主屏（本机实测产出一张 1920×1080，左边那块 1920×1200 不在里面），
+///   所以"每块屏各一扇遮罩"必须**按屏点名**，序号从 1 起；
+/// - 区域那条路（`-R`）**不接受负坐标**（实测报 `-R requires a valid rect`），而本机第二块屏
+///   就挂在 `(-1920,-120)`，所以不能拿矩形切屏，只能 `-D`；
+/// - 它**没有"取消"这一档**：静默抓图不等用户画，所以 [`classify_grab`] 与 [`classify`] 不同——
+///   这里"没有文件"只有失败一种读法。把老那套"没文件 + 退出码 0 = 取消"抄过来，
+///   出的就是"抓屏明明失败了，界面却说用户取消了"（REQ-106 说的那条判据随系统工具退役）。
+///
+/// 调用方同样 SHALL 把它放在 `spawn_blocking` 里：一次约 0.08~0.22 秒，帧循环里等它就是一卡。
+#[cfg(target_os = "macos")]
+pub fn grab_screen(dir: &Path, seq: u64, display: u8) -> Outcome {
+    let path = target_path(dir, std::process::id(), now_secs(), seq);
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        tracing::warn!("截图目录建不起来：{e}");
+        return Outcome::Failed(Failure::Unwritable);
+    }
+    let output = match std::process::Command::new(TOOL)
+        .args(grab_args(&path, display))
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!("抓屏工具起不来：{e}");
+            return Outcome::Failed(Failure::ToolMissing);
+        }
+    };
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    classify_grab(&path, output.status.success(), &stderr)
+}
+
+/// 非 mac：同签名，恒 `Unsupported`（与 [`capture`] 一条形状，不写第二套）。
+#[cfg(not(target_os = "macos"))]
+pub fn grab_screen(_dir: &Path, _seq: u64, _display: u8) -> Outcome {
+    Outcome::Unsupported
+}
+
+/// 静默抓屏的参数。**序号 1 起是系统的读法**（`-D1` = 主屏），传 0 会被当成"没点名"，
+/// 所以这里先夹一次，免得序号从 0 起时永远抓回主屏而第二块屏的画面被当成错误。
+pub fn grab_args(path: &Path, display: u8) -> Vec<String> {
+    vec![
+        "-x".into(),
+        "-o".into(),
+        "-t".into(),
+        "png".into(),
+        format!("-D{}", display.max(1)),
+        path.display().to_string(),
+    ]
+}
+
+/// 抓屏那一档的有序判定：**没有"取消"这个出口**。
+pub fn classify_grab(path: &Path, exit_zero: bool, stderr: &str) -> Outcome {
+    if path.exists() {
+        return if decodable(path) {
+            Outcome::Captured(path.to_path_buf())
+        } else {
+            Outcome::Failed(Failure::Corrupt)
+        };
+    }
+    if stderr.contains("could not create image") {
+        return Outcome::Failed(Failure::NoPixels);
+    }
+    // 没文件、退出码 0、stderr 空：静默抓图里这是"什么都没拿到"，不是用户放弃。
+    // 序号越界（例如只有两块屏却点名第三块）就是这个形状。
+    let _ = exit_zero;
+    Outcome::Failed(Failure::NoPixels)
+}
+
 /// 跑一次框选。**调用方负责把它放在 `spawn_blocking` 里**（它会阻塞到用户画完为止）。
 ///
 /// 先建目录再发起（事实 24），建不起来就直接失败——此时交互层还没弹出来，用户什么都没画，
@@ -439,6 +509,77 @@ mod tests {
             classify(&missing, false, ""),
             Outcome::Failed(Failure::Unknown)
         );
+    }
+
+    /// 静默抓屏的参数：**点名那块屏**，序号从 1 起（实测 `-D1`→主屏、`-D2`→副屏）。
+    /// 没有 `-i`：那条是"弹系统交互层等人画"，本包要的是"先冻住"。
+    #[test]
+    fn a_silent_grab_names_the_display_and_never_opens_the_interactive_layer() {
+        let args = grab_args(Path::new("/tmp/f.png"), 2);
+        assert!(
+            !args.iter().any(|a| a == "-i"),
+            "静默抓屏不许带交互层那一条：{args:?}"
+        );
+        assert!(args.windows(2).any(|w| w == ["-D2"]) || args.contains(&"-D2".to_string()));
+        assert_eq!(args.last().unwrap(), "/tmp/f.png");
+        // 序号 0 不是合法读法：夹成 1，免得副屏的序号从 0 起时永远抓回主屏
+        assert!(grab_args(Path::new("/x.png"), 0).contains(&"-D1".to_string()));
+    }
+
+    /// **静默抓屏没有"取消"这一档**：没拿到东西只有失败一种读法。
+    /// 把 [`classify`] 那套"没文件 + 退出码 0 + stderr 空 = 取消"抄到这里，
+    /// 就会把"点名了一块不存在的屏"说成"你取消了"——REQ-106 说要随系统工具退役的正是那套判据。
+    #[test]
+    fn a_silent_grab_that_wrote_nothing_is_a_failure_not_a_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("absent.png");
+        assert_eq!(
+            classify_grab(&missing, true, ""),
+            Outcome::Failed(Failure::NoPixels),
+            "退出码 0 也不算取消"
+        );
+        assert_eq!(
+            classify_grab(&missing, false, "could not create image from display"),
+            Outcome::Failed(Failure::NoPixels)
+        );
+        // 写了但解不开：与框选那一路同一档
+        let junk = dir.path().join("junk.png");
+        std::fs::File::create(&junk)
+            .unwrap()
+            .write_all(b"nope")
+            .unwrap();
+        assert_eq!(
+            classify_grab(&junk, true, ""),
+            Outcome::Failed(Failure::Corrupt)
+        );
+        // 正常抓到：与框选那一路同一个 Outcome，下游识别链不用分叉
+        let good = dir.path().join("good.png");
+        image::RgbImage::from_pixel(3, 2, image::Rgb([1, 2, 3]))
+            .save(&good)
+            .unwrap();
+        assert_eq!(
+            classify_grab(&good, true, ""),
+            Outcome::Captured(good.clone())
+        );
+        assert_eq!(classify(&good, true, ""), Outcome::Captured(good));
+    }
+
+    /// 抓屏失败给的那句话与框选失败同一档（同一份退路），而 `Cancelled` 在这条路上
+    /// **不该被产出来**——上面那条锁的是判定，这条锁的是"界面上会不会出现一句假话"。
+    #[test]
+    fn a_silent_grab_never_reports_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        // 一个不可能存在的屏序号：真跑一次，看它落成什么
+        let outcome = grab_screen(dir.path(), 1, 99);
+        if cfg!(target_os = "macos") {
+            assert!(
+                !matches!(outcome, Outcome::Cancelled),
+                "静默抓屏报出取消就是判据用错了地方"
+            );
+            assert!(matches!(outcome, Outcome::Captured(_) | Outcome::Failed(_)));
+        } else {
+            assert_eq!(outcome, Outcome::Unsupported);
+        }
     }
 
     /// 文件名三段都要有：两个实例（pid 不同）在同一秒同一序号也不许撞；

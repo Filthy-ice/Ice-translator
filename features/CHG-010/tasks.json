@@ -38,8 +38,10 @@
         "REQ-107"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/capture.rs"
+      ]
     },
     {
       "id": "T-004",

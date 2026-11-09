@@ -135,6 +135,26 @@
       "at": "2026-11-09T03:50:56+00:00",
       "action": "task-done",
       "detail": "T-002"
+    },
+    {
+      "at": "2026-11-09T07:25:21+00:00",
+      "action": "replan",
+      "detail": "实施时量到多屏抓屏的形状（不带 -D 只给主屏、-R 不吃负坐标），把这一节实现决定补进 design.md，计划哈希要重封"
+    },
+    {
+      "at": "2026-11-09T07:25:21+00:00",
+      "action": "seal-plan",
+      "detail": "438184e943ab657bdd23df53e577e77bf68ccd9f23d8a697677b7a28b2ea75c6"
+    },
+    {
+      "at": "2026-11-09T07:25:22+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-11-09T07:25:22+00:00",
+      "action": "task-done",
+      "detail": "T-003"
     }
   ],
   "approval": {
@@ -150,5 +170,5 @@
       "ice-translator": "main"
     }
   },
-  "plan_hash": "a453ee744a2281f1ae00b1f2f1b49911d3beddc00cb375e8ebfe8b95e77d3059"
+  "plan_hash": "438184e943ab657bdd23df53e577e77bf68ccd9f23d8a697677b7a28b2ea75c6"
 }

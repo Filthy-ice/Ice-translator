@@ -9,7 +9,7 @@
 //! 3. **点 → 物理像素的换算只许存在一处**（[`Field::to_pixels`]）。CHG-009 事实 22 已经演示过
 //!    两处各除一次或都忘了除的现场：贴图大一倍、文字层整体错位。
 
-use egui::{Pos2, Rect, Vec2, pos2, vec2};
+use egui::{Pos2, Rect, Vec2, pos2};
 use ice_core::document::PixelRect;
 
 /// 一次拖选期间的临时状态。
@@ -98,7 +98,7 @@ impl Field {
     /// 夹在屏内由 [`Field::clamp`] 先做过，这里只负责换算与"至少 1 像素"的兜底：
     /// 拖出一条线的选区不该裁出 0 宽的文件，那种文件后面识别链会给出"未发现文字"，
     /// 用户看到的是一句与他动作对不上的话。
-    pub fn to_pixels(&self, sel: egui::Rect) -> Option<PixelRect> {
+    pub fn to_pixels(self, sel: Rect) -> Option<PixelRect> {
         let scale = self.scale()?;
         let sel = self.clamp(sel);
         let x = (sel.min.x - self.bounds.min.x) * scale;
@@ -393,9 +393,19 @@ pub fn bar_rect(sel: egui::Rect, bar: Vec2, side: BarSide) -> egui::Rect {
     Rect::from_min_size(min, bar)
 }
 
+// 三条常量的边界钉在**编译期**：写成运行期断言会被判"常量比较恒真"而形同虚设，
+// 它要的效果从来不是"跑一下看看"，是"谁改坏了就编译不过"。
+/// 压暗不许等于"没压"(255)，也不许等于"看不见原图"(0)；具体档位由走查 W-6.2 定（Q-005）。
+const _: () = assert!(DIM >= 60 && DIM <= 200);
+/// 单击阈值必须明显小于把手命中半径，否则"点在把手上"会先被判成单击，八个把手靠内那圈就废了。
+const _: () = assert!(CLICK_SLOP > 0.0 && CLICK_SLOP < HANDLE_RADIUS);
+/// 八个把手 = 4 角 + 4 边。改了它，[`handle_center`] 的编号与 [`grab`] 的命中会一起分岔。
+const _: () = assert!(HANDLE_COUNT == 8);
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::vec2;
 
     /// 主屏：1920×1080 的点、2 倍像素（**故意用非 1.0 的比例**——本机在线两屏都是 1.0，
     /// 无头里再写 1.0 就等于"拿 1.0 的读数冒充 2.0"，那是 CHG-009 事实 22 犯过的错）。
@@ -713,16 +723,5 @@ mod tests {
         let flipped = bar_rect(low, bar, BarSide::Above);
         assert_eq!(flipped.max.y, low.min.y - GAP);
         assert!(!flipped.intersects(low), "翻上去那一档同样不许压住选区");
-    }
-
-    /// 压暗那一档是个常量，且必须落在"看得见但明显暗下去"的区间——写死在断言里，
-    /// 将来谁把它调成 255（等于没压）或 0（全黑看不见原图）会当场响。
-    #[test]
-    fn the_dim_constant_stays_in_the_seeable_range() {
-        assert!((60..=200).contains(&DIM), "压暗档位跑出了可看区间：{DIM}");
-        assert!(
-            CLICK_SLOP > 0.0 && CLICK_SLOP < HANDLE_RADIUS,
-            "单击阈值必须小于把手半径"
-        );
     }
 }
