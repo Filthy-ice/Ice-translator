@@ -120,3 +120,39 @@ Spec-Hash: a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
 
 - 2026-11-09T12:45:47+00:00 V-005 **passed** VERIFIED_RUNTIME/sandbox
   真应用端到端由 Agent 自己开车跑通并留读数（2026-11-09 深夜）：遮罩 layer=25 盖满 1920×1080、esc 退得出、拖框出八颗把手且药丸那道缝实测 3 点、对勾钉在原地 (1100,300) 300×234、拖动之后静置不回弹、空格 234→200、右键恰好四项、复制交出 240226 字节图像（只记长度与哈希前 8 位）、悬停沿那扇窗四边亮框、单击整扇拿下 1404×919。三把全局热键与观感手感不在这条里，分别归 W-5.1 与 W-6.1~W-6.7；附件：evidence/0039-V-005.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:00:53+00:00 V-001 **failed** VERIFIED_CODE/local
+  argv=["cargo", "test", "--workspace"] exit=101；附件：evidence/0040-V-001.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:00:53+00:00 V-002 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-app", "selection"] exit=0；附件：evidence/0041-V-002.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:00:53+00:00 V-003 **failed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-app", "capture"] exit=101；附件：evidence/0042-V-003.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:00:54+00:00 V-004 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "test $(grep -Rl '/usr/sbin/screencapture' crates/ice-app/src | wc -l) -eq 1 && ! grep -Rn 'cfg(target_os' crates/ice-app/src/views"] exit=0；附件：evidence/0043-V-004.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:00:54+00:00 V-007 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "test $(grep -Rl '\\.setLevel(' crates/ice-app/src | wc -l) -le 1 && ! (grep -Rn 'Fullscreen(true)' crates/ice-app/src --include='*.rs' | grep -vE ':[0-9]+: *//') | grep -q ."] exit=0；附件：evidence/0044-V-007.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:00:54+00:00 V-005 **passed** VERIFIED_RUNTIME/sandbox
+  真应用端到端由 Agent 自己开车跑通并留读数（2026-11-09 深夜，含 D-41 修复后的两轮对照）：遮罩 layer=25 盖满 1920×1080、esc 取消与 esc 退出都退得出、拖框出八颗把手且药丸那道缝实测 3 点、对勾钉在原地 (1100,300) 300×234、拖动之后静置不回弹、空格 234→200、右键恰好四项、复制交出 240226 字节图像（只记长度与哈希前 8 位）、悬停沿那扇窗四边亮框、单击整扇拿下 1404×919；两轮截图之间搬走主窗，原区域 29% 采样点变化 ⇒ 第二轮是新画面。三把全局热键与观感手感不在这条里，归 W-5.1 与 W-6.1~W-6.8；附件：evidence/0045-V-005.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:02:09+00:00 V-001 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "--workspace"] exit=0；附件：evidence/0046-V-001.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:02:09+00:00 V-002 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-app", "selection"] exit=0；附件：evidence/0047-V-002.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:02:09+00:00 V-003 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-app", "capture"] exit=0；附件：evidence/0048-V-003.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:02:09+00:00 V-004 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "test $(grep -Rl '/usr/sbin/screencapture' crates/ice-app/src | wc -l) -eq 1 && ! grep -Rn 'cfg(target_os' crates/ice-app/src/views"] exit=0；附件：evidence/0049-V-004.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:02:10+00:00 V-007 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "test $(grep -Rl '\\.setLevel(' crates/ice-app/src | wc -l) -le 1 && ! (grep -Rn 'Fullscreen(true)' crates/ice-app/src --include='*.rs' | grep -vE ':[0-9]+: *//') | grep -q ."] exit=0；附件：evidence/0050-V-007.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-09T13:02:22+00:00 V-005 **passed** VERIFIED_RUNTIME/sandbox
+  真应用端到端由 Agent 自己开车跑通并留读数（2026-11-09 深夜，含 D-41 修复后的两轮对照）：遮罩 layer=25 盖满 1920x1080、esc 取消与 esc 退出都退得出、拖框出八颗把手且药丸那道缝实测 3 点、对勾钉在原地 (1100,300) 300x234、拖动之后静置不回弹、空格 234->200、右键恰好四项、复制交出 240226 字节图像（只记长度与哈希前 8 位）、悬停沿那扇窗四边亮框、单击整扇拿下 1404x919；两轮截图之间搬走主窗，原区域 29% 采样点变化，第二轮是新画面。三把全局热键与观感手感不在这条里，归 W-5.1 与 W-6.1~W-6.8；附件：evidence/0051-V-005.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
