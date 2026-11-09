@@ -1,0 +1,104 @@
+{
+  "baseline": null,
+  "tasks": [
+    {
+      "id": "T-001",
+      "title": "批准前取证**已跑完**（2026-11-09 三轮仓外探针 `/tmp/sel_poc`，不进仓，读数逐条抄在 spec.md 事实 5~13）：H1 鼠标三类事件全进遮罩、H2 三条几何判定各量到一次、H5 三个时刻整屏采样逐点相同、遮罩存在时抓屏仍 0.07~0.09 秒。同时量出两条新约束：**置顶档 layer 3 盖不住 Dock(20) 与菜单栏(24)**，以及**键盘进不来是因为应用没激活**。本任务的剩余部分是**实施时在真应用里复核一次**（探针是裸进程，真应用有托盘与多形态窗——停止条件 5）",
+      "requirements": [
+        "REQ-101",
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": [],
+      "verify_note": "两条量不到的格子明写着：H4 的 Retina 换算（本机在线两屏 scale 都是 1.0）与「跟不跟手」的手感（注入件的按下坐标本身就偏，拿它判命中半径是伪证据）。"
+    },
+    {
+      "id": "T-002",
+      "title": "新建 `crates/ice-app/src/system/selection.rs` 的纯函数段：选区状态机 `Idle → Dragging → Ready → Confirmed/Cancelled`、一次按下落在哪（空白 / 框内 / 八个把手里的哪一个）的**唯一一处**判定、改大小与移动后夹在**那块屏**的矩形内、尺寸读数（宽 × 高）、动作条上下翻转的几何。**输入一律是「这块屏的矩形 + 一个点」，不许假设原点总是 0,0**——他机器上第二块屏是 `1920×1200` 挂在 `(-1920,-120)`，负偏移那条要进用例",
+      "requirements": [
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-003",
+      "title": "`capture.rs` 的 mac 分支换实现：子进程参数从交互框选改为静默整屏那一条（同一个二进制、同一处字面量出处，本包 V-004 那条静态核查仍然成立）；`Outcome` 不再由「文件是否出现」推断，取消/确认由调用方（选区层）直接给；`Failure` 的类别与那句能行动的话保持原样，抓屏失败 SHALL NOT 打开一扇空白遮罩；非 mac 分支与 `capability()` 那一处判定一字不动",
+      "requirements": [
+        "REQ-101",
+        "REQ-106",
+        "REQ-107"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-004",
+      "title": "遮罩窗与顺序接线：`Job::ScreenCapture` 那一步在 `spawn_blocking` 里抓整屏、回信把冻结帧的**像素**交回帧循环；`app.rs` 按「收起自家窗 → 抓整屏 → 立刻放回 → 开遮罩 → 抬层读回几何」五段接线；**每块屏一扇遮罩**（屏幕表来自既有的 `NSScreen` 那一条路，不新开原生面）；`CaptureStage` 加 `Selecting` 与 `Selected` 两态；压暗与出图用整屏一张冻结图 + 选区那块按原亮度重画（**uv 是归一化 0..1**，事实 13 那一处自纠错落成一条断言）；SHALL NOT 用透明窗口、鼠标穿透，也 SHALL NOT 用 `Fullscreen(true)`",
+      "requirements": [
+        "REQ-101",
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-005",
+      "title": "新建 `crates/ice-app/src/system/cover.rs`：那一次**原生抬层与对位**的唯一出处——在主线程按标题找到遮罩那扇 `NSWindow`，`setLevel(NSMainMenuWindowLevel+1)` 后 `setFrame(该屏 frame)`，**再把 AppKit 实际给的矩形读回来**交给选区层当坐标基准；拿不到窗/不在主线程/非 mac 一律返回 false，调用方退回「只有可用区被盖住」那一档并**在界面说一句**，不许静默当成功。复用 `system/window.rs` 取窗口的路（`objc2-app-kit` 已在依赖里，零新增 crate 名）；探针三轮读数就是这条的验收底：`bounds=0,63,1920x953` → 只改尺寸 `0,31,1920x1080` → 抬层 `layer=25 bounds=0,0,1920x1080`",
+      "requirements": [
+        "REQ-101",
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-006",
+      "title": "动作条：圆角药丸、恰好四颗（钉住 / 复制 / 保存 / 取消），浮在选区下方、放不下时翻到上方，SHALL NOT 铺满整屏或整幅图宽；复制与保存**复用既有两条接缝**（`clipboard::write_image`、`panel::request_save` + `export::save`），不开第二条实现。四颗的数量与顺序由一处表驱动，菜单与命中区都遍历那张表",
+      "requirements": [
+        "REQ-103"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-007",
+      "title": "确认之后：按选区从冻结帧裁剪像素（点 → 物理像素的换算**只在这一处**，且用的是抬层后读回来的那块矩形）→ 落历史目录（沿用 7 天 / 200 张双上限与一键清除）→ 走 CHG-009 的贴图链（钉住 → 只识别 → 人按那颗「翻译」）。**确认之前目录里一个新文件都不许多出来**（本包最容易写错的一条，单独一条断言锁住）；一次截图进行中 SHALL NOT 再开第二次",
+      "requirements": [
+        "REQ-104",
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-008",
+      "title": "取消与失败什么都不留：三个入口（esc / 点遮罩外 / 点「取消」）**汇到同一个出口**，不写历史、不建贴图、不改图片页任何东西、**每扇遮罩都关掉**（多屏就是多扇）；取消时 SHALL NOT 去「还原层级」（遮罩当场销毁，层级跟着没了），也 SHALL NOT 碰主窗的置顶档。esc 按「应用是否前台」分档（事实 9）：非前台时提示语只说点取消，界面不许把 esc 写成承诺。同时把 F3「固定」的落点接上 `CaptureStage::Selected`",
+      "requirements": [
+        "REQ-105",
+        "REQ-106"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-009",
+      "title": "文档四处与变更登记：`docs/01` NFR-3 那句改成「确认之后才落盘」（隐私口径收紧）、`docs/03` 补遮罩与动作条的版式 + **菜单栏与 Dock 那两条为什么必须被盖住**、`docs/05` 立三条纪律（取消判据随系统工具退役；一个窗口属性的副作用必须在同一扇窗同一组动作上验；**贴图类读数必须逐点核到至少两个已知颜色**）、`docs/06` 补截图流程与双屏那一格、`docs/07` 登记 W-6.1~W-6.6 与本包变更行。CHG-009 事实 14 与 REQ-001 的改判走 `./sdd revise` 留痕，保留原文与「为什么曾经要它」，不许悄悄删",
+      "requirements": [
+        "REQ-106",
+        "REQ-107"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    }
+  ]
+}
