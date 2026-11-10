@@ -435,6 +435,27 @@ fn slot_key(display: u8) -> Id {
     Id::NULL.with("ice-selection.mask.slot").with(display)
 }
 
+/// 「固定」热键（F3）在遮罩还开着时递进来的"替我按下对勾"信号。
+///
+/// 与"选区不回传主窗"不冲突：主窗只递一个**触发**，遮窗自己手里有没有真框自己判、
+/// 自己把那块矩形交出去（走的还是按对勾/回车那同一条出口）。之所以不能主窗直接替它确认：
+/// 那一刻哪块屏、框在哪，只有正在拖的那一扇遮窗知道。
+fn confirm_key() -> Id {
+    Id::NULL.with("ice-selection.confirm-request")
+}
+
+pub fn request_confirm(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(confirm_key(), true));
+}
+
+fn confirm_requested(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(confirm_key()) == Some(true))
+}
+
+pub fn clear_confirm_request(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<bool>(confirm_key()));
+}
+
 /// 这扇遮罩自己的选区状态存在根上下文的 data 里，**按屏编号分开**。
 /// 放这里而不是放 `AppState`：只有画它的那一帧会读写它，绕一圈主窗就会看到旧值（闪），
 /// 而两扇窗同时写一份更会串（左屏拖动、右屏旧框跳出来）。
@@ -600,7 +621,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         // 头几帧重下、收敛即收手（实测激活要一两帧才落地，"发一次就当成功"是错的）。
         // **两个键都先过状态机再交意图**：esc 要把这一扇窗自己的框清掉，状态各窗自持，
         // 主窗不会替它清，留着它下一次开遮罩就带着上一次的框。
-        let keys: Vec<MaskOut> = child.input(|i| {
+        let mut keys: Vec<MaskOut> = child.input(|i| {
             i.events
                 .iter()
                 .filter_map(|e| match e {
@@ -624,6 +645,16 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 })
                 .collect()
         });
+        // 「固定」热键（F3）按下来的那一帧：手里真有框的这一扇遮窗替用户按下对勾。
+        // 并进上面同一个 `keys`，走同一条推意图的出口——不新开 queue.push / wake_root 的点。
+        // 没框就留着这个请求（下一次有框再兑现），主窗那侧在新轮开始时清掉，不跨轮误触。
+        if confirm_requested(&child) && next.rect.is_some() {
+            clear_confirm_request(&child);
+            next.confirm();
+            if let Some(rect) = next.rect {
+                keys.push(MaskOut::Confirm { display, rect });
+            }
+        }
         if !keys.is_empty() {
             changed = true;
             if let Ok(mut queue) = slot.lock() {

@@ -255,7 +255,16 @@ impl IceApp {
             // 两把键混成一把）；「打开上一次」从历史里取最新那张钉出来，没有才说一句
             Action::Capture => effects.capture = true,
             Action::PinLast => {
-                self.state.pin_last_capture();
+                // 「固定」与「对勾」同义（本文件那条注释 + 用户原话）。遮罩还开着时，F3 就
+                // 递一个"替我按下对勾"给遮窗——那一刻框在哪只有那一扇知道，选区不回传主窗，
+                // 主窗只触发。遮罩没开才是原来的"钉上次截好没钉住的那张"。
+                if self.state.capturing() {
+                    crate::system::selection::request_confirm(ctx);
+                    // 让遮窗这一帧就重画一次去消费这个请求，不然要等它下一次恰好醒
+                    ctx.request_repaint();
+                } else {
+                    self.state.pin_last_capture();
+                }
             }
             Action::ReopenLast => match self.newest_shot() {
                 Some(path) => {
@@ -1662,6 +1671,8 @@ impl IceApp {
         // 都会进图（事实 32 的正负对照）。**还原不在这里做**：窗收起时帧循环根本不跑，挂在
         // 帧末的还原永远不会执行；那份账跟着任务走，由子进程结束那条线程去放（REQ-010）。
         if effects.capture {
+            // 新轮开始：把上一轮可能残留的"F3 请确认"清掉，免得这一轮刚框好就被上一次的触发误钉。
+            crate::system::selection::clear_confirm_request(ctx);
             // 屏列表只能由帧循环读（`NSScreen` 要在主线程）：抓哪几块、每块多大，
             // 都在这一下定下来交给任务，回信再按它配对（CHG-010 REQ-102"每块屏一扇遮罩"）。
             let screens = capture_screens(self);
