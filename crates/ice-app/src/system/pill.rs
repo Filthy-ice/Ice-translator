@@ -59,6 +59,21 @@ pub fn clear_attached(ctx: &egui::Context, pin_id: u64) {
     ctx.data_mut(|d| d.remove::<bool>(attached_key(pin_id)));
 }
 
+/// 这扇药丸**已被 follow 摆到过一次正确位置没有**。绑子窗之前必须先摆对——
+/// `addChildWindow:` 抓的是"绑那一刻子窗相对父窗的偏移"，若那时药丸还在默认位（左上角），
+/// 偏移就锁死成错的，之后系统一直按这个错偏移带它走（用户 2026-11-10：药丸跑到左上角、缝变 50px）。
+fn positioned_key(pin_id: u64) -> Id {
+    Id::NULL.with("ice-translator.pill.positioned").with(pin_id)
+}
+
+pub fn is_positioned(ctx: &egui::Context, pin_id: u64) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(positioned_key(pin_id)) == Some(true))
+}
+
+pub fn clear_positioned(ctx: &egui::Context, pin_id: u64) {
+    ctx.data_mut(|d| d.remove::<bool>(positioned_key(pin_id)));
+}
+
 /// 主窗每帧写一次、子回调每帧读一次的可用区缓存（避免在 deferred 回调里逐帧走 NSScreen）。
 fn screen_key() -> Id {
     Id::NULL.with("ice-translator.pill.screen")
@@ -126,6 +141,8 @@ pub fn follow(root: &egui::Context, pin_id: u64, outer_rect: Rect, screen: Rect)
         // 第一次：记下发出去之前的期望值，即使窗还没建也不留"没人发过"的空档
         root.data_mut(|d| d.insert_temp(pos_key(pin_id), now));
     }
+    // 摆过一次真位置了——这才允许绑子窗（绑之前必须摆对，否则锁死成默认位的错偏移）
+    root.data_mut(|d| d.insert_temp(positioned_key(pin_id), true));
 }
 
 /// 主窗每帧写一次可用区，供各贴图子回调读取（免逐帧走 NSScreen）。

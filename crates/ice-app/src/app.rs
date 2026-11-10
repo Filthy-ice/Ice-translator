@@ -762,6 +762,12 @@ impl IceApp {
             tracing::debug!(flat = ?flat, "标题栏平铺核对");
             self.native_flat_titlebar = flat;
         }
+        // 根窗按回不透明：CHG-011 的进程级透明会连主窗一起变半透明（事实 20），这里把主窗
+        // 单独设 opaque，药丸那扇独立窗不受影响。**放在底色那道"变了才发"的早退之前**——
+        // 底色没变时窗口也可能因换形态丢了 opaque，这一句每帧核对不能跟着底色一起被跳过。
+        if background::sync_opaque(frame) == Some(false) {
+            tracing::debug!("根窗 opaque 没设上（拿不到句柄/非主线程），下一帧再试");
+        }
         if flat == Some(false) {
             // 刚被换回来的那扇窗（换形态时 winit 换窗口，属性回到系统默认）或这一次没压成：
             // 底色那份缓存不作数，逼下一句重发一次。否则新窗口上是"平铺了、但底色还是默认"
@@ -1535,19 +1541,22 @@ impl IceApp {
             // 收起那一帧起不再 show ⇒ egui 删掉药丸窗，不需单独发关闭命令
             if pin.band_open {
                 crate::system::pill::show(ctx, pin.id, pin_band_line(&pin));
-                // 两扇窗都建出来之后，用原生 `addChildWindow:` 把药丸绑成贴图的子窗：
-                // 之后系统按固定偏移带着药丸一起走，拖动不再一卡一卡（治跟随的根本办法）。
-                // 药丸窗是 deferred 建的，头一两帧可能还没这扇窗 → 附不上，下一帧再试。
-                if !crate::system::pill::is_attached(ctx, pin.id) {
+                // 两扇窗都建出来、且药丸**已被摆到过一次正确位置**之后，才用原生 `addChildWindow:`
+                // 把药丸绑成贴图的子窗——绑那一刻抓的是相对偏移，没摆对就绑会把错偏移锁死。
+                // 之后系统按固定偏移带着药丸走，拖动零延迟（治跟随的根本办法）。
+                if !crate::system::pill::is_attached(ctx, pin.id)
+                    && crate::system::pill::is_positioned(ctx, pin.id)
+                {
                     if crate::system::attach::attach_pill_to_pin(pin.id) {
                         crate::system::pill::set_attached(ctx, pin.id);
                     }
                 }
             } else {
-                // 带子收起 = 药丸窗没了；先解绑（窗真被销毁时这句是空操作），再清掉"已绑"标记，
-                // 重开那扇新药丸时重新绑
+                // 带子收起 = 药丸窗没了；先解绑（窗真被销毁时这句是空操作），再清掉"已绑/已摆位"标记，
+                // 重开那扇新药丸时重新摆位、重新绑
                 crate::system::attach::detach_pill_from_pin(pin.id);
                 crate::system::pill::clear_attached(ctx, pin.id);
+                crate::system::pill::clear_positioned(ctx, pin.id);
             }
             for intent in crate::system::pin::take_intents(ctx, pin.id) {
                 self.apply_pin_intent(pin.id, intent, effects);
