@@ -1,0 +1,124 @@
+{
+  "baseline": null,
+  "design": [
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
+      "note": "界面与状态层无头：next_older 五档（空锚点=最新、有锚点=下一张、锚点是最早=None、锚点消失=回退最新、同分按路径）；browse_older 满 6 返回 None 且锚点不动、成功才置 history_browse 与锚点；close_pin 关到最后一张历史贴图才重置、F1/F3（pin_confirmed_capture/pin_last_capture）的图不带标记不计入、锚点那张关了但别的还开→不重置；ReopenLast 三档提示（空/最早/满）。pin_from_history 本身不改，遮罩确认那条路照旧"
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "note": "全量无回归：既有那 747 项（识别链、回填链、三段状态机与序号、面板协议、剪贴板字节校验、导出接缝、配置夹取、截图/贴图/老化/热键）一项不许回退。本包只在 F2 取图那一支加游标与标记，翻译链/落盘/老化/热键送达都不动"
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-003",
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "bash",
+        "-c",
+        "! grep -RnE 'browse_anchor|history_browse' crates/ice-core/src/config.rs"
+      ],
+      "note": "游标是运行态、不进配置：config.rs 里出现 browse_anchor 或 history_browse 就是把界面临时状态持久化了（REQ-003 那条与 hotkey_capture 同族的纪律），grep 命中即 failed。这是本包唯一新增的状态格，除它以外出现新配置字段即触发停止条件 2"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "tree",
+        "-p",
+        "ice-app",
+        "-e",
+        "normal"
+      ],
+      "note": "依赖图零增量：本包机制全是仓里现成的（sorted/push_pin/pins_new/egui viewport），不新增 crate。比对基线取开工那笔 58926a9 的输出逐行相同才算过；多一个名字即触发停止条件 2，先回来批准再继续"
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "scan"
+      ],
+      "note": "敏感信息基线扫描：本包不新增落盘面（历史目录与老化照 CHG-009 REQ-007/008），文案与日志不含文件名或 OCR 文本那条沿用既有断言；scan 通过是改口不漂隐私口径的下限，不能替代完整 DLP"
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "W-12.1：用户在机器前物理按 F2 翻一轮——① 第一次=最新、之后每按一次新钉一张更早的、累积在屏上（不替换）；② 翻到最早再按停住并出'没有更早的截图了'；③ 把这些历史贴图全关掉后再按，从最新重新开始；④ 中途用 F1 截一张/F3 补钉一张，那两张不算进'历史贴图'、关掉它们不触发重置。注入键不触发 Carbon 热键（CHG-009 事实 37），这一格只有他按得出，不许拿日志或无头用例冒充手感。做不出累积手感即停止条件 4，回来报，不自行退成替换或只开最新"
+    }
+  ]
+}

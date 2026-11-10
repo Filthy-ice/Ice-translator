@@ -1,0 +1,45 @@
+{
+  "baseline": null,
+  "tasks": [
+    {
+      "id": "T-001",
+      "title": "capture::next_older 纯函数（复用 sorted，锚点用路径）：空锚点=最新、有锚点=下一张更早、最早=None、锚点消失=回退最新",
+      "requirements": [
+        "REQ-001"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-002",
+      "title": "app.rs ReopenLast 三档分流：空历史/最早/钉满各有提示，最早与钉满都不推进游标",
+      "requirements": [
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-003",
+      "title": "Pin.history_browse 标记 + AppState.browse_anchor 运行态游标 + 只给 F2 的 browse_older 薄包装 + close_pin 关到最后一张才重置（F1/F3 不计入）",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-004",
+      "title": "docs/06 加 W-12.1 与无头 TC + docs/07 登记改口 CHG-009 REQ-006/REQ-008/Q-011 与落地次序（不动 CHG-009 任何文件）",
+      "requirements": [
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    }
+  ]
+}

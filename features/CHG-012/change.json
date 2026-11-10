@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "id": "CHG-012",
+  "title": "F2 依次累积翻历史（改口 CHG-009 REQ-006）",
+  "version": "v0.1",
+  "status": "SPEC_REVIEW",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-001",
+      "blocking": false,
+      "question": "F2 翻历史是「累积新钉一张」还是「替换当前那张」？",
+      "resolution": "累积新钉：第一次按=最新那张，之后每按一次新钉一张更早的，多张同时留在屏上，不替换、不去重（REQ-001）",
+      "source": "用户 2026-11-10 AskUserQuestion 答「每次新钉一张，累积」；本包 spec.md Q-001 表行"
+    },
+    {
+      "id": "Q-002",
+      "blocking": false,
+      "question": "翻到最早那张再按 F2 怎么办？",
+      "resolution": "停住、不推进游标、不钉重复的，提示「没有更早的截图了」（REQ-002）；空历史仍说「还没有截图记录」，钉满 6 张沿用既有上限提示且都不推进游标",
+      "source": "用户 2026-11-10 AskUserQuestion 答「停住并提示」；本包 spec.md Q-002 表行"
+    },
+    {
+      "id": "Q-003",
+      "blocking": false,
+      "question": "游标什么时候重置回「从最新开始」？",
+      "resolution": "所有 F2 翻出来的历史贴图都关闭之后才重置；F1 截图钉的、F3 补钉的图不带来源标记、不计入；锚点那张关了但别的历史贴图还开则不重置（REQ-003）。游标是运行态、不进 config、重启从最新开始",
+      "source": "用户 2026-11-10 AskUserQuestion 自定义答「所有的历史贴图都关闭后」；本包 spec.md Q-003 表行"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-10T02:56:09+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-11-10T03:05:37+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-11-10T03:05:37+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    }
+  ],
+  "approval": null,
+  "plan_hash": null
+}
