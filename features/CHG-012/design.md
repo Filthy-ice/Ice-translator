@@ -1,3 +1,7 @@
+Change: CHG-012
+Version: v0.1
+Spec-Hash: 505a688625fb1b9ec48ee2b9b7763460ab3ebbb0087fbd861caccabed758d24a
+
 # CHG-012 · Design
 
 ## 实现方案

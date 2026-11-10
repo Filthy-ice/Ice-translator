@@ -3,7 +3,7 @@
   "id": "CHG-012",
   "title": "F2 依次累积翻历史（改口 CHG-009 REQ-006）",
   "version": "v0.1",
-  "status": "SPEC_REVIEW",
+  "status": "DESIGNED",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -46,8 +46,51 @@
       "at": "2026-11-10T03:05:37+00:00",
       "action": "transition",
       "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-10T03:27:16+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "505a688625fb1b9ec48ee2b9b7763460ab3ebbb0087fbd861caccabed758d24a",
+        "version": "v0.1",
+        "by": "你",
+        "reference": "2026-11-10 原话：F2是依次打开之前的截图，不是单纯的一直打开上一次的截图",
+        "at": "2026-11-10T03:27:16+00:00",
+        "snapshot": "approvals/v0.1-505a688625fb1b9ec48ee2b9b7763460ab3ebbb0087fbd861caccabed758d24a.md",
+        "scope": "local-delivery",
+        "context_hash": "d9cef081940122c7a333c71037b8f333dffd4a23ce800b10ff221a8168af282b",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-10T03:32:22+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-012",
+        "version": "v0.1",
+        "spec_hash": "505a688625fb1b9ec48ee2b9b7763460ab3ebbb0087fbd861caccabed758d24a"
+      }
+    },
+    {
+      "at": "2026-11-10T03:32:23+00:00",
+      "action": "seal-plan",
+      "detail": "138e9f390bf09690687afebc50126a87373d705c21a293d28138af04fd00898a"
     }
   ],
-  "approval": null,
-  "plan_hash": null
+  "approval": {
+    "hash": "505a688625fb1b9ec48ee2b9b7763460ab3ebbb0087fbd861caccabed758d24a",
+    "version": "v0.1",
+    "by": "你",
+    "reference": "2026-11-10 原话：F2是依次打开之前的截图，不是单纯的一直打开上一次的截图",
+    "at": "2026-11-10T03:27:16+00:00",
+    "snapshot": "approvals/v0.1-505a688625fb1b9ec48ee2b9b7763460ab3ebbb0087fbd861caccabed758d24a.md",
+    "scope": "local-delivery",
+    "context_hash": "d9cef081940122c7a333c71037b8f333dffd4a23ce800b10ff221a8168af282b",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "138e9f390bf09690687afebc50126a87373d705c21a293d28138af04fd00898a"
 }

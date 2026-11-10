@@ -1,6 +1,6 @@
 Change: CHG-012
 Version: v0.1
-Spec-Hash: UNAPPROVED
+Spec-Hash: 505a688625fb1b9ec48ee2b9b7763460ab3ebbb0087fbd861caccabed758d24a
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [ ] T-001 capture::next_older 纯函数（复用 sorted，锚点用路径）：空锚点=最新、有锚点=下一张更早、最早=None、锚点消失=回退最新 | ice-translator | REQ-001
