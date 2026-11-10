@@ -4,10 +4,10 @@
 
 | 落点 | 职责 | 为什么在这儿 |
 |---|---|---|
-| `crates/ice-app/src/system/bar.rs`（新建） | **两条药丸共用的那一件**：缝 `GAP`、翻上下 `BarSide`/`side()`、药丸矩形 `rect()`、按内容定宽 `width_for(n)`、一颗线稿按钮 `glyph_button()`（`Glyph` = 对勾/复制/保存/翻译）、圆角底 + painter 淡阴影 | REQ-001 要求"缝与翻转判据与遮罩那条同一套"。现在 `GAP`/`bar_side`/`bar_rect`/`icon_button` 全在 `selection.rs`（`:387-413`、`:1066`，后者还是私有），贴图这边再写一份就是两份会分岔的几何 |
+| `crates/ice-app/src/system/bar.rs`（新建） | **两条药丸共用的几何 + 贴图自己的文字按钮**：缝 `GAP`、翻上下 `BarSide`/`side()`、药丸矩形 `rect()`、按内容定宽 `width_for(n)`（文字槽）、一颗文字按钮 `text_button()`（平时只画字；悬停垫淡底 + 上浮 + 淡影，`HOVER_TINT`/`HOVER_LIFT`/阴影各一处常量）、圆角底 + painter 淡阴影 | REQ-001 要求"缝与翻转判据与遮罩那条同一套"。现在 `GAP`/`bar_side`/`bar_rect` 全在 `selection.rs`（`:387-413`），贴图这边再写一份就是两份会分岔的几何。**线稿 `icon_button` 不搬**——改判后贴图消费文字按钮，线稿只剩遮罩一个消费者（REQ-002 改口记录） |
 | `crates/ice-app/src/system/pill.rs`（新建） | **贴图那一扇药丸窗**：视口号构造、跟随（位置命令只此一处）、收放（尺寸命令只此一处）、esc 转交所属贴图、首用提示那一块的绘制与勾选 | 事实 18：`pin.rs:1024-1028` 的形状核查明令 `pin.rs` 里 `OuterPosition` 出现 0 次。药丸窗要被摆位置，命令只能落在另一个模块 |
-| `crates/ice-app/src/system/pin.rs`（改） | 贴图窗**缩回图片那一块**（不再 `+BAND_H`）；`band_buttons` → `pill_buttons`（仍遍历 `BAND_ACTIONS` 那一张表）；动作表加 `glyph()` 映射；回调里读自己的 `outer_rect` 后调 `pill::follow` | 动作清单与文案仍只有一处（`both_the_band_and_the_menu_iterate_the_one_table` 那条形状核查继续成立，`"翻译"` 仍只出现 1 次） |
-| `crates/ice-app/src/system/selection.rs`（改） | 遮罩那条改成调用 `bar::` 的共用件；`BAR_W/BAR_H/BAR_ICONS` 与 `Area` 那一套**一字不动** | 抽公共不改行为：CHG-010 V-002 的断言语义必须原样绿（见「影响与回滚」的边界） |
+| `crates/ice-app/src/system/pin.rs`（改） | 贴图窗**缩回图片那一块**（不再 `+BAND_H`）；`band_buttons` → `pill_buttons`（仍遍历 `BAND_ACTIONS` 那一张表），绘制改 `bar::text_button`；回调里读自己的 `outer_rect` 后调 `pill::follow` | 动作清单与文案仍只有一处（`both_the_band_and_the_menu_iterate_the_one_table` 那条形状核查继续成立，`"翻译"` 仍只出现 1 次） |
+| `crates/ice-app/src/system/selection.rs`（改） | 遮罩那条的**几何**改调 `bar::`（`GAP`/`side`/`rect`）；`BAR_W/BAR_H/BAR_ICONS`、`Area` 那一套与**线稿 `icon_button` 一字不动** | 抽公共不改行为：CHG-010 V-002 的断言语义必须原样绿；线稿是 CHG-010 已批准观感，本包不消费也不改它（见「影响与回滚」的边界） |
 | `crates/ice-app/src/main.rs`（改一格） | `NativeOptions::viewport` 加 `.with_transparent(true)` | 事实 16：wgpu 的 `support_transparent_backbuffer` **全进程一个 `Painter` 只从这一份读一次**，不开它药丸窗的 surface 退回 `Auto`（不透明）。**事实 20：这一格同时就是根窗自己那一格**，做不到"只给药丸窗开"——所以主窗的实心靠"每帧铺满不透明底色"保证，落地逐点复核（T-001 第五档已量过探针那一侧） |
 | `crates/ice-app/src/app.rs`（改两格） | ① 覆写 `App::clear_color` 返回全透明 `[0.0; 4]`；② `draw_pins` 每帧为每张活着的贴图各调一次 `pill::show`（与 `pin::show` 同一条纪律：不调那一帧起窗就被 egui 删掉）；`pin_band_line` 从"带子里那一行"改成"悬停里那一句" | 事实 19：默认清屏色 `(12,12,12,180)` 带七成不透明且**每扇窗都用它**，不覆写则缝里是一层暗纱。②那一格：`show_viewport_deferred` 必须每 pass 调（`pin.rs:442-446`）。覆写后主窗的实心只能靠铺满底色保证，**这一格由 T-001 第五档量，不许假设**（停止条件 8） |
 | `crates/ice-app/src/state.rs`（改） | 首用提示那一格状态（本次启动弹没弹、勾没勾）+ 两条意图（确认提示 / 勾不再提示）；`Pin::band_open` 语义不变 | 提示是状态不是绘制；`band_open` 那两条既有断言（`state.rs:3351-3353`）继续成立 |
@@ -17,13 +17,13 @@
 
 ## 关键决定
 
-1. **走 (b) 另起一扇药丸窗，不走 (a) 同一扇窗改透明。** 事实 6：egui 0.37 没有逐像素命中，`mouse_passthrough` 是整窗开关。(a) 会在药丸两侧留下 `(图宽−药丸宽)/2 × 药丸高` 两块"看得见背后应用却点不着"的隐形陷阱（512 宽的图配 110 宽的药丸 = 每侧 201×34），那是事实 3 已经实测过的陷阱的放大版。(b) 把死区压到**药丸外接框之外那一圈阴影留白 + 四个圆角**，量级见 REQ-001。(c) 画成桌面色直接排除（REQ-007 明令不许假装浮空）。
+1. **走 (b) 另起一扇药丸窗，不走 (a) 同一扇窗改透明。** 事实 6：egui 0.37 没有逐像素命中，`mouse_passthrough` 是整窗开关。(a) 会在药丸两侧留下 `(图宽−药丸宽)/2 × 药丸高` 两块"看得见背后应用却点不着"的隐形陷阱（512 宽的图配 164 宽的药丸 = 每侧 174×34），那是事实 3 已经实测过的陷阱的放大版。(b) 把死区压到**药丸外接框之外那一圈阴影留白 + 四个圆角**，量级见 REQ-001。(c) 画成桌面色直接排除（REQ-007 明令不许假装浮空）。
 2. **跟随不绕主窗。** `Context::send_viewport_cmd_to(id, cmd)`（`egui-0.37.0/src/context.rs:4569`，文档明写"This lets you affect another viewport"）让**贴图窗自己那一帧**读到 `outer_rect` 后直接把位置推给药丸窗。若走"子窗算 → 主窗存 → 下一帧传回去"那条环，就是 CHG-010 那一轮"左屏拖右屏跳框 + 一闪一闪"的同一个病（[[macos-carbon-hotkey-and-eframe-wake]]）。而且 `show_viewport_deferred` 的回调"可能在父窗睡着时被子窗自己的动画叫醒多次"（`context.rs:4620-4623`），所以从子窗直推反而是最跟手的一条。
 3. **位置命令只在真变了那一刻发。** `send_viewport_cmd_to` 内部会 `request_repaint_of(id)`（`context.rs:4570`），每帧发就是每帧把药丸窗叫醒——D-31~D-35 那一族（一次性原生命令改成每帧做之前必须重量代价）的 egui 版。照 `inner_size_command`（`pin.rs:192-198`）同一个形状：上一份命令值相等或差小于 0.5 点就不发。**这份缓存是"上次发出去的值"，不是第二份位置权威**——位置仍然只从 `outer_rect` 现读，与 `size_key` 已有的写法同构。
 4. **药丸窗建出来不抢焦点**：`with_active(false)`（事实 17，`viewport.rs:445-457`）。抢焦点会把用户正在打字的那扇应用挤掉，且每钉一张抢一次。点了药丸上的按钮之后焦点自然落到药丸窗，所以 esc 必须能从那扇窗转交回所属贴图（REQ-004）。
 5. **阴影用 painter 画，不开 `with_has_shadow`**：`viewport.rs:427-428` 的 macOS 注记明写透明窗要配 `has_shadow(false)` 否则有 ghosting 残影；且整窗窗影会把图片本体也套一圈（Q-002）。
 6. **首用提示画在药丸窗里，不另起第三扇窗**（Q-004）：药丸窗本来就是透明可长高的那一扇，提示是它下方多出来的一块；它随药丸一起跟随、一起关闭，主窗收在托盘里也照样看得见。
-7. **翻译那颗是双气泡线稿**，比例语言照 `system/tray.rs:216-222` 那两只气泡（前一只左上、后一只右下、重叠处让位），用 painter 描边而不是栅格化位图。不用「文/A」字符字形——D-5 那一族（字符依赖字体、出过方块）。
+7. **贴图药丸三颗是文字按钮，不是线稿**（用户 2026-11-10 改口，REQ-002/REQ-009）：平时只画「翻译 / 复制 / 保存」六个字本身，无底无框；悬停整颗垫一层淡圆角底 + 上浮 1pt + 一道淡影（Q-005 默认）。线稿 `icon_button` 留在 `selection.rs` 给遮罩用，**不抽共用、不加 `Glyph::Translate`**——改判后贴图这边没有线稿消费者，v0.1 那条「双气泡翻译线稿」取消。字用 egui 文本绘制（不是字符字形当图标），不存在 D-5 那种"拿字符当图标出方块"的问题。
 8. **透明是三格开关，而且第一格与主窗共用**（事实 16/19/20）：① 进程级 `NativeOptions::viewport.transparent`（一个 `Painter` 只读一次，管所有窗的合成模式）、② 那一扇窗的 `with_transparent(true)`（管 NSWindow 的不透明属性）、③ `App::clear_color` 全透明（管没画到的地方被清成什么）。少任何一格，"浮空"就变成实底或暗纱。**代价是①和③都是进程级的**：一改就改了主窗与贴图窗，所以第五档取证与停止条件 8 是本包的闸门，不是可选项。这一格是本包最容易写出"看着改了其实没改"的地方，所以三格各写各的落点、各给各的读数，不许合并成一句"打开透明"。
 
 ## 取证计划（T-001，**2026-11-09 晚已跑完六轮，读数已抄回 spec.md 事实表**）
@@ -45,7 +45,7 @@
 
 - **无头（本地可跑，必需）**：几何纯函数、意图矩阵、状态迁移、配置往返、形状核查。`ice-app` 是纯二进制 crate，命令一律 `cargo test -p ice-app <过滤词>`，**不许加 `--lib`**。涉及 `show_viewport_deferred` 的用例必须包在真实 pass 里（`ctx.run_ui(RawInput::default(), |_| …).drop_without_applying_deltas()`），否则 0.37 会 inline 跑回调而字体还没初始化，症状是"No fonts available until first call to Context::run()"。
 - **静态（必需）**：平台判定不许散进 `views`（延续 CHG-010 V-004）；层级写入仍只一个出处（延续 V-007）；形状核查三条（拖动一条路 / 位置命令只一处 / 清单只一份）。
-- **真机（只有他能定，不计开发工时）**：W-7.1 浮空观感与圆角、W-7.2 五件既有行为 + 跟随四件事、W-7.3 首用提示的位置与观感。
+- **真机（只有他能定，不计开发工时）**：W-7.1 浮空观感与圆角、W-7.2 五件既有行为 + 跟随四件事、W-7.3 首用提示的位置与观感、W-7.4 悬停"变淡浮起"淡不淡/浮得自不自然。
 - **本机给不出**：Linux/Windows 的透明那一档（NFR-7 只承诺 S 档，[[cross-platform-ubuntu-gaps]]：Wayland 下 `set_window_level` 是空函数）；HiDPI 2×。两格都登记为"未证"，不许写成"三平台一致"。
 
 ## REQ-001 实现与验证
@@ -54,23 +54,23 @@
 
 **几何只有一处**：`bar::GAP = 3.0`（从 `selection.rs:399` 搬过来，**值不变**，注释里他那句原话跟着搬）。`bar::rect` 就是现在 `selection.rs:403-413` 那一份（中线对齐、Below = `max.y + GAP`、Above = `min.y - GAP - bar.y`），签名里的 `sel` 改叫 `anchor`，语义一字不改。`bar::side` 把 `field: &Field` 换成 `field: Rect`（它本来只读 `field.bounds.max.y`，`selection.rs:387-394`），这样贴图这边不必为了一个用不上的 `px` 字段去造一份假的 `Field`。
 
-**宽度按内容定**：`bar::width_for(n) = n * 26 + (n - 1) * 6 + 2 * 10`（26 是现在 `icon_button` 的按钮边长，`selection.rs:1067`）。三颗 = 110 点。**遮罩那条的 `BAR_W = 300` 不动**——它还带一句尺寸读数，那是 CHG-010 已批准的样子。编译期断言：`width_for(3) < 300`（防止有人把共用件改成"跟锚点宽走"）。
+**宽度按内容定**：改判后三颗是**文字按钮**，槽宽 `bar::TEXT_BTN_W = 44`（两字标签 + 左右留白），`bar::width_for(n) = n * TEXT_BTN_W + (n - 1) * 6 + 2 * 10`。三颗 = 164 点。**遮罩那条的 `BAR_W = 300` 不动**——它还带一句尺寸读数与三颗线稿，那是 CHG-010 已批准的样子。编译期断言：`width_for(3) < 300`（防止有人把共用件改成"跟锚点宽走"）。
 
-**死区量级（要写进 docs/05 那条硬规矩）**：药丸窗外接框 = 药丸矩形四周各留 `SHADOW_PAD = 6` 点给 painter 阴影。残留吃命中的面积 = 那一圈留白 + 四个圆角外的小角：`2×(110+34)×6 + 4×6² ≈ 1872` 点²，对比 (a) 的 `2×201×34 = 13668` 点²，小一个量级，且这一圈紧贴着一个看得见的物体（读起来是"药丸的影"，不是"背后那扇应用"）。T-001 第四档量它到底吃不吃点击；若吃到用户能撞见，命中停止条件 2。
+**死区量级（要写进 docs/05 那条硬规矩）**：药丸窗外接框 = 药丸矩形四周各留 `SHADOW_PAD = 6` 点给 painter 阴影。残留吃命中的面积 = 那一圈留白 + 四个圆角外的小角：`2×(164+34)×6 + 4×6² ≈ 2520` 点²，对比 (a) 的 `2×174×34 = 11832` 点²，小一个量级，且这一圈紧贴着一个看得见的物体（读起来是"药丸的影"，不是"背后那扇应用"）。T-001 第四档量它到底吃不吃点击；若吃到用户能撞见，命中停止条件 2。
 
 **验证**：`cargo test -p ice-app bar`（缝=3、两侧矩形与锚点不相交、宽度不随锚点宽变、放不下翻上方且翻上去也不相交、锚点很小药丸探出两侧时仍以中线对齐）；`cargo test -p ice-app pill`（外接框包含药丸与提示、留白=6、位置命令只在真变时发一次、0.4 点抖动不发）；W-7.1 定观感。
 
 ## REQ-002 实现与验证
 
-**三颗是哪三颗**：`pin::BAND_ACTIONS`（`pin.rs:44`，Translate/CopyImage/SaveImage）保持不动，只加一个 `PinAction::glyph()` 映射到 `bar::Glyph`。`pill_buttons`（原 `band_buttons`）遍历的还是这张表，绘制改成 `bar::glyph_button`，返回的 `Response.clicked()` 推 `PinIntent::from_action`——**通道一条没新开**（翻译走既有识别/翻译/回填、复制走 `clipboard::write_image`、保存走 `panel::request_save`）。
+**三颗是哪三颗**：`pin::BAND_ACTIONS`（`pin.rs:44`，Translate/CopyImage/SaveImage）保持不动。`pill_buttons`（原 `band_buttons`）遍历的还是这张表，绘制改成 `bar::text_button`（标签就是 `action.label()` 那两个字），返回的 `Response.clicked()` 推 `PinIntent::from_action`——**通道一条没新开**（翻译走既有识别/翻译/回填、复制走 `clipboard::write_image`、保存走 `panel::request_save`）。**不加 `glyph()` 映射**：改判后贴图消费文字按钮，不消费线稿。
 
-**进度挪到悬停**：`app.rs:2085` 的 `pin_band_line` 继续算那一句，但不再占药丸宽度——传给 `pill::show` 后挂在药丸整体的 `on_hover_text` 上；三颗各自的悬停仍由 `bar::glyph_button` 给（现在 `selection.rs:1146-1151` 那三句）。文字层那句手势说明（`TEXT_LAYER_TIP`，`pin.rs:634`）留在图片本体的悬停里，不进药丸。
+**进度挪到悬停**：`app.rs:2085` 的 `pin_band_line` 继续算那一句，但不再占药丸宽度——传给 `pill::show` 后挂在药丸整体的 `on_hover_text` 上；三颗各自的悬停仍由 `bar::text_button` 给（现在 `selection.rs:1146-1151` 那三句的文案搬过来）。文字层那句手势说明（`TEXT_LAYER_TIP`，`pin.rs:634`）留在图片本体的悬停里，不进药丸。
 
 **关闭只走 esc 与右键**：药丸里没有第四颗；`image_menu`（`pin.rs:289`）仍遍历完整的 `ACTIONS` 四项。项数由既有断言钉住（`exactly_four_actions_shared_by_the_band_and_the_menu`，`pin.rs:744`）。
 
-**线稿共用一处**：`bar::glyph_button` 就是 `selection.rs:1066-1152` 那个函数体搬过来（描边 1.6、悬停变白、`shrink(4.0)`），加 `Glyph::Translate` 一支：两只圆角矩形描边、后一只在前一只右下方、重叠那段不画（比例照 `tray.rs:216-222`）。`selection.rs` 改成调它，`BarIcon` 与 `Glyph` 的对应只在一处。
+**文字按钮与悬停浮起（REQ-009）**：`bar::text_button` 平时**只画字**（不画底、不画框、不画边）；`response.hovered()` 时垫一层 `HOVER_TINT`（白 alpha 26）圆角底、把绘制矩形上移 `HOVER_LIFT`（1pt）、再画一道与 Q-002 同口径的 painter 淡影。三个常量各只一处。**命中矩形用未上浮的原槽位**（`ui.interact` 拿原 rect，上浮只作用于画），否则鼠标追着一颗会跳的按钮点。`selection.rs` 的线稿 `icon_button` **不动**（CHG-010 已批准观感，且不再有第二个消费者）。
 
-**验证**：`cargo test -p ice-app pin`（三颗是哪三颗 + 不含关闭 + 右键四项 + 每颗给哪条意图 + `"翻译"` 仍只出现 1 次）；`cargo test -p ice-app bar`（`Glyph` 四颗、两条药丸都从共用件读、形状核查"线稿画法只有一处"）；图标观感归 W-7.1。
+**验证**：`cargo test -p ice-app pin`（三颗是哪三颗 + 不含关闭 + 右键四项 + 每颗给哪条意图 + `"翻译"` 仍只出现 1 次）；`cargo test -p ice-app bar`（文字槽宽 `width_for(3)=164`、平时不画底/框、悬停读那三个常量、命中矩形与 `HOVER_LIFT` 无关）；字与浮起观感归 W-7.1 / W-7.4。
 
 ## REQ-003 实现与验证
 
@@ -136,11 +136,23 @@
 
 **旧契约就地改口**：CHG-009 `spec.md` 的 `REQ-003` 那句「SHALL NOT 依赖"窗口透明 + 按钮浮在透明区"」与 `design.md` 开放点 1 **不改写当年那行**，在各自行下加一条带日期的补正（`2026-11-09 补正：CHG-011 REQ-001 起改为浮空药丸，依据是用户当日原话与事实 16/17/19 的依赖源码读数；当年搁置的理由（"egui 的 viewport 透明本仓没用过"，且那份旧文把后端写成了 glow，本仓实际跑 wgpu）已由 T-001 闭合/或已如实退回`）。CHG-009 已批准快照不动——补正写在 spec 正文的沿革段，若 `./sdd validate` 因批准哈希漂移报错，则走 `deviation` 登记而不是改快照。
 
-**回写清单**：`docs/02`（模块表加 `bar.rs`/`pill.rs` 两格、`pin.rs` 那一格改口）、`docs/03`（贴图窗版式：3pt 缝、药丸宽度按内容定、首用提示的样子与文案）、`docs/05`（§6 硬规矩加一条可核查的："透明窗里没画东西的地方仍会吃命中，所以浮空物件的外接框只许比它本体大一个阴影留白，量级要写出来"）、`docs/06`（新 TC 与 W-7.1~W-7.3 走查）、`docs/07`（变更登记）、`docs/traceability.md`。`docs/01` 的 NFR-3 不动。
+**回写清单**：`docs/02`（模块表加 `bar.rs`/`pill.rs` 两格、`pin.rs` 那一格改口）、`docs/03`（贴图窗版式：3pt 缝、药丸宽度按内容定、首用提示的样子与文案）、`docs/05`（§6 硬规矩加一条可核查的："透明窗里没画东西的地方仍会吃命中，所以浮空物件的外接框只许比它本体大一个阴影留白，量级要写出来"）、`docs/06`（新 TC 与 W-7.1~W-7.4 走查）、`docs/07`（变更登记）、`docs/traceability.md`。`docs/01` 的 NFR-3 不动。
 
 **留档次序（这一格会咬人）**：`docs/` 在树指纹内（`tools/sdd.py:164-188` 的 `fingerprint`，`LEDGER` 只排除 `features/`、`quick/`、`incidents/`、`project/STATE.md`、`.sdd/`），所以**改文档会让已录证据过期**。次序必须是：文档定稿 → 走查登记 → `./sdd check`/`record` 一次性做完 → 之后不再动任何树内文件 → commit（commit 与录证据都不改 `tree_hash`，安全）。
 
 **验证**：`./sdd validate --offline`；追溯矩阵四边覆盖（`plan_valid`，`sdd.py:195-238`：Requirement ↔ Design ↔ Task ↔ 必需 Verification）；`./sdd check` 逐条录。
+
+## REQ-009 实现与验证
+
+**三个常量各一处**（`bar.rs`）：`HOVER_TINT = Color32::from_white_alpha(26)`（约一成白叠在药丸底色上）、`HOVER_LIFT = 1.0`（点）、阴影复用 Q-002 本体那道 painter 影的同一 helper（不新开第二套影）。Q-005 给的就是这三个默认值，改判走 `revise`。
+
+**画与命中分离**：`text_button` 先 `ui.interact(原槽位rect, id, Sense::click())` 拿响应（命中按**未上浮**的原槽位算），再决定画在哪：悬停时把绘制矩形 `translate(Vec2::new(0.0, -HOVER_LIFT))`、垫 `HOVER_TINT` 圆角底、画淡影、字也跟着上移；不悬停时只画字。**上浮只改画不改命中**，这是一条断言不是口头约定（否则鼠标追着一颗会跳的按钮点）。
+
+**移开复原**：不悬停那一支不画底/影/位移，天然无残迹（没有需要"擦掉"的状态）。禁用态那颗不进悬停支（`response.enabled()` 为假时只画灰字）。
+
+**只作用于贴图药丸**：`text_button` 只被 `pill_buttons` 调；`selection.rs` 的线稿悬停（ink→白）一字不动。要两条同款得走 CHG-010 `revise`，不在本包顺手改。
+
+**验证**：`cargo test -p ice-app bar`（平时那支不产生底/框的画调用、悬停支读 `HOVER_TINT`/`HOVER_LIFT`/影 helper 各一次、`interact` 用的 rect 与 `HOVER_LIFT` 取值无关——把 lift 改成 0 与改成 5 命中矩形不变）；观感归 W-7.4。
 
 ## 影响与回滚
 
@@ -151,7 +163,7 @@
 **允许改的既有断言（边界写死，越界即命中停止条件 6/9）**：只有**编码了被本包改口的那条契约**的那几条可以改，且改的是"契约换了"不是"迁就实现"：
 - `pin.rs:686` `the_open_band_sits_below_the_image_and_grows_the_window`、`:700` `a_closed_band_shrinks_the_window_itself_and_leaves_no_dead_strip`、`:715`/`:733`/`:778` 里用到 `BAND_H` 的那几处断言 ⇒ 改成编码新契约（窗口恒等于图片那块、药丸在另一扇窗、缝=3、两侧不相交）。
 - `pin.rs:1034` `both_the_band_and_the_menu_iterate_the_one_table` 里的函数名 `band_buttons` ⇒ 跟着改名成 `pill_buttons`，**"只遍历一张表"与"`翻译` 只出现 1 次"两条语义不动**。
-- `selection.rs` 里 `bar_side`/`bar_rect` 的调用点 ⇒ 只改参数形式（`&Field` → `Rect`），**断言语义一字不动**，CHG-010 V-002 必须原样绿。
+- `selection.rs` 里 `bar_side`/`bar_rect` 的调用点 ⇒ 只改参数形式（`&Field` → `Rect`），**断言语义一字不动**，CHG-010 V-002 必须原样绿；**线稿 `icon_button`/`BarIcon` 整个不动**（改判后贴图不消费线稿，没有搬移它的理由）。
 - 其余 **740 项里凡与本包无关的断言一律不许动**（CHG-010 V-001 那条注记的口径）。实施前先录一次全量数与失败数，实施后逐条比对，差集只许落在上面这三类里。
 
 **回滚条件**：停止条件 1/2/3/7/8 任一命中，或真机走查报 D-29 那一族回退。

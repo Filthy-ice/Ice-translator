@@ -15,10 +15,11 @@
     },
     {
       "id": "T-002",
-      "title": "新建 system/bar.rs：把 selection.rs 里那两条纯几何（bar_side/bar_rect）与 GAP=3.0 搬过来共用，bar_side 的 field 参数从 &Field 换成 Rect（它本来只读 bounds.max.y），加 width_for(n) 按内容定宽与编译期断言 width_for(3) < BAR_W；把私有的 icon_button 提成 glyph_button 并加 Glyph::Translate 一支（双气泡线稿，比例照 tray.rs:216-222，不动 tray.rs 的栅格化）。selection.rs 改成调共用件，BAR_W/BAR_H/BAR_ICONS 与 Area 那一套一字不动",
+      "title": "新建 system/bar.rs：把 selection.rs 里那两条纯几何（bar_side/bar_rect）与 GAP=3.0 搬过来共用，bar_side 的 field 参数从 &Field 换成 Rect（它本来只读 bounds.max.y），加 width_for(n) 按文字槽定宽（TEXT_BTN_W=44，三颗=164）与编译期断言 width_for(3) < BAR_W；加贴图自己的 text_button（平时只画字、无底无框；悬停垫 HOVER_TINT 淡圆角底 + 上浮 HOVER_LIFT + 一道 painter 淡影，三常量各一处；命中矩形用未上浮的原槽位）。**线稿 icon_button 不搬**——改判后贴图消费文字按钮，线稿只剩遮罩一个消费者，留在 selection.rs 不动。selection.rs 的几何改调共用件，BAR_W/BAR_H/BAR_ICONS 与 Area 那一套一字不动",
       "requirements": [
         "REQ-001",
-        "REQ-002"
+        "REQ-002",
+        "REQ-009"
       ],
       "repo": "ice-translator",
       "status": "todo",
@@ -41,11 +42,12 @@
     },
     {
       "id": "T-004",
-      "title": "改 system/pin.rs：pin_layout 去掉 +BAND_H 那一支（窗口恒等于图片那块）并去掉 band_rect（药丸几何整体搬进 bar/pill），像素到点仍只除一次；band_buttons 改名 pill_buttons 且仍遍历 BAND_ACTIONS 那一张表、绘制改调 bar::glyph_button；PinAction 加 glyph() 映射；子窗回调里读自己的 outer_rect 后调 pill::follow；pin.rs 里 OuterPosition 仍 0 次、StartDrag 仍恰好 1 次、movable_by_background 仍 0 次（原断言一字不删）；顺手修 image_area 那段与实际代码相反的注释 rot（它还写着 movable_by_background(true) 是选中的路）",
+      "title": "改 system/pin.rs：pin_layout 去掉 +BAND_H 那一支（窗口恒等于图片那块）并去掉 band_rect（药丸几何整体搬进 bar/pill），像素到点仍只除一次；band_buttons 改名 pill_buttons 且仍遍历 BAND_ACTIONS 那一张表、绘制改调 bar::text_button（平时只有字、悬停变淡浮起，REQ-009）；**不加 glyph() 映射**（改判后不消费线稿）；子窗回调里读自己的 outer_rect 后调 pill::follow；pin.rs 里 OuterPosition 仍 0 次、StartDrag 仍恰好 1 次、movable_by_background 仍 0 次（原断言一字不删）；顺手修 image_area 那段与实际代码相反的注释 rot（它还写着 movable_by_background(true) 是选中的路）",
       "requirements": [
         "REQ-002",
         "REQ-003",
-        "REQ-004"
+        "REQ-004",
+        "REQ-009"
       ],
       "repo": "ice-translator",
       "status": "todo",
@@ -99,14 +101,14 @@
     },
     {
       "id": "T-009",
-      "title": "文档回写 + 旧契约改口 + 证据一次性留档：CHG-009 REQ-003 那句 SHALL NOT 与 design.md 开放点 1 不改写当年那行、各加一条带日期的补正并登记沿革（批准快照不动，若 validate 报哈希漂移走 deviation 而不是改快照）；回写 docs/02（bar.rs/pill.rs 两格 + pin.rs 改口）、docs/03（3pt 缝、药丸宽度按内容定、首用提示的样子与文案）、docs/05（§6 加一条可核查的硬规矩：透明窗里没画东西的地方仍吃命中，所以浮空物件的外接框只许比本体大一个阴影留白，量级要写出来）、docs/06（新 TC 与 W-7.1~W-7.3）、docs/07、docs/traceability.md；docs/01 的 NFR-3 不动。次序必须是文档定稿 → 走查登记 → check/record 一次性做完 → 之后不再动树内文件 → commit",
+      "title": "文档回写 + 旧契约改口 + 证据一次性留档：CHG-009 REQ-003 那句 SHALL NOT 与 design.md 开放点 1 不改写当年那行、各加一条带日期的补正并登记沿革（批准快照不动，若 validate 报哈希漂移走 deviation 而不是改快照）；回写 docs/02（bar.rs/pill.rs 两格 + pin.rs 改口）、docs/03（3pt 缝、药丸宽度按内容定、首用提示的样子与文案）、docs/05（§6 加一条可核查的硬规矩：透明窗里没画东西的地方仍吃命中，所以浮空物件的外接框只许比本体大一个阴影留白，量级要写出来）、docs/06（新 TC 与 W-7.1~W-7.4）、docs/07、docs/traceability.md；docs/01 的 NFR-3 不动。次序必须是文档定稿 → 走查登记 → check/record 一次性做完 → 之后不再动树内文件 → commit",
       "requirements": [
         "REQ-008"
       ],
       "repo": "ice-translator",
       "status": "todo",
       "code_refs": [],
-      "verify_note": "docs/ 在树指纹内（sdd.py:164-188，LEDGER 只排除 features/quick/incidents/STATE.md/.sdd/），改文档会让已录证据过期；commit 与录证据都不改 tree_hash，所以留档必须在文档定稿之后一次性做完。W-7.1~W-7.3 只有用户的眼睛和手能定，不计开发工时，也不许替他写成已验。"
+      "verify_note": "docs/ 在树指纹内（sdd.py:164-188，LEDGER 只排除 features/quick/incidents/STATE.md/.sdd/），改文档会让已录证据过期；commit 与录证据都不改 tree_hash，所以留档必须在文档定稿之后一次性做完。W-7.1~W-7.4 只有用户的眼睛和手能定，不计开发工时，也不许替他写成已验。"
     }
   ]
 }
