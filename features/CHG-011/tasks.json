@@ -26,8 +26,11 @@
         "REQ-009"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": [],
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/bar.rs",
+        "crates/ice-app/src/system/selection.rs"
+      ],
       "verify_note": "抽公共不改行为：CHG-010 V-002 的断言语义必须原样绿，只许改调用点的参数形式。若发现任何一条断言的含义需要改口，那就是命中停止条件 6（动另一包的已批准行为），停下来走 revise，不在本包里顺手改。"
     },
     {

@@ -9,6 +9,7 @@
 //! 3. **点 → 物理像素的换算只许存在一处**（[`Field::to_pixels`]）。CHG-009 事实 22 已经演示过
 //!    两处各除一次或都忘了除的现场：贴图大一倍、文字层整体错位。
 
+use crate::system::bar::{self, GAP};
 use crate::system::wake_root;
 use egui::{Id, Pos2, Rect, Vec2, pos2};
 use ice_core::document::PixelRect;
@@ -378,40 +379,9 @@ fn resize(rect: Rect, index: u8, to: Pos2) -> Rect {
     Rect::from_min_max(pos2(x0, y0), pos2(x1, y1))
 }
 
-/// 动作条放哪：**优先选区下方，放不下翻到上方**（REQ-103 的那条断言）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BarSide {
-    Below,
-    Above,
-}
-
-pub fn bar_side(sel: egui::Rect, bar: Vec2, field: &Field) -> BarSide {
-    let below = sel.max.y + GAP + bar.y;
-    if below <= field.bounds.max.y {
-        BarSide::Below
-    } else {
-        BarSide::Above
-    }
-}
-
-/// 动作条与选区之间的缝（点）。**3 是他给的数**（2026-11-09 晚原话「距离贴图上/在下
-/// 大约 3px 的圆角的单独操作栏」，参照 某截图工具 / 某聊天软件截图）：贴着但不压住，一眼看得出
-/// 这条药丸是给这块选区用的。改这个数不动任何判定——两侧都从这一处读。
-pub const GAP: f32 = 3.0;
-
-/// 动作条那一块的矩形。**任何一侧都不许压住选区**——那条断言在下面这条函数里就是
-/// "矩形与选区不相交"，不是"看起来没压"。
-pub fn bar_rect(sel: egui::Rect, bar: Vec2, side: BarSide) -> egui::Rect {
-    let center_x = (sel.min.x + sel.max.x) / 2.0;
-    let min = pos2(
-        center_x - bar.x / 2.0,
-        match side {
-            BarSide::Below => sel.max.y + GAP,
-            BarSide::Above => sel.min.y - GAP - bar.y,
-        },
-    );
-    Rect::from_min_size(min, bar)
-}
+// 缝 `GAP`、翻上下 `BarSide`/`side()`、药丸矩形 `rect()` 都在 `system/bar.rs` 那一份共用件里
+// （CHG-011 抽公共：贴图那条药丸与遮罩这条读同一套几何，各写一份迟早分岔）。这里只留
+// 遮罩自己的 `BAR_W/BAR_H` 与下面这一处调用，线稿 `icon_button` 一字不动。
 
 /// 这一刻药丸占的那一块矩形；**没有有效选区就没有药丸**。
 ///
@@ -423,7 +393,7 @@ fn bar_of(sel: &Selection, field: &Field) -> Option<Rect> {
         .rect
         .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)?;
     let size = Vec2::new(BAR_W, BAR_H);
-    Some(bar_rect(rect, size, bar_side(rect, size, field)))
+    Some(bar::rect(rect, size, bar::side(rect, size, field.bounds)))
 }
 
 // 三条常量的边界钉在**编译期**：写成运行期断言会被判"常量比较恒真"而形同虚设，
@@ -1216,18 +1186,18 @@ mod tests {
         let field = main_screen();
         let bar = vec2(240.0, 34.0);
         let high = Rect::from_min_max(pos2(100.0, 100.0), pos2(400.0, 200.0));
-        assert_eq!(bar_side(high, bar, &field), BarSide::Below);
-        let rect = bar_rect(high, bar, BarSide::Below);
+        assert_eq!(bar::side(high, bar, field.bounds), bar::BarSide::Below);
+        let rect = bar::rect(high, bar, bar::BarSide::Below);
         assert_eq!(rect.min.y, high.max.y + GAP, "紧贴选区下方");
         assert!(!rect.intersects(high), "下方那一档不许压住选区");
 
         let low = Rect::from_min_max(pos2(100.0, 900.0), pos2(400.0, 1070.0));
         assert_eq!(
-            bar_side(low, bar, &field),
-            BarSide::Above,
+            bar::side(low, bar, field.bounds),
+            bar::BarSide::Above,
             "下面放不下就翻上去"
         );
-        let flipped = bar_rect(low, bar, BarSide::Above);
+        let flipped = bar::rect(low, bar, bar::BarSide::Above);
         assert_eq!(flipped.max.y, low.min.y - GAP);
         assert!(!flipped.intersects(low), "翻上去那一档同样不许压住选区");
     }

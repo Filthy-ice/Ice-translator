@@ -2,6 +2,7 @@
 
 pub mod alpha;
 pub mod background;
+pub mod bar;
 pub mod capture;
 pub mod clipboard;
 pub mod cover;
