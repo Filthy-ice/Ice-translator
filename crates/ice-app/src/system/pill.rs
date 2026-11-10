@@ -94,14 +94,21 @@ pub fn position_command(previous: Option<egui::Pos2>, now: egui::Pos2) -> Option
 /// 从贴图的 `outer_rect` 现推药丸**窗**左上角（屏幕坐标）。
 ///
 /// 纯函数，无头可断言：贴图窗（收起带子后）就是图片那一块，所以 `outer_rect` 即锚点；
-/// 药丸默认在图片**下方 3pt**、放不下翻**上方**（与遮罩同一套 `bar::side`/`bar::rect`）；
+/// 上下读共用件 `bar::side`（与遮罩同一套翻转判据），默认在图片**下方 3pt**、放不下翻**上方**；
+/// 水平这维贴图这颗**靠右对齐**（药丸右边缘贴图片右边缘），不居中（居中是遮罩那颗的样子，两者分开）。
 /// 窗左上角 = 药丸本体左上角再让出一格阴影留白。**只读 `outer_rect` 的几何、只调纯函数**，
 /// 不许出现坐标字段读写（design REQ-004 把这条写成形状核查）。
 pub fn pill_window_pos(outer_rect: Rect, screen: Rect) -> egui::Pos2 {
     let body = body_size();
     let side = bar::side(outer_rect, body, screen);
-    let on_screen = bar::rect(outer_rect, body, side);
-    pos2(on_screen.min.x - SHADOW_PAD, on_screen.min.y - SHADOW_PAD)
+    let top = match side {
+        bar::BarSide::Below => outer_rect.max.y + bar::GAP,
+        bar::BarSide::Above => outer_rect.min.y - bar::GAP - body.y,
+    };
+    // 水平：贴图这颗**靠右**——药丸右边缘贴图片右边缘（某截图工具 那种操作条落图下方靠右），
+    // 左边 = 图右缘 − 药丸宽。**不居中**（居中是遮罩那颗的已批准样子，两者分开，`bar::rect` 不改）。
+    let left = outer_rect.max.x - body.x;
+    pos2(left - SHADOW_PAD, top - SHADOW_PAD)
 }
 
 /// 贴图窗子回调每帧调它：把自己所在的 `outer_rect` 换算成药丸位置，**只在真变了那一刻**
@@ -259,16 +266,16 @@ mod tests {
         assert_eq!(position_command(None, pos2(100.0, 200.0)), Some(pos2(100.0, 200.0)));
     }
 
-    /// 药丸默认在图片下方、离图 3pt；翻到上方时以图片上缘为基准；窗左上角再让出阴影留白。
+    /// 药丸默认在图片下方、离图 3pt、**右缘贴图片右缘**；翻到上方时以图片上缘为基准；窗左上角再让出阴影留白。
     #[test]
-    fn the_pill_hangs_below_and_flips_above_from_the_image_edges() {
-        // 图片在屏幕中部：药丸在下
+    fn the_pill_hangs_below_right_aligned_and_flips_above() {
+        // 图片在屏幕中部：药丸在下、靠右
         let mid = Rect::from_min_max(pos2(300.0, 200.0), pos2(812.0, 560.0));
         let pos = pill_window_pos(mid, screen());
         assert_eq!(
-            pos.x + SHADOW_PAD,
-            mid.center().x - bar::width_for(3) / 2.0,
-            "与图片中线对齐"
+            pos.x + SHADOW_PAD + bar::width_for(3),
+            mid.max.x,
+            "药丸右缘贴图片右缘（靠右，不居中）"
         );
         assert_eq!(pos.y + SHADOW_PAD, mid.max.y + bar::GAP, "紧贴图片下方 3pt");
 
