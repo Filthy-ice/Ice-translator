@@ -43,8 +43,11 @@
         "REQ-005"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": [],
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/pill.rs",
+        "crates/ice-app/src/app.rs"
+      ],
       "verify_note": "每帧发位置命令会每帧 request_repaint_of 把药丸窗叫醒（context.rs:4570），那是 D-31~D-35 那一族的 egui 版，必须去重。六张贴图各跟各的 outer_rect、各推各的槽，串格由键控 + 子窗直推两道挡住。跟随四件事（拖动/置顶/关闭/收放）真机上坏了任一件即命中停止条件 3，退回旧路径。"
     },
     {
@@ -57,8 +60,10 @@
         "REQ-009"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": [],
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/pin.rs"
+      ],
       "verify_note": "允许改的既有断言只有编码了被改口契约的那几条（the_open_band_sits_below_the_image_and_grows_the_window、a_closed_band_shrinks_the_window_itself_and_leaves_no_dead_strip、以及三处用到 BAND_H 的算式），改的是契约换了不是迁就实现；both_the_band_and_the_menu_iterate_the_one_table 只跟着改函数名，两条语义不动。其余无关断言一律不许动，实施前后各录一次全量数与失败数做差集比对。"
     },
     {
@@ -69,8 +74,11 @@
         "REQ-007"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": [],
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/main.rs",
+        "crates/ice-app/src/app.rs"
+      ],
       "verify_note": "这两格动的是全进程的合成模式与全 App 的清屏色，所以必须复核主窗观感而不是只看药丸。落地逐点量两处：① 主窗与贴图窗仍实心；② **主窗里那些 alpha<255 的绘制**（悬停高亮、浮层阴影、提示条淡出）混的对象从自家底色变成桌面——观感变了就如实说出来，不许悄悄 ship；若确实不能接受，改走事实 20 的 (b)：建完窗对 ROOT 发一次 ViewportCommand::Transparent(false)，代价是没铺满的那一条露出黑而不是桌面，也要量。他的冷灰白基底是已点头的观感，本包只许动贴图下方那条。"
     },
     {
