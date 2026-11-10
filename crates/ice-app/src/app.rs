@@ -1535,6 +1535,19 @@ impl IceApp {
             // 收起那一帧起不再 show ⇒ egui 删掉药丸窗，不需单独发关闭命令
             if pin.band_open {
                 crate::system::pill::show(ctx, pin.id, pin_band_line(&pin));
+                // 两扇窗都建出来之后，用原生 `addChildWindow:` 把药丸绑成贴图的子窗：
+                // 之后系统按固定偏移带着药丸一起走，拖动不再一卡一卡（治跟随的根本办法）。
+                // 药丸窗是 deferred 建的，头一两帧可能还没这扇窗 → 附不上，下一帧再试。
+                if !crate::system::pill::is_attached(ctx, pin.id) {
+                    if crate::system::attach::attach_pill_to_pin(pin.id) {
+                        crate::system::pill::set_attached(ctx, pin.id);
+                    }
+                }
+            } else {
+                // 带子收起 = 药丸窗没了；先解绑（窗真被销毁时这句是空操作），再清掉"已绑"标记，
+                // 重开那扇新药丸时重新绑
+                crate::system::attach::detach_pill_from_pin(pin.id);
+                crate::system::pill::clear_attached(ctx, pin.id);
             }
             for intent in crate::system::pin::take_intents(ctx, pin.id) {
                 self.apply_pin_intent(pin.id, intent, effects);

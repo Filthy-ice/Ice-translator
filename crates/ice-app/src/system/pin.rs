@@ -348,6 +348,12 @@ pub fn viewport_id(id: u64) -> egui::ViewportId {
     egui::ViewportId::from_hash_of(Id::NULL.with("ice-translator.pin").with(id))
 }
 
+/// 这扇贴图原生窗的标题：带号，好让 `system::attach` 按标题把它和**它自己的**药丸配成对。
+/// 无边框窗标题不上屏，只给 AppKit 认。
+pub fn window_title(id: u64) -> String {
+    format!("贴图 {id}")
+}
+
 fn visual_key(id: u64) -> Id {
     Id::NULL.with("ice-translator.pin.visual").with(id)
 }
@@ -480,7 +486,8 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin) {
         // 内容都算背景：每一次按下都被 AppKit 当成拖窗口吃掉，于是带子按钮收不到点击、
         // 右键菜单弹不出来，窗口也从来没成为 key window——键盘事件（esc、空格）同样进不来。
         // 用户报的"三个关法都不管用"就是这一个原因。拖动改按下面那一处 `StartDrag`。
-        .with_title("贴图");
+        // 标题带上这张的号：原生子窗绑定（`system::attach`）要按标题把"这扇贴图"和"它自己的药丸"配成对。
+        .with_title(window_title(id));
     if let Some(at) = pin.at {
         builder = builder.with_position(at);
     }
@@ -609,9 +616,9 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin) {
         // 文字层那句手势说明留在**图片本体**的悬停里（REQ-002：不进药丸）
         area.on_hover_text(TEXT_LAYER_TIP);
 
-        // 带子展开这一帧：把**自己这一帧的 `outer_rect`** 现推给那扇药丸窗（不绕主窗，
-        // 只在真变了那一刻发位置命令）。贴图窗恒等于图片，所以 `outer_rect` 就是药丸的锚点。
-        if band_open {
+        // 带子展开、且这扇药丸**还没被系统绑成子窗**时：把自己这一帧的 `outer_rect` 现推给
+        // 药丸窗（不绕主窗、只在真变了那一刻发）。绑上之后位置由系统按固定偏移带着走，这里不再推。
+        if band_open && !pill::is_attached(&root, id) {
             if let (Some(screen), Some(outer)) = (
                 pill::screen_of(&root),
                 child.input(|i| i.viewport().outer_rect),

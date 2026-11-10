@@ -31,9 +31,32 @@ pub fn viewport_id(pin_id: u64) -> egui::ViewportId {
     egui::ViewportId::from_hash_of(Id::NULL.with("ice-translator.pill").with(pin_id))
 }
 
+/// 这扇药丸原生窗的标题：带号，好让 `system::attach` 按标题把它和**它自己的**贴图配成对。
+pub fn window_title(pin_id: u64) -> String {
+    format!("贴图操作栏 {pin_id}")
+}
+
 /// 上一帧发出去的药丸窗左上角（点）。缓存"发出去的值"用于去重，不是位置权威。
 fn pos_key(pin_id: u64) -> Id {
     Id::NULL.with("ice-translator.pill.pos").with(pin_id)
+}
+
+/// 这扇药丸**已被 macOS 绑成贴图窗的子窗没有**。绑上之后位置由系统按固定偏移带着走，
+/// 我们就不再每帧推位置（再推会和系统抢）。带子收起/重开时这格清掉，药丸窗重建后重新绑。
+fn attached_key(pin_id: u64) -> Id {
+    Id::NULL.with("ice-translator.pill.attached").with(pin_id)
+}
+
+pub fn is_attached(ctx: &egui::Context, pin_id: u64) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(attached_key(pin_id)) == Some(true))
+}
+
+pub fn set_attached(ctx: &egui::Context, pin_id: u64) {
+    ctx.data_mut(|d| d.insert_temp(attached_key(pin_id), true));
+}
+
+pub fn clear_attached(ctx: &egui::Context, pin_id: u64) {
+    ctx.data_mut(|d| d.remove::<bool>(attached_key(pin_id)));
 }
 
 /// 主窗每帧写一次、子回调每帧读一次的可用区缓存（避免在 deferred 回调里逐帧走 NSScreen）。
@@ -130,7 +153,7 @@ pub fn show(ctx: &egui::Context, pin_id: u64, line: Option<String>) {
         .with_always_on_top()
         // 建出来不抢焦点：抢了会把用户正在打字那扇应用挤掉，且每钉一张抢一次（事实 17）
         .with_active(false)
-        .with_title("贴图操作栏");
+        .with_title(window_title(pin_id));
     // 首帧创建时用缓存里的位置落位；之后位置只从 follow 来（builder 的位置改动 egui 不追）
     if let Some(at) = ctx.data(|d| d.get_temp::<egui::Pos2>(pos_key(pin_id))) {
         builder = builder.with_position(at);
