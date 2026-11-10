@@ -153,10 +153,6 @@ pub struct IceApp {
     dblclick_outcome: Option<dblclick::Outcome>,
     /// 热键的 handler 与首轮注册只在启动后做一次
     hotkeys_started: bool,
-    /// 根窗"按回不透明"的命令还要不要再发一次。CHG-011 开了进程级透明让药丸浮空，但它连主窗
-    /// 一起变半透明（事实 20）；这一格把根窗单独发回 `Transparent(false)`。换形态时 winit 换窗、
-    /// 透明跟着回到 native 的 true，所以要重发——`apply_native_background` 探到换窗就把它置回真。
-    root_opaque_pending: bool,
     /// 截图历史目录，启动时解析一次。
     ///
     /// **为什么留成一份值而不是每次现问系统**：老化和「清除所有截图」都会**真删文件**。
@@ -208,7 +204,6 @@ impl IceApp {
             test_screens: None,
             pending_save: PendingSave::None,
             hotkeys_started: false,
-            root_opaque_pending: true,
             shots_dir,
             lock,
             key_probe,
@@ -767,18 +762,10 @@ impl IceApp {
             tracing::debug!(flat = ?flat, "标题栏平铺核对");
             self.native_flat_titlebar = flat;
         }
-        // 根窗按回不透明：CHG-011 的进程级透明会连主窗一起变半透明（事实 20），这里把主窗
-        // 单独设 opaque，药丸那扇独立窗不受影响。**放在底色那道"变了才发"的早退之前**——
-        // 底色没变时窗口也可能因换形态丢了 opaque，这一句每帧核对不能跟着底色一起被跳过。
-        if background::sync_opaque(frame) == Some(false) {
-            tracing::debug!("根窗 opaque 没设上（拿不到句柄/非主线程），下一帧再试");
-        }
         if flat == Some(false) {
             // 刚被换回来的那扇窗（换形态时 winit 换窗口，属性回到系统默认）或这一次没压成：
             // 底色那份缓存不作数，逼下一句重发一次。否则新窗口上是"平铺了、但底色还是默认"
             self.native_background = None;
-            // 换窗也把"透明"带回成了 native 的 true → 主窗又半透明；标记要重发一次不透明命令
-            self.root_opaque_pending = true;
         }
 
         let want = theme::window_base(dark);
@@ -1536,35 +1523,9 @@ impl IceApp {
         if self.state.pins.is_empty() {
             return;
         }
-        // 主窗这一帧读一次可用区（走 NSScreen）并缓存，供各贴图的子回调现取药丸位置——
-        // 免每帧每张各走一次原生（D-31~D-35 那一族的教训）
-        if let Some(area) = screen::desktop(ctx) {
-            crate::system::pill::cache_screen(ctx, area);
-        }
         for pin in self.state.pins.clone() {
-            // 贴图窗只画图片那块；带子展开时它这一帧的回调把自己位置现推给药丸窗
-            crate::system::pin::show(ctx, &pin);
-            // 进度话由状态算出来再传给那扇药丸窗（贴图与药丸都不读 AppState，不存全局进度）。
-            // 收起那一帧起不再 show ⇒ egui 删掉药丸窗，不需单独发关闭命令
-            if pin.band_open {
-                crate::system::pill::show(ctx, pin.id, pin_band_line(&pin));
-                // 两扇窗都建出来、且药丸**已被摆到过一次正确位置**之后，才用原生 `addChildWindow:`
-                // 把药丸绑成贴图的子窗——绑那一刻抓的是相对偏移，没摆对就绑会把错偏移锁死。
-                // 之后系统按固定偏移带着药丸走，拖动零延迟（治跟随的根本办法）。
-                if !crate::system::pill::is_attached(ctx, pin.id)
-                    && crate::system::pill::is_positioned(ctx, pin.id)
-                {
-                    if crate::system::attach::attach_pill_to_pin(pin.id) {
-                        crate::system::pill::set_attached(ctx, pin.id);
-                    }
-                }
-            } else {
-                // 带子收起 = 药丸窗没了；先解绑（窗真被销毁时这句是空操作），再清掉"已绑/已摆位"标记，
-                // 重开那扇新药丸时重新摆位、重新绑
-                crate::system::attach::detach_pill_from_pin(pin.id);
-                crate::system::pill::clear_attached(ctx, pin.id);
-                crate::system::pill::clear_positioned(ctx, pin.id);
-            }
+            // 进度话由状态算出来再传进去：贴图窗不读 `AppState`，也不存一份全局进度
+            crate::system::pin::show(ctx, &pin, pin_band_line(&pin));
             for intent in crate::system::pin::take_intents(ctx, pin.id) {
                 self.apply_pin_intent(pin.id, intent, effects);
             }
@@ -2310,15 +2271,6 @@ pub fn build_translator(config: &Config, key: Option<String>) -> Translator {
 }
 
 impl eframe::App for IceApp {
-    /// CHG-011 三格透明开关里的**清屏那一格**（事实 19）：eframe 默认返回 `(12,12,12,180)`，
-    /// 带七成不透明，而 wgpu 那条路对**每一扇窗**都用这一份——不覆写，药丸那道缝里就是"七成
-    /// 不透明的深灰混在桌面上"那一层暗纱（探针第 3 档读到 `(89,6,2)`）。覆成全透明之后，主窗与
-    /// 贴图窗的实心**只能靠每帧铺满不透明底色**保证（`apply_native_background` 那一格），
-    /// 这正是停止条件 8 要逐点量的东西——不许假设。
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0; 4]
-    }
-
     /// 窗口收起来之后 eframe 只调这一个钩子（见 `watch_visibility`）；可见帧里它同样会跑
     /// （`epi_integration.rs:357`，就在 `ui()` 之前），所以"不管窗口在不在都得盯着"的事归这里。
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -2343,12 +2295,6 @@ impl eframe::App for IceApp {
         // 整窗底色（含原生标题栏那条带子）跟着**这一帧生效的那套主题**走：`ui.visuals()` 就是
         // egui 解析完 `theme_preference` 之后真正在用的那套，与内容区同一个出处、同一个时刻
         self.apply_native_background(frame, ui.visuals().dark_mode);
-        // CHG-011：进程级透明让主窗也变半透明（事实 20），把**根窗**单独发回不透明。
-        // 只在需要时发（首帧 + 换形态换窗后），不每帧骚扰。药丸那扇独立窗不受这条影响，仍浮空。
-        if self.root_opaque_pending {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Transparent(false));
-            self.root_opaque_pending = false;
-        }
 
         jobs::drain(&mut self.outcomes, &mut self.state, &self.history);
         if let Ok(probe) = self.key_probe.try_recv() {
