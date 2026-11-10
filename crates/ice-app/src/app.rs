@@ -153,6 +153,10 @@ pub struct IceApp {
     dblclick_outcome: Option<dblclick::Outcome>,
     /// 热键的 handler 与首轮注册只在启动后做一次
     hotkeys_started: bool,
+    /// 根窗"按回不透明"的命令还要不要再发一次。CHG-011 开了进程级透明让药丸浮空，但它连主窗
+    /// 一起变半透明（事实 20）；这一格把根窗单独发回 `Transparent(false)`。换形态时 winit 换窗、
+    /// 透明跟着回到 native 的 true，所以要重发——`apply_native_background` 探到换窗就把它置回真。
+    root_opaque_pending: bool,
     /// 截图历史目录，启动时解析一次。
     ///
     /// **为什么留成一份值而不是每次现问系统**：老化和「清除所有截图」都会**真删文件**。
@@ -204,6 +208,7 @@ impl IceApp {
             test_screens: None,
             pending_save: PendingSave::None,
             hotkeys_started: false,
+            root_opaque_pending: true,
             shots_dir,
             lock,
             key_probe,
@@ -772,6 +777,8 @@ impl IceApp {
             // 刚被换回来的那扇窗（换形态时 winit 换窗口，属性回到系统默认）或这一次没压成：
             // 底色那份缓存不作数，逼下一句重发一次。否则新窗口上是"平铺了、但底色还是默认"
             self.native_background = None;
+            // 换窗也把"透明"带回成了 native 的 true → 主窗又半透明；标记要重发一次不透明命令
+            self.root_opaque_pending = true;
         }
 
         let want = theme::window_base(dark);
@@ -2336,6 +2343,12 @@ impl eframe::App for IceApp {
         // 整窗底色（含原生标题栏那条带子）跟着**这一帧生效的那套主题**走：`ui.visuals()` 就是
         // egui 解析完 `theme_preference` 之后真正在用的那套，与内容区同一个出处、同一个时刻
         self.apply_native_background(frame, ui.visuals().dark_mode);
+        // CHG-011：进程级透明让主窗也变半透明（事实 20），把**根窗**单独发回不透明。
+        // 只在需要时发（首帧 + 换形态换窗后），不每帧骚扰。药丸那扇独立窗不受这条影响，仍浮空。
+        if self.root_opaque_pending {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Transparent(false));
+            self.root_opaque_pending = false;
+        }
 
         jobs::drain(&mut self.outcomes, &mut self.state, &self.history);
         if let Ok(probe) = self.key_probe.try_recv() {
