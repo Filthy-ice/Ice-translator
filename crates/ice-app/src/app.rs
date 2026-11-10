@@ -1523,9 +1523,19 @@ impl IceApp {
         if self.state.pins.is_empty() {
             return;
         }
+        // 主窗这一帧读一次可用区（走 NSScreen）并缓存，供各贴图的子回调现取药丸位置——
+        // 免每帧每张各走一次原生（D-31~D-35 那一族的教训）
+        if let Some(area) = screen::desktop(ctx) {
+            crate::system::pill::cache_screen(ctx, area);
+        }
         for pin in self.state.pins.clone() {
-            // 进度话由状态算出来再传进去：贴图窗不读 `AppState`，也不存一份全局进度
-            crate::system::pin::show(ctx, &pin, pin_band_line(&pin));
+            // 贴图窗只画图片那块；带子展开时它这一帧的回调把自己位置现推给药丸窗
+            crate::system::pin::show(ctx, &pin);
+            // 进度话由状态算出来再传给那扇药丸窗（贴图与药丸都不读 AppState，不存全局进度）。
+            // 收起那一帧起不再 show ⇒ egui 删掉药丸窗，不需单独发关闭命令
+            if pin.band_open {
+                crate::system::pill::show(ctx, pin.id, pin_band_line(&pin));
+            }
             for intent in crate::system::pin::take_intents(ctx, pin.id) {
                 self.apply_pin_intent(pin.id, intent, effects);
             }
@@ -2271,6 +2281,15 @@ pub fn build_translator(config: &Config, key: Option<String>) -> Translator {
 }
 
 impl eframe::App for IceApp {
+    /// CHG-011 三格透明开关里的**清屏那一格**（事实 19）：eframe 默认返回 `(12,12,12,180)`，
+    /// 带七成不透明，而 wgpu 那条路对**每一扇窗**都用这一份——不覆写，药丸那道缝里就是"七成
+    /// 不透明的深灰混在桌面上"那一层暗纱（探针第 3 档读到 `(89,6,2)`）。覆成全透明之后，主窗与
+    /// 贴图窗的实心**只能靠每帧铺满不透明底色**保证（`apply_native_background` 那一格），
+    /// 这正是停止条件 8 要逐点量的东西——不许假设。
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     /// 窗口收起来之后 eframe 只调这一个钩子（见 `watch_visibility`）；可见帧里它同样会跑
     /// （`epi_integration.rs:357`，就在 `ui()` 之前），所以"不管窗口在不在都得盯着"的事归这里。
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
