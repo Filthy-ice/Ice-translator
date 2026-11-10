@@ -1388,6 +1388,169 @@
       "summary": "真应用端到端由 Agent 自己开车跑通并留读数（2026-11-09 深夜，含 D-41 修复后的两轮对照）：遮罩 layer=25 盖满 1920x1080、esc 取消与 esc 退出都退得出、拖框出八颗把手且药丸那道缝实测 3 点、对勾钉在原地 (1100,300) 300x234、拖动之后静置不回弹、空格 234->200、右键恰好四项、复制交出 240226 字节图像（只记长度与哈希前 8 位）、悬停沿那扇窗四边亮框、单击整扇拿下 1404x919；两轮截图之间搬走主窗，原区域 29% 采样点变化，第二轮是新画面。三把全局热键与观感手感不在这条里，归 W-5.1 与 W-6.1~W-6.8",
       "artifact": "evidence/0051-V-005.txt",
       "artifact_hash": "d452da0e6b041d74e32e9b867a15dd4e859e7006840b723249836d0126179f4a"
+    },
+    {
+      "at": "2026-11-10T02:05:34+00:00",
+      "verification": "V-001",
+      "requirements": [
+        "REQ-101",
+        "REQ-102",
+        "REQ-103",
+        "REQ-104",
+        "REQ-105",
+        "REQ-106",
+        "REQ-107",
+        "REQ-108"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "29f152c48485bda8f4876ed2f424de60afe3d52d",
+        "tree_hash": "295a72b9b9f0cec5938f9c0abf34847167ad77c140fbdcd23d7d6e31fafaa8e7",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"--workspace\"] exit=0",
+      "artifact": "evidence/0052-V-001.txt",
+      "artifact_hash": "039a6e89752887b4df70fa000e131ff272d2b9e2e15fd3de14bf1d0701c23f61"
+    },
+    {
+      "at": "2026-11-10T02:05:34+00:00",
+      "verification": "V-002",
+      "requirements": [
+        "REQ-102",
+        "REQ-108"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "29f152c48485bda8f4876ed2f424de60afe3d52d",
+        "tree_hash": "295a72b9b9f0cec5938f9c0abf34847167ad77c140fbdcd23d7d6e31fafaa8e7",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-app\", \"selection\"] exit=0",
+      "artifact": "evidence/0053-V-002.txt",
+      "artifact_hash": "053ca0ce20c42f63d2deede003b669d9ac01960b4404ef51359a5797b19a03e3"
+    },
+    {
+      "at": "2026-11-10T02:05:34+00:00",
+      "verification": "V-003",
+      "requirements": [
+        "REQ-104",
+        "REQ-105"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "29f152c48485bda8f4876ed2f424de60afe3d52d",
+        "tree_hash": "295a72b9b9f0cec5938f9c0abf34847167ad77c140fbdcd23d7d6e31fafaa8e7",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "argv=[\"cargo\", \"test\", \"-p\", \"ice-app\", \"capture\"] exit=0",
+      "artifact": "evidence/0054-V-003.txt",
+      "artifact_hash": "c62cdf88d6006601454bf7a1c6d686e24be84bc2ecb15d28a50c69be06c1ee36"
+    },
+    {
+      "at": "2026-11-10T02:05:35+00:00",
+      "verification": "V-004",
+      "requirements": [
+        "REQ-101",
+        "REQ-106",
+        "REQ-107"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "29f152c48485bda8f4876ed2f424de60afe3d52d",
+        "tree_hash": "295a72b9b9f0cec5938f9c0abf34847167ad77c140fbdcd23d7d6e31fafaa8e7",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "argv=[\"bash\", \"-c\", \"test $(grep -Rl '/usr/sbin/screencapture' crates/ice-app/src | wc -l) -eq 1 && ! grep -Rn 'cfg(target_os' crates/ice-app/src/views\"] exit=0",
+      "artifact": "evidence/0055-V-004.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-10T02:05:35+00:00",
+      "verification": "V-007",
+      "requirements": [
+        "REQ-101",
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "29f152c48485bda8f4876ed2f424de60afe3d52d",
+        "tree_hash": "295a72b9b9f0cec5938f9c0abf34847167ad77c140fbdcd23d7d6e31fafaa8e7",
+        "dirty": true
+      },
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "argv=[\"bash\", \"-c\", \"test $(grep -Rl '\\\\.setLevel(' crates/ice-app/src | wc -l) -le 1 && ! (grep -Rn 'Fullscreen(true)' crates/ice-app/src --include='*.rs' | grep -vE ':[0-9]+: *//') | grep -q .\"] exit=0",
+      "artifact": "evidence/0056-V-007.txt",
+      "artifact_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "at": "2026-11-10T02:06:14+00:00",
+      "verification": "V-005",
+      "requirements": [
+        "REQ-101",
+        "REQ-102"
+      ],
+      "repo": "ice-translator",
+      "repo_state": {
+        "head": "29f152c48485bda8f4876ed2f424de60afe3d52d",
+        "tree_hash": "295a72b9b9f0cec5938f9c0abf34847167ad77c140fbdcd23d7d6e31fafaa8e7",
+        "dirty": true
+      },
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "baseline": {
+        "change": "CHG-010",
+        "version": "v0.5",
+        "spec_hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16"
+      },
+      "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7",
+      "result": "passed",
+      "summary": "沿用 2026-11-09 深夜真机六格读数（抬层 25 盖两屏、激活后 esc 进得来、单击认窗与拖框分界、药丸缝 3 点）；D-42 只改选区存取的轮号，不触碰这些路径。真机复看 W-6.9 待解锁",
+      "artifact": "evidence/0057-V-005.txt",
+      "artifact_hash": "d452da0e6b041d74e32e9b867a15dd4e859e7006840b723249836d0126179f4a"
     }
   ]
 }

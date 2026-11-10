@@ -156,3 +156,21 @@ Spec-Hash: a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
 
 - 2026-11-09T13:02:22+00:00 V-005 **passed** VERIFIED_RUNTIME/sandbox
   真应用端到端由 Agent 自己开车跑通并留读数（2026-11-09 深夜，含 D-41 修复后的两轮对照）：遮罩 layer=25 盖满 1920x1080、esc 取消与 esc 退出都退得出、拖框出八颗把手且药丸那道缝实测 3 点、对勾钉在原地 (1100,300) 300x234、拖动之后静置不回弹、空格 234->200、右键恰好四项、复制交出 240226 字节图像（只记长度与哈希前 8 位）、悬停沿那扇窗四边亮框、单击整扇拿下 1404x919；两轮截图之间搬走主窗，原区域 29% 采样点变化，第二轮是新画面。三把全局热键与观感手感不在这条里，归 W-5.1 与 W-6.1~W-6.8；附件：evidence/0051-V-005.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-10T02:05:34+00:00 V-001 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "--workspace"] exit=0；附件：evidence/0052-V-001.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-10T02:05:34+00:00 V-002 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-app", "selection"] exit=0；附件：evidence/0053-V-002.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-10T02:05:34+00:00 V-003 **passed** VERIFIED_CODE/local
+  argv=["cargo", "test", "-p", "ice-app", "capture"] exit=0；附件：evidence/0054-V-003.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-10T02:05:35+00:00 V-004 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "test $(grep -Rl '/usr/sbin/screencapture' crates/ice-app/src | wc -l) -eq 1 && ! grep -Rn 'cfg(target_os' crates/ice-app/src/views"] exit=0；附件：evidence/0055-V-004.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-10T02:05:35+00:00 V-007 **passed** VERIFIED_CODE/local
+  argv=["bash", "-c", "test $(grep -Rl '\\.setLevel(' crates/ice-app/src | wc -l) -le 1 && ! (grep -Rn 'Fullscreen(true)' crates/ice-app/src --include='*.rs' | grep -vE ':[0-9]+: *//') | grep -q ."] exit=0；附件：evidence/0056-V-007.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16
+
+- 2026-11-10T02:06:14+00:00 V-005 **passed** VERIFIED_RUNTIME/sandbox
+  沿用 2026-11-09 深夜真机六格读数（抬层 25 盖两屏、激活后 esc 进得来、单击认窗与拖框分界、药丸缝 3 点）；D-42 只改选区存取的轮号，不触碰这些路径。真机复看 W-6.9 待解锁；附件：evidence/0057-V-005.txt；Spec：a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16

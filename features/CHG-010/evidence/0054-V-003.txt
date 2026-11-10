@@ -1,0 +1,50 @@
+
+running 42 tests
+test mode::tests::a_suppressed_capture_still_records_the_position ... ok
+test mode::tests::capture_takes_position_from_outer_and_size_from_inner ... ok
+test mode::tests::capture_ignores_the_first_frame_where_geometry_is_unknown ... ok
+test state::tests::a_stale_capture_reply_leaves_the_screen_alone ... ok
+test state::tests::a_second_capture_while_one_is_in_flight_is_ignored ... ok
+test state::tests::a_capture_reply_builds_a_pin_and_dispatches_recognize_not_translation ... ok
+test state::tests::the_capture_job_carries_which_windows_to_put_back ... ok
+test system::capture::tests::a_silent_grab_names_the_display_and_never_opens_the_interactive_layer ... ok
+test state::tests::each_capture_carries_its_own_generation_for_the_texture_cache ... ok
+test app::tests::a_frame_without_the_capture_intent_hides_nothing ... ok
+test system::capture::tests::an_unwritable_directory_is_reported_as_failure_not_cancellation ... ok
+test system::capture::tests::failures_share_one_actionable_sentence ... ok
+test system::capture::tests::an_unwritable_history_directory_says_so_instead_of_blaming_the_screen ... ok
+test system::capture::tests::a_written_capture_file_is_listed_with_its_own_mtime ... ok
+test system::capture::tests::a_silent_grab_that_wrote_nothing_is_a_failure_not_a_cancellation ... ok
+test system::capture::tests::no_file_and_a_clean_exit_is_cancellation ... ok
+test system::capture::tests::the_arguments_are_the_ones_measured_on_the_machine ... ok
+test system::capture::tests::no_sentence_shown_to_the_user_contains_the_file_name ... ok
+test system::capture::tests::a_file_that_decodes_is_success_and_one_that_does_not_is_failure_not_cancel ... ok
+test system::capture::tests::the_capability_answer_is_per_action_not_a_single_flag ... ok
+test system::capture::tests::a_confirmed_capture_is_the_only_way_into_the_history_directory ... ok
+test system::capture::tests::no_file_with_a_complaint_is_failure_never_cancellation ... ok
+test system::capture::tests::the_file_name_survives_two_instances_and_double_clicks ... ok
+test system::capture::tests::the_hidden_record_carries_no_geometry ... ok
+test system::capture::tests::the_history_directory_is_never_inside_the_repository ... ok
+test system::capture::tests::the_recent_shot_and_the_aging_order_read_the_same_sort ... ok
+test system::capture::tests::the_seventh_day_entry_survives_the_expiry_cut ... ok
+test system::capture::tests::the_target_path_is_the_directory_plus_that_name ... ok
+test system::capture::tests::unsupported_is_a_fourth_state_with_its_own_sentence ... ok
+test app::tests::the_release_reads_the_anchor_even_after_capture_moved_the_config_rect ... ok
+test system::capture::tests::waking_the_loop_from_hidden_buys_exactly_one_painted_frame ... ok
+test system::capture::tests::the_two_hundred_and_first_entry_pushes_out_the_oldest ... ok
+test system::capture::tests::the_freeze_temp_directory_is_per_process ... ok
+test system::capture::tests::clearing_history_reports_how_many_were_actually_removed ... ok
+test system::selection::tests::a_new_capture_round_reads_a_blank_selection ... ok
+test views::image::tests::the_capture_hover_promises_three_things ... ok
+test views::image::tests::there_is_exactly_one_place_that_dispatches_a_capture ... ok
+test views::settings::tests::capture_reads_one_press_and_ignores_repeats_and_releases ... ok
+test views::settings::tests::every_captured_combo_is_reparseable ... ok
+test views::image::tests::the_capture_button_gives_only_the_intent ... ok
+test state::tests::cancelling_a_capture_leaves_no_selection_and_no_path ... ok
+test system::capture::tests::a_silent_grab_never_reports_cancellation ... ok
+
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 0.01s
+
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.11s
+     Running unittests src/main.rs (target/debug/deps/ice_translator-fec042200a847954)

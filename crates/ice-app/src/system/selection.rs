@@ -468,8 +468,22 @@ fn slot_key(display: u8) -> Id {
 /// 这扇遮罩自己的选区状态存在根上下文的 data 里，**按屏编号分开**。
 /// 放这里而不是放 `AppState`：只有画它的那一帧会读写它，绕一圈主窗就会看到旧值（闪），
 /// 而两扇窗同时写一份更会串（左屏拖动、右屏旧框跳出来）。
+///
+/// 格子里带一个轮号（D-42）：临时态不随遮罩关窗而清，确认那一支只把阶段推到 Confirmed、
+/// 框还留在格子里，下一轮开遮罩读到的就是上一轮的框（用户 2026-11-10 原话「下次我打开
+/// 还有上次的选框」）。读的时候轮号对不上就当空白，写的时候原地盖掉——与定格纹理那格
+/// 同一个形状（D-41），每屏永远只有一格，不随轮数攒。
 fn sel_key(display: u8) -> Id {
     Id::NULL.with("ice-selection.mask.sel").with(display)
+}
+
+/// 从那一格里读这一轮的选区。轮号对不上就是新一轮，读空白（D-42）。
+/// 单独一个函数：判据直接拿真存储走一遍，不用在测试里抄一份读法。
+fn load_selection(d: &egui::util::IdTypeMap, display: u8, frozen_id: u64) -> Selection {
+    d.get_temp::<(u64, Selection)>(sel_key(display))
+        .filter(|(old_gen, _)| *old_gen == frozen_id)
+        .map(|(_, sel)| sel)
+        .unwrap_or_default()
 }
 
 fn viewport_of(display: u8) -> egui::ViewportId {
@@ -516,6 +530,8 @@ pub struct MaskScreen {
     pub windows: std::sync::Arc<crate::system::windows::Snapshot>,
     /// 冻结帧的纹理（**由根上下文加载**，与贴图那一条同一个做法）
     pub texture: egui::TextureId,
+    /// 这一轮冻结的轮号。选区那格带着它存取：轮号一换就当空白（D-42）
+    pub frozen_id: u64,
 }
 
 /// 画一扇遮罩。每帧对该 show 的每块屏各调一次（CHG-009 事实 25 那条：deferred viewport 是每帧 show）。
@@ -541,6 +557,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
     let texture = screen.texture;
     let points = screen.points;
     let origin = screen.origin;
+    let frozen_id = screen.frozen_id;
     let windows = screen.windows.clone();
     // 闭包要 'static：把这一帧要用的几个数**按值**带走，不带引用
 
@@ -550,11 +567,9 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
     ctx.show_viewport_deferred(viewport, builder, move |ui, _class| {
         let child = ui.ctx().clone();
         let field = Field::new(Rect::from_min_size(Pos2::ZERO, points), points);
-        // 这一扇窗自己的选区：**读写都在这一帧里完成**，不绕主窗一圈
-        let mut next = ui.ctx().data(|d| {
-            d.get_temp::<Selection>(sel_key(display))
-                .unwrap_or_default()
-        });
+        // 这一扇窗自己的选区：**读写都在这一帧里完成**，不绕主窗一圈。
+        // 轮号对不上就是新一轮截图，读空白（D-42：上一轮的框不许跟过来）
+        let mut next = ui.ctx().data(|d| load_selection(d, display, frozen_id));
         let mut changed = false;
         let here = ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO);
         let holding = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
@@ -690,7 +705,8 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             changed = true;
         }
         if changed {
-            ui.ctx().data_mut(|d| d.insert_temp(sel_key(display), next));
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(sel_key(display), (frozen_id, next)));
             // 自己叫醒自己：指针事件只到这一扇子窗，不叫它重画，框就停在上一次画出来的样子
             // （"拖了没框/一闪一闪"的根在这儿，与绕不绕主窗无关）
             child.request_repaint();
@@ -1299,6 +1315,47 @@ mod tests {
             body.matches("queue.push").count() + body.matches("queue.extend").count(),
             3,
             "推意图的地方每处都得配一次 wake_root，加了新出口要先改这条断言"
+        );
+    }
+
+    /// **D-42：新一轮截图必须读到空白选区。**
+    ///
+    /// 临时态不随遮罩关窗而清：确认那一支只把阶段推到 Confirmed，框还留在格子里。
+    /// 用户 2026-11-10 原话「下次我打开还有上次的选框」。拿真存储走一遍读法：
+    /// 同轮还在（拖动时每帧读写靠它），换轮空白，换屏也不许借。
+    #[test]
+    fn a_new_capture_round_reads_a_blank_selection() {
+        let mut map = egui::util::IdTypeMap::default();
+        let field = main_screen();
+        let old = Selection::from_rect(
+            &field,
+            Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0)),
+        );
+        map.insert_temp(sel_key(1), (10_u64, old));
+
+        let same = load_selection(&map, 1, 10);
+        assert_eq!(same.rect, old.rect, "同一轮里框要一直在，不然拖动每帧都丢");
+
+        let fresh = load_selection(&map, 1, 11);
+        assert!(fresh.rect.is_none(), "新一轮不许带着上一轮的框");
+        assert_eq!(fresh.stage, Stage::Idle);
+
+        let other = load_selection(&map, 2, 10);
+        assert!(other.rect.is_none(), "另一块屏更不许借这一扇的框");
+    }
+
+    /// 形状核查：写回那一格必须盖上这一轮的轮号，读法必须过 `load_selection`。
+    /// 两处各写一份迟早分岔——D-42 正是"读的时候没问轮号"分出来的。
+    #[test]
+    fn the_selection_slot_is_stamped_with_the_round_it_belongs_to() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        assert!(
+            body.contains("insert_temp(sel_key(display), (frozen_id, next))"),
+            "写回那一格要带上轮号"
+        );
+        assert!(
+            body.contains("data(|d| load_selection(d, display, frozen_id))"),
+            "帧里的读法必须走那一个函数"
         );
     }
 }

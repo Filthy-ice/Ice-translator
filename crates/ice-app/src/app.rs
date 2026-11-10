@@ -1350,6 +1350,7 @@ impl IceApp {
                     origin: frame.origin,
                     windows: windows.clone(),
                     texture: freeze_texture(ctx, frame, capture.frozen_id),
+                    frozen_id: capture.frozen_id,
                 },
             );
             if pushing {
