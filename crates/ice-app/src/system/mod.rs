@@ -12,7 +12,6 @@ pub mod global_hotkeys;
 pub mod hotkeys;
 pub mod mouse;
 pub mod panel;
-pub mod pill;
 pub mod pin;
 pub mod screen;
 pub mod secrets;

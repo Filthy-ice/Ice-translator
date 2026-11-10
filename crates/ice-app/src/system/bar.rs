@@ -33,13 +33,6 @@ pub const HOVER_LIFT: f32 = 1.0;
 /// 悬停淡底与药丸本体的圆角（点）。观感归 W-7.1 / W-7.4，改判走 revise。
 pub const ROUNDING: f32 = 8.0;
 
-/// 文字那颗的三种墨色。**药丸本体是深色那一档**（与遮罩那条已批准的药丸同一底色，浮在任何
-/// 桌面上都读得清；[HOVER_TINT] 那"一成白"要叠在深色上才看得出来是"变淡"）。所以这里**不**跟
-/// 应用深浅色主题走——它是浮在桌面上的独立物体，底色与遮罩那条同源。禁用态退一档灰。
-pub const TEXT_REST: Color32 = Color32::from_rgb(0xC8, 0xCA, 0xCF);
-pub const TEXT_HOVER: Color32 = Color32::from_rgb(0xFF, 0xFF, 0xFF);
-pub const TEXT_DISABLED: Color32 = Color32::from_rgb(0x6E, 0x71, 0x76);
-
 /// 药丸本体与悬停那颗共用的一道淡影（Q-002 / REQ-009）。**用 painter 画，不开整窗
 /// `with_has_shadow`**：那是整扇窗的窗影，会把图片本体也套一圈，不是药丸的影。走与
 /// `theme::pane_shadow` 同一条软边通道（`Shadow::as_shape` → `RectShape { blur_width }`），
@@ -121,12 +114,10 @@ pub fn text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
         paint_shadow(painter, draw, ROUNDING);
         painter.rect_filled(draw, ROUNDING, HOVER_TINT);
     }
-    let color = if !enabled {
-        TEXT_DISABLED
-    } else if hovered {
-        TEXT_HOVER
+    let color = if enabled {
+        ui.visuals().text_color()
     } else {
-        TEXT_REST
+        ui.visuals().weak_text_color()
     };
     let font = egui::TextStyle::Button.resolve(ui.style());
     painter.text(

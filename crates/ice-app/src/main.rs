@@ -236,12 +236,6 @@ fn main() {
     let mut viewport = mode::initial_viewport(&state.config.ui);
     // Dock 磁贴（macOS）/ 任务栏（Windows）走这一项，缺省会显示成 egui 的 logo，见 `app_icon`
     viewport.icon = app_icon().map(std::sync::Arc::new);
-    // CHG-011 三格透明开关里的**进程级那一格**（事实 16）：wgpu 全进程只有一个 Painter，
-    // `support_transparent_backbuffer` 就从这一份 `viewport.transparent` 读一次，此后每扇窗的
-    // surface 都按它选合成模式——不开它，贴图下方那扇药丸窗的 surface 必然退回 `Auto`（不透明）。
-    // 事实 20：这一格与根窗自己那一格是**同一个字段**，做不到"只给药丸窗开"；开它主窗的 NSWindow
-    // 同时变非不透明，主窗的实心靠"每帧铺满不透明底色"保证（app.rs 那格 + 停止条件 8 逐点量）。
-    viewport.transparent = Some(true);
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
