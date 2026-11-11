@@ -401,25 +401,35 @@ impl JobRunner {
         runtime.spawn_blocking(move || {
             let started = Instant::now();
             let temp = capture::temp_dir();
-            let mut frames = Vec::new();
-            for display in &displays {
-                // N0 时间轴：按屏记一次耗时与完成时刻。用户报的"有时一块屏有时两块"要的就是
-                // 这一格——两块屏的耗时差会把"只有一块先白"这件事解释清楚。只报序号与毫秒。
-                let at = Instant::now();
-                let frame = grab(&temp, seq, *display);
-                // `display` 这个名字在 `tracing` 的字段语法里被占用，先在宏外头落成整数
-                let screen = *display;
-                tracing::debug!(
-                    screen,
-                    ms = at.elapsed().as_millis() as u64,
-                    got = frame.is_some(),
-                    t_ms = crate::system::probe::now_ms(),
-                    "截图：这一块屏抓完"
-                );
-                if let Some(frame) = frame {
-                    frames.push(frame);
-                }
-            }
+            // 每块屏各起一条线程同时抓。排队抓的时候，第二块要等第一块整个子进程跑完
+            // 才开始（实测两块屏 135~186ms + 106~126ms，串起来 250~305ms）——那段"屏幕上
+            // 自家窗不见了"的空白正好被加长一次抓屏的时间。并行之后总耗时≈最慢的那一块。
+            // `scope` 保证这个函数返回前线程全部 join，临时目录不会被人一边删一边读。
+            let grabbed: Vec<Option<crate::state::Freeze>> = std::thread::scope(|s| {
+                displays
+                    .iter()
+                    .map(|display| {
+                        s.spawn(|| {
+                            // N0 时间轴：按屏记一次耗时与完成时刻。只报序号与毫秒。
+                            let at = Instant::now();
+                            let frame = grab(&temp, seq, *display);
+                            // `display` 这个名字在 `tracing` 的字段语法里被占用，先在宏外头落成整数
+                            let screen = *display;
+                            tracing::debug!(
+                                screen,
+                                ms = at.elapsed().as_millis() as u64,
+                                got = frame.is_some(),
+                                t_ms = crate::system::probe::now_ms(),
+                                "截图：这一块屏抓完"
+                            );
+                            frame
+                        })
+                    })
+                    .map(|handle| handle.join().ok().flatten())
+                    .collect()
+            });
+            // 顺序按 `displays` 来（`apply_frozen` 就按这个顺序把像素配回各屏的矩形）
+            let frames: Vec<crate::state::Freeze> = grabbed.into_iter().flatten().collect();
             capture::purge_temp(&temp);
             capture::show_again(&ctx, &hidden);
             tracing::info!(
