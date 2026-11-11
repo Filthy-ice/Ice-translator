@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::system::wake_root;
+use crate::system::{bar, wake_root};
 use egui::{Id, Key, Modifiers, Pos2, Rect, Response, Sense, Ui, Vec2};
 
 /// 文字层选中块的高亮：淡蓝底 + 一档深一点的边。颜色跟应用自己的图标同一族（不新造色系）。
@@ -208,10 +208,13 @@ pub fn band_buttons(ui: &mut Ui, sink: &mut Vec<PinIntent>) {
         // **带子上没有「关闭」**（用户 2026-11-09 晚：不需要在界面上搞一个关闭的按钮）。
         // 关闭只走两条：esc 关当前这张、右键菜单那颗。右键仍读完整的 `ACTIONS` 四项。
         for action in BAND_ACTIONS {
-            // 「关」按下去就是把这张从状态里摘掉，别的什么都不动（历史文件照旧）
-            if ui.button(action.label()).clicked() {
+            // 路 B：三颗改成文字按钮——平时只有字、悬停整颗变淡浮起（`bar::text_button`），
+            // 不再是 egui 默认那颗"字外套一层底和框"（用户嫌丑的那层）。禁用那颗不进悬停支。
+            let response = bar::text_button(ui, action.label());
+            if response.clicked() {
                 sink.push(PinIntent::from_action(action));
             }
+            response.on_hover_text(action.menu_label());
         }
     });
 }
