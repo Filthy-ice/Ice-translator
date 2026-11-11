@@ -5,11 +5,11 @@
 //! 焦点那一张、同时钉 8 张各自出图。所以这个模块不是"猜一个形态再改"，是把读数控成代码。
 //!
 //! 三条从读数里出来的硬规矩，写在这里而不是散在绘制里：
-//! 1. **带子是窗口的一部分**，按钮 SHALL NOT 浮在图片上——用户那句"右下角有漂浮在图片
-//!    外侧的翻译按钮"是字面意思，图上压控件就违背它。
-//! 2. **收起带子 = 把窗口本身缩到图片那一块**（`ViewportCommand::InnerSize`）。实测过
-//!    只画不缩的那一档：那条带子不画东西、不透明（采样 `#0800`）、**还照吃命中**——
-//!    一条隐形陷阱。所以"画但不看得见"这种收法禁止出现。
+//! 1. **操作条是另一扇浮空窗**（CHG-011），不画在这扇贴图窗里——用户那句"离图 3px 的圆角
+//!    单独操作栏"是字面意思，图上压控件或把带子焊在窗口下缘都违背它。本模块只画图片那一块。
+//! 2. **贴图窗恒等于图片**（`window_size` = 图片点尺寸，不随收放变）。实测过"画一块不透明
+//!    带子却不缩窗口"那一档：那条带子不画东西、**还照吃命中**——一条隐形陷阱。所以贴图窗里
+//!    再也没有"不画却吃命中"的地方；收放只决定那扇药丸窗在不在。
 //! 3. **位置只从 `ViewportInfo::outer_rect` 读**，本模块 SHALL NOT 自己累计第二份坐标
 //!    （拖动、系统搬窗、隐藏再回来三种情况它都跟着，事实 32）。
 //!
@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::system::{bar, wake_root};
+use crate::system::{bar, pill, wake_root};
 use egui::{Id, Key, Modifiers, Pos2, Rect, Response, Sense, Ui, Vec2};
 
 /// 文字层选中块的高亮：淡蓝底 + 一档深一点的边。颜色跟应用自己的图标同一族（不新造色系）。
@@ -31,16 +31,13 @@ fn select_edge() -> egui::Stroke {
     egui::Stroke::new(1.0, egui::Color32::from_rgb(0x2E, 0x6F, 0xF2))
 }
 
-/// 带子的高度：一颗按钮（与 E 区那排同源，同一个字号加同一套留白）加上下各 8 留白。
-///
-/// 为什么是常量而不是按内容量：收起时窗口要缩到**图片那一块**，展开时窗口是
-/// `图片 + BAND_H`——这个差值必须是确定的数，否则"缩窗口"那一刻算出来的高度和实际
-/// 摆出来的带子对不上，就会留下几像素的死区（就是第 2 条硬规矩要防的东西）。
-pub const BAND_H: f32 = 34.0;
+/// 带子的概念已经在 CHG-011 里被**浮空药丸**取代：贴图窗恒等于图片那一块，操作条是另一扇
+/// 窗（`system/pill.rs`）。这里不再有 `BAND_H`，也不再有多出来的一块死区（事实 3 那条隐形
+/// 陷阱因此结构性消失）。药丸本体的行高在 `pill::PILL_H`，与这里无关。
 
 /// 带子里那三颗（`ACTIONS` 去掉「关闭」），**顺序就是显示顺序**。
 ///
-/// 单独一张表而不是在带子里 `filter`：这样"带子上没有关闭"这件事写在类型里，
+/// 单独一张表而不是在带子里 `filter`：这样"药丸上没有关闭"这件事写在类型里，
 /// 谁把 Close 塞回来会少一颗，断言立刻响。
 pub const BAND_ACTIONS: [PinAction; 3] = [
     PinAction::Translate,
@@ -90,43 +87,28 @@ impl PinAction {
     }
 }
 
-/// 一张贴图该占的窗口尺寸与两块矩形。**这条 REQ 唯一能被无头锁住的部分**。
+/// 一张贴图该占的窗口尺寸与那块图片矩形。**这条 REQ 唯一能被无头锁住的部分**。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PinLayout {
-    /// 窗口内容尺寸（点）。收起时它等于图片那块，展开时多出 `BAND_H`
+    /// 窗口内容尺寸（点）。**恒等于图片那块**——操作条在另一扇药丸窗里，不再多出 `BAND_H`
     pub window_size: Vec2,
     /// 图片画在哪块（点，左上角是窗口原点）
     pub image_rect: Rect,
-    /// 带子占的那块。收起时它整块落在窗口之外，宽度为 0——**不是"在里面但没画"**
-    pub band_rect: Rect,
 }
 
-/// 像素尺寸 + 开合 + 那张屏的 `pixels_per_point` → 窗口几何。
+/// 像素尺寸 + 那张屏的 `pixels_per_point` → 窗口几何。
 ///
 /// `image_px` 是**像素**（PNG 读出来的原尺寸），`scale` 是那张贴图所在屏的 ppp。
-/// 除法只在这一处发生，产出的三个矩形全是点。
-pub fn pin_layout(image_px: Vec2, band_open: bool, scale: f32) -> PinLayout {
+/// 除法只在这一处发生，产出的两块矩形全是点。收放带子改由药丸窗的显隐负责，与本函数无关。
+pub fn pin_layout(image_px: Vec2, scale: f32) -> PinLayout {
     // 唯一一处除法。ppp 拿不到（0 或负）时按 1.0 兜住——那不是"截错了"，
     // 而是这一帧还没有屏信息，宁可 1:1 也不能算出 0 尺寸的窗口
     let scale = if scale > 0.0 { scale } else { 1.0 };
     let size = image_px / scale;
     let image_rect = Rect::from_min_size(Pos2::ZERO, size);
-    let window_size = if band_open {
-        Vec2::new(size.x, size.y + BAND_H)
-    } else {
-        size
-    };
-    let band_rect = if band_open {
-        Rect::from_min_size(Pos2::new(0.0, size.y), Vec2::new(size.x, BAND_H))
-    } else {
-        // 收起：整块挪到窗口之外并压成 0 宽。命中测试因此永远碰不到它（REQ-004 末句
-        // "不可见就是不可点，不画灰着的假按钮"）
-        Rect::from_min_size(Pos2::new(window_size.x, window_size.y), Vec2::ZERO)
-    };
     PinLayout {
-        window_size,
+        window_size: size,
         image_rect,
-        band_rect,
     }
 }
 
@@ -198,18 +180,19 @@ pub fn inner_size_command(previous: Option<Vec2>, now: Vec2) -> Option<Vec2> {
     }
 }
 
-/// 带子里那一排按钮画进 `ui`，按下的动作推进 `sink`。
+/// 药丸里那一排三颗画进 `ui`，按下的动作推进 `sink`（由 `pill.rs` 在药丸窗那一帧调用）。
 ///
-/// **带子收起时这个函数根本不会被调**（窗口没那块地方），所以这里不需要再判一次开合；
-/// 反过来，如果哪天有人给"收起"的贴图也画了这几颗，`band_rect` 的宽度是 0，按钮挤不进
-/// 命中区——两种防线都留着。
-pub fn band_buttons(ui: &mut Ui, sink: &mut Vec<PinIntent>) {
+/// **清单与文案仍只在这一处**（遍历 `BAND_ACTIONS` 那张表，标签是 `action.label()` 那两个字）；
+/// 只是绘制从"egui 默认文本按钮（字外套一层底和框）"换成 [`bar::text_button`]（平时只有字、
+/// 悬停变淡浮起，REQ-002/REQ-009 的改口）。**不加 `glyph()` 映射**——改判后贴图消费文字按钮，
+/// 不消费线稿（线稿 `icon_button` 留在 `selection.rs` 只给遮罩用）。
+pub fn pill_buttons(ui: &mut Ui, sink: &mut Vec<PinIntent>) {
     ui.horizontal(|ui| {
-        // **带子上没有「关闭」**（用户 2026-11-09 晚：不需要在界面上搞一个关闭的按钮）。
+        // **药丸上没有「关闭」**（用户 2026-11-09 晚：不需要在界面上搞一个关闭的按钮）。
         // 关闭只走两条：esc 关当前这张、右键菜单那颗。右键仍读完整的 `ACTIONS` 四项。
         for action in BAND_ACTIONS {
-            // 路 B：三颗改成文字按钮——平时只有字、悬停整颗变淡浮起（`bar::text_button`），
-            // 不再是 egui 默认那颗"字外套一层底和框"（用户嫌丑的那层）。禁用那颗不进悬停支。
+            // 禁用口径照旧：识别/翻译进行中那颗"翻译"由调用方 `ui.add_enabled_ui` 关掉；
+            // 禁用态那颗不进悬停支（REQ-009 边界，`bar::text_button` 自己判 `response.enabled()`）
             let response = bar::text_button(ui, action.label());
             if response.clicked() {
                 sink.push(PinIntent::from_action(action));
@@ -219,14 +202,26 @@ pub fn band_buttons(ui: &mut Ui, sink: &mut Vec<PinIntent>) {
     });
 }
 
-/// 图片本体那块的命中意图：**按住就能拖**（REQ-004 第一条）。
-/// 图片本体那一块。
+/// 把一帧里某张贴图攒下的意图塞进它的交接槽（药丸窗的按钮与 esc 走这一条，不开第二条通道）。
 ///
-/// `Sense::click()` 只为了右键菜单吃得着这一下；**左键按住拖动交给系统**
-/// （`with_movable_by_background(true)`，事实 29/32 实测能把无边框子窗拖着走，
-/// 拖到哪 `outer_rect` 就读到哪）。自己接按下事件算增量坐标是另一条路
-/// （`ViewportCommand::StartDrag`，它自己注释就写着"不保证有效，除非紧接左键按下"）——
-/// **两条都留一份坐标计算迟早对不上**，所以这里只留一条，另一条不出现。
+/// 与贴图窗自己那三处（带子已搬进药丸、右键、键盘）共用同一个 `intents_slot`——槽按 pin id
+/// 键控，所以"按一次关掉两张"结构上不成立（design REQ-004）。
+pub fn submit_intents(ctx: &egui::Context, id: u64, intents: Vec<PinIntent>) {
+    if intents.is_empty() {
+        return;
+    }
+    if let Ok(mut queue) = intents_slot(ctx, id).lock() {
+        queue.extend(intents);
+    }
+}
+
+/// 图片本体那一块的命中区。**左键按住拖动走 `StartDrag`**（REQ-004 第一条，见 `show` 那一处），
+/// **不开 `with_movable_by_background`**——它一开无边框窗的整片内容都算背景，每一次按下都被
+/// AppKit 当成拖窗口吃掉，于是按钮收不到点击、右键弹不出、窗从来没成为 key window
+/// （esc/空格也进不来），用户报的"三个关法都不管用"就是这一个原因（D-29）。
+///
+/// `Sense::click()` 只为了右键菜单吃得着这一下。位置不自己算增量：拖到哪都只从
+/// `outer_rect` 现读（硬规矩 3），第二条坐标计算不在这里出现。
 pub fn image_area(ui: &mut Ui, size: Vec2) -> Response {
     ui.allocate_rect(Rect::from_min_size(Pos2::ZERO, size), Sense::click())
 }
@@ -353,6 +348,12 @@ pub fn viewport_id(id: u64) -> egui::ViewportId {
     egui::ViewportId::from_hash_of(Id::NULL.with("ice-translator.pin").with(id))
 }
 
+/// 这扇贴图原生窗的标题：带号，好让 `system::attach` 按标题把它和**它自己的**药丸配成对。
+/// 无边框窗标题不上屏，只给 AppKit 认。
+pub fn window_title(id: u64) -> String {
+    format!("贴图 {id}")
+}
+
 fn visual_key(id: u64) -> Id {
     Id::NULL.with("ice-translator.pin.visual").with(id)
 }
@@ -449,9 +450,9 @@ pub fn take_intents(ctx: &egui::Context, id: u64) -> Vec<PinIntent> {
 /// 以 `it was never used this pass` 删掉——症状是"贴图闪一下就没了"。所以调用方 SHALL
 /// 每帧为集合里每一张活着的贴图各调一次本函数，关闭的实现是**那一帧起不再调它**。
 ///
-/// `band_line` 是这一帧带子里那一行进度话（"识别中…" / "翻译中 3/7"），由帧循环从状态里
-/// 算好传进来：**贴图不自己去读 `AppState`**，也不留一份全局可变的"当前进度"——
-/// 六张贴图各有自己的进度，靠键去查迟早查错对象。
+/// 本函数只画**图片那一块**（带子已换成另一扇药丸窗，见 `system/pill.rs`）。贴图窗恒等于
+/// 图片，`window_size` 只随 ppp 变（挪到另一块屏那一刻自纠），不再随收放变。带子展开时
+/// 这一帧的回调顺带把自己所在屏的位置推给药丸窗（`pill::follow`，**不绕主窗**）。
 ///
 /// 首张落在哪儿：**由状态层给**（`pin.at` = 确认那一刻选区的全局左上角），本模块不猜、
 /// 也不攒坐标。给不出（「打开上一次」、满了之后 F3 补钉那两张）就照旧让系统按默认位摆，
@@ -462,7 +463,7 @@ pub fn take_intents(ctx: &egui::Context, id: u64) -> Vec<PinIntent> {
 /// 自绘遮罩（CHG-010）交得出矩形，就该钉回用户框住的那一块。
 /// 每帧传的仍是同一个值——egui 只在 builder 的 `position` **变了**的时候才发位置命令，
 /// 所以用户拖动之后窗不会被弹回原地（攒一份"我们以为它在哪"的坐标仍然是禁止的）。
-pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<String>) {
+pub fn show(ctx: &egui::Context, pin: &crate::state::Pin) {
     let id = pin.id;
     let band_open = pin.band_open;
     let Some(visual) = visual_of(ctx, pin) else {
@@ -470,7 +471,7 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
     };
     // ppp 取当前这一帧的：挪到另一块屏上时会跟着变，下一帧的 `InnerSize` 就自纠
     let scale = ctx.pixels_per_point();
-    let layout = pin_layout(visual.px, band_open, scale);
+    let layout = pin_layout(visual.px, scale);
     let previous = ctx.data_mut(|d| d.get_temp::<Vec2>(size_key(id)));
     let resize = inner_size_command(previous, layout.window_size);
 
@@ -485,7 +486,8 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
         // 内容都算背景：每一次按下都被 AppKit 当成拖窗口吃掉，于是带子按钮收不到点击、
         // 右键菜单弹不出来，窗口也从来没成为 key window——键盘事件（esc、空格）同样进不来。
         // 用户报的"三个关法都不管用"就是这一个原因。拖动改按下面那一处 `StartDrag`。
-        .with_title("贴图");
+        // 标题带上这张的号：原生子窗绑定（`system::attach`）要按标题把"这扇贴图"和"它自己的药丸"配成对。
+        .with_title(window_title(id));
     if let Some(at) = pin.at {
         builder = builder.with_position(at);
     }
@@ -539,7 +541,7 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
         // 这一帧这张攒下的意图（带子、菜单、键盘三处都往这儿放，最后一起交给交接槽）
         let mut local: Vec<PinIntent> = Vec::new();
 
-        // 图片本体：先占位（光标因此停在图片下缘，下一格拿到的正是 `band_rect`），再画
+        // 图片本体：先占位（光标停在图片这一块，整窗就是它），再画
         let area = image_area(ui, layout.image_rect.size());
         ui.painter().image(
             texture.id(),
@@ -608,24 +610,21 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, band_line: Option<Stri
             let _ = from;
             child.data_mut(|d| d.remove::<Pos2>(sel_start_key(id)));
         }
-        // 右键：恰好四项，与带子同一张表
+        // 右键：恰好四项，与药丸同一张表
         area.context_menu(|ui| image_menu(ui, &mut local));
 
-        if band_open {
-            ui.allocate_ui_with_layout(
-                Vec2::new(layout.window_size.x, BAND_H),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    band_buttons(ui, &mut local);
-                    if let Some(line) = band_line.as_deref() {
-                        // 同一行的右半边：这张自己的进度 + 现在按 `C` 会给什么。六张各说各的。
-                        // "怎么拖选"这句放在悬停里——带子宽度跟着图走，长句在窄图上会被裁掉。
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(line).on_hover_text(TEXT_LAYER_TIP);
-                        });
-                    }
-                },
-            );
+        // 文字层那句手势说明留在**图片本体**的悬停里（REQ-002：不进药丸）
+        area.on_hover_text(TEXT_LAYER_TIP);
+
+        // 带子展开、且这扇药丸**还没被系统绑成子窗**时：把自己这一帧的 `outer_rect` 现推给
+        // 药丸窗（不绕主窗、只在真变了那一刻发）。绑上之后位置由系统按固定偏移带着走，这里不再推。
+        if band_open && !pill::is_attached(&root, id) {
+            if let (Some(screen), Some(outer)) = (
+                pill::screen_of(&root),
+                child.input(|i| i.viewport().outer_rect),
+            ) {
+                pill::follow(&root, id, outer, screen);
+            }
         }
         if !local.is_empty() {
             if let Ok(mut queue) = slot.lock() {
@@ -686,59 +685,48 @@ mod tests {
         Pos2::new(x, y)
     }
 
-    /// 展开：窗口 = 图片 + 一条带子，带子在图片**下面**，图片那块一个像素都没被挤
+    /// 贴图窗**恒等于图片那一块**——操作条改成了另一扇浮空药丸窗（CHG-011），窗口本身不再
+    /// 随收放变高。这一条**替换**了旧的两条编码"带子是窗口一部分"的断言：契约换了，不是迁就实现。
     #[test]
-    fn the_open_band_sits_below_the_image_and_grows_the_window() {
-        let l = pin_layout(px(512.0, 360.0), true, 1.0);
-        assert_eq!(l.window_size, px(512.0, 360.0 + BAND_H));
+    fn the_pin_window_is_always_the_image_itself() {
+        let l = pin_layout(px(512.0, 360.0), 1.0);
+        assert_eq!(l.window_size, px(512.0, 360.0), "窗口 = 图片，不多出一条带子");
         assert_eq!(l.image_rect.max, at(512.0, 360.0));
-        assert_eq!(l.band_rect.min, at(0.0, 360.0), "带子必须紧贴图片下缘");
-        assert_eq!(l.band_rect.height(), BAND_H);
-        assert_eq!(l.band_rect.width(), 512.0, "带子与图片同宽");
-        // 两块不许重叠：图上压控件就违背"漂浮在图片外侧"那句原话
-        assert!(l.image_rect.max.y <= l.band_rect.min.y);
+        // 死区被结构性消除：贴图窗里再也没有"画了却不属于图片"的那一块
+        assert_eq!(l.window_size, l.image_rect.size(), "窗与图同一块");
     }
 
-    /// 收起：**窗口本身**缩到图片那一块，带子整块到窗口之外且宽度为 0。
-    /// 这条断言挡的是"画但不看得见"那种收法——实测它会留下一条不吃绘制、照吃命中的死区。
+    /// 收放带子不再改贴图窗尺寸：开合只决定那扇药丸窗在不在，`window_size` 恒等图片。
+    /// （旧的那条"收起=缩窗口"断言因此作废——现在根本没有会缩的那段，`pin_layout` 也不再收 `band_open`。）
     #[test]
-    fn a_closed_band_shrinks_the_window_itself_and_leaves_no_dead_strip() {
-        let open = pin_layout(px(512.0, 360.0), true, 1.0);
-        let closed = pin_layout(px(512.0, 360.0), false, 1.0);
-        assert_eq!(closed.window_size, px(512.0, 360.0), "收起 = 缩到图片本身");
-        assert_eq!(open.window_size.y - closed.window_size.y, BAND_H);
-        // 图片那块不许因为收带子而挪动或变形（往下收，不把图挪走）
-        assert_eq!(closed.image_rect, open.image_rect);
-        assert_eq!(closed.band_rect.width(), 0.0);
-        assert!(closed.band_rect.min.x >= closed.window_size.x);
-        assert!(closed.band_rect.min.y >= closed.window_size.y);
+    fn band_toggle_does_not_resize_the_pin_window() {
+        let l = pin_layout(px(512.0, 360.0), 1.0);
+        assert_eq!(l.window_size.y, 360.0, "不再有 BAND_H 那一段");
     }
 
     /// `scale = 2.0` 那一档：**点边长是像素的一半**，而且只在这一处除。
     /// 这条**不声称证明了真机行为**（H9 要一块 HiDPI 屏，归 W-5.7），只证明换算只有一个出处。
     #[test]
     fn the_pixel_to_point_division_happens_exactly_once() {
-        let l = pin_layout(px(1000.0, 800.0), true, 2.0);
+        let l = pin_layout(px(1000.0, 800.0), 2.0);
         assert_eq!(
             l.image_rect.max,
             at(500.0, 400.0),
             "2 倍屏上贴图不该有一倍大"
         );
         assert_eq!(
-            l.window_size.y,
-            400.0 + BAND_H,
-            "带子那一段是点，不再除一次"
+            l.window_size,
+            px(500.0, 400.0),
+            "窗口 = 换算后的图片，不再多一段带子（那一段是点也曾经不再除一次）"
         );
-        assert_eq!(l.band_rect.min.y, 400.0);
-        assert_eq!(l.band_rect.height(), BAND_H);
     }
 
     /// ppp 拿不到时按 1.0 兜：宁可 1:1，也不能算出 0 尺寸或负尺寸的窗口
     #[test]
     fn a_missing_scale_falls_back_to_one_not_to_zero() {
         for bad in [0.0, -1.0, -0.0] {
-            let l = pin_layout(px(200.0, 100.0), true, bad);
-            assert_eq!(l.window_size, px(200.0, 100.0 + BAND_H), "ppp={bad}");
+            let l = pin_layout(px(200.0, 100.0), bad);
+            assert_eq!(l.window_size, px(200.0, 100.0), "ppp={bad}");
             assert!(l.window_size.x > 0.0 && l.window_size.y > 0.0);
         }
     }
@@ -782,9 +770,9 @@ mod tests {
     #[test]
     fn the_layout_never_invents_a_position() {
         for (w, h) in [(100.0, 50.0), (512.0, 360.0), (1920.0, 1080.0)] {
-            let l = pin_layout(px(w, h), true, 1.0);
+            let l = pin_layout(px(w, h), 1.0);
             assert_eq!(l.image_rect.min, Pos2::ZERO, "几何里不许出现第二个坐标源");
-            assert_eq!(l.window_size, px(w, h + BAND_H));
+            assert_eq!(l.window_size, px(w, h));
         }
     }
 
@@ -937,7 +925,7 @@ mod tests {
             modifiers: egui::Modifiers::NONE,
         });
         pass(&ctx, input, |ui| {
-            show(ui.ctx(), &crate::state::Pin::for_test(1, png.clone()), None);
+            show(ui.ctx(), &crate::state::Pin::for_test(1, png.clone()));
         });
 
         assert_eq!(take_intents(&ctx, 1), vec![PinIntent::Close]);
@@ -969,7 +957,7 @@ mod tests {
         pass(&ctx, input, |ui| {
             let mut pin = crate::state::Pin::for_test(2, png.clone());
             pin.band_open = false;
-            show(ui.ctx(), &pin, Some("识别中…".to_string()));
+            show(ui.ctx(), &pin);
         });
         assert_eq!(take_intents(&ctx, 2), vec![PinIntent::ToggleBand]);
     }
@@ -983,11 +971,7 @@ mod tests {
         ctx.set_embed_viewports(true);
         let missing = std::path::PathBuf::from("/tmp/definitely-not-a-screenshot.png");
         pass(&ctx, egui::RawInput::default(), |ui| {
-            show(
-                ui.ctx(),
-                &crate::state::Pin::for_test(3, missing.clone()),
-                None,
-            );
+            show(ui.ctx(), &crate::state::Pin::for_test(3, missing.clone()));
         });
         assert!(take_intents(&ctx, 3).is_empty());
     }
@@ -1052,12 +1036,12 @@ mod tests {
         );
     }
 
-    /// **形状核查：一份清单。** 带子与右键菜单两处都只许遍历 `ACTIONS`，
+    /// **形状核查：一份清单。** 药丸那一排与右键菜单两处都只许遍历那张 `*_ACTIONS`，
     /// 不许各自再写一遍按钮名——那句"只要四项"要被钉住，不是被打折理解。
     #[test]
     fn both_the_band_and_the_menu_iterate_the_one_table() {
         let body = implementation_lines(include_str!("pin.rs"));
-        for name in ["band_buttons", "image_menu"] {
+        for name in ["pill_buttons", "image_menu"] {
             let start = body
                 .find(&format!("pub fn {name}"))
                 .unwrap_or_else(|| panic!("找不到 {name}"));

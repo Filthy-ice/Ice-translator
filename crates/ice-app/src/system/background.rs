@@ -95,3 +95,29 @@ pub fn sync_titlebar(frame: &eframe::Frame) -> Option<bool> {
 pub fn sync_titlebar(_frame: &eframe::Frame) -> Option<bool> {
     None
 }
+
+/// 把**根窗**按回不透明底（`isOpaque = true`）。
+///
+/// CHG-011 为了药丸那道缝能透出桌面，开了进程级透明（事实 16）；可事实 20 讲得很清楚：
+/// 这一格与根窗自己那一格是同一个字段，开了它**主窗也变成非不透明**，于是主窗"透字"、
+/// 背后的浏览器/桌面直接看穿（用户 2026-11-10 真机截图正是这一格）。
+/// 解法：进程级透明留着（药丸那扇独立 viewport 要靠它才透得出），但**单独把根窗设成 opaque**——
+/// 不透明的窗口有一份实心 backing，surface 上那些 alpha<255 的像素混的是这份实心底、不是桌面。
+///
+/// 每帧核对，和 [`sync_titlebar`] 同一条理由：换形态时 winit 换窗口，`isOpaque` 回默认。
+/// 已经 opaque 的那一帧只读不写。这**不影响**"整窗失焦半透明"那一档（那是 `alphaValue`，另一回事）。
+#[cfg(target_os = "macos")]
+pub fn sync_opaque(frame: &eframe::Frame) -> Option<bool> {
+    let ns_window = super::window::ns_window(frame)?;
+    if ns_window.isOpaque() {
+        return Some(true);
+    }
+    ns_window.setOpaque(true);
+    Some(ns_window.isOpaque())
+}
+
+/// 非 macOS 没有这条原生入口；返回 `None`，那一侧透明本就未证（NFR-7 / 事实 20）。
+#[cfg(not(target_os = "macos"))]
+pub fn sync_opaque(_frame: &eframe::Frame) -> Option<bool> {
+    None
+}
