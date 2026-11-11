@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "CHG-013",
+  "title": "截图不再收起自家窗口（改口 CHG-009 REQ-010）",
+  "version": "v0.1",
+  "status": "SPEC_REVIEW",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [],
+  "history": [
+    {
+      "at": "2026-11-11T08:03:30+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-11-11T08:16:36+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-11-11T08:16:36+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    }
+  ],
+  "approval": null,
+  "plan_hash": null
+}

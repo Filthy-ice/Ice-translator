@@ -1,0 +1,117 @@
+{
+  "baseline": null,
+  "design": [
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
+      "note": "界面与状态层无头：submit_capture 之后不再产生 hide 列表、不再发 Visible(false)（state.rs:2938/2952 两条原断言 hidden.viewports.len()==3 改判）；show_again 拆成只唤醒后仍发 RequestPaintWhileHidden + request_repaint（capture.rs wake_commands 断言保留并加强）；Job::Freeze/ScreenCapture 去掉 hidden 字段后既有构造照跑。本包以删除为主，唯一要当心的是别误删 REQ-006 仍用的唤醒（事实 10）"
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "note": "全量无回归：既有 ice-app 548 项与其余 crate（识别链、回填链、三段状态机与序号、面板协议、剪贴板字节校验、导出接缝、配置夹取、截图/贴图/老化/热键）一项不许回退。本包只去掉截图前后那一对收起/还原，冻结/抓屏方法（CHG-010）、选框/认窗/药丸/command+c、翻译链/落盘/老化/热键送达都不动"
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "bash",
+        "-c",
+        "grep -RnE 'RequestPaintWhileHidden' crates/ice-app/src/system/capture.rs"
+      ],
+      "note": "REQ-006 隐藏态唤醒不回归（事实 10 的命门）：RequestPaintWhileHidden 在全仓只出现在 capture.rs（经 wake_commands），托盘里按热键起贴图靠它那一帧。grep 必须命中（exit 0）才算过；命中不到＝把 REQ-006 的唤醒顺手删了，触发停止条件 6，停下恢复。方向与 CHG-012 V-003 相反：那条是「不许出现」，这条是「必须仍在」"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "tree",
+        "-p",
+        "ice-app",
+        "-e",
+        "normal"
+      ],
+      "note": "依赖图零增量：本包以删除为主、机制全是仓里现成的（egui viewport / wake_commands），不新增 crate。比对基线取开工那笔 ef92028 的输出逐行相同才算过；多一个名字即触发停止条件 2，先回来批准再继续"
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-003"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "scan"
+      ],
+      "note": "敏感信息基线扫描：本包不新增落盘面（历史目录与老化照 CHG-009 REQ-007/008），文案与日志不含文件名或 OCR 文本那条沿用既有断言；scan 通过是改口不漂隐私口径的下限，不能替代完整 DLP"
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-001",
+        "REQ-002"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "W-13.1：用户在机器前聚焦全量窗发起一轮框选——① 定格里不再有透着底下代码的半透明「背景框」（异步收起 race 消失）；② 还原不再白 1~3 秒（主窗全程在遮罩下不动）；③ 自家窗若可见则进图是正常不透明像、用户能接受（Q-003 (c) 已知限制）；④ 托盘里按热键起贴图仍唤得回（REQ-006 唤醒未回归，事实 10）。观感只有用户眼睛能判，不许拿日志或无头用例冒充。仍白 1~3s＝停止条件 4（白屏另有根 #107），用户不接受自家窗进图＝停止条件 5，都回来报，不自行退回收起或加替代隐藏路径"
+    }
+  ]
+}
