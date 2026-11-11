@@ -1546,11 +1546,11 @@ impl AppState {
     /// 那颗按钮灰不灰与状态行说哪句话，**读同一个来源**（与 `translate_gate` /
     /// `compose_gate` 同形）。三道门从上往下依次是：这台机器没这件事、上一次还在画、
     /// 屏幕上钉满了。
-    /// 这次框选要临时收起哪些窗，以及主窗本来是不是收着的。
+    /// 这次框选要临时收起哪些窗。
     ///
     /// 主窗 + 每一张贴图，一个都不能漏：系统的框选界面把屏幕原样拍进去，任何一扇还开着
-    /// 的自家窗都会进图（事实 32）。`root_was_hidden` 只有托盘那一档才为真，它决定还原时
-    /// 要不要多买一帧（见 `capture::wake_commands`）。
+    /// 的自家窗都会进图（事实 32）。还原时那两条命令的顺序与"要不要买一帧"不在这里决定，
+    /// 见 `capture::wake_commands`——窗在这一刻收着，这一条对截图这一档恒成立。
     pub fn capture_hidden_record(&self) -> capture::Hidden {
         capture::Hidden {
             viewports: std::iter::once(egui::ViewportId::ROOT)
@@ -1560,7 +1560,6 @@ impl AppState {
                         .map(|pin| crate::system::pin::viewport_id(pin.id)),
                 )
                 .collect(),
-            root_was_hidden: self.hidden,
         }
     }
 
@@ -2938,10 +2937,9 @@ mod tests {
         // 主窗 + 两张贴图，一个都不能漏
         assert_eq!(hidden.viewports.len(), 3);
         assert!(hidden.viewports.contains(&egui::ViewportId::ROOT));
-        assert!(!hidden.root_was_hidden, "主窗开着时不用买那一帧");
 
-        // 收进托盘的那一档：同一份账要标出"主窗本来就收着"，还原时才知道要多发一次
-        // `RequestPaintWhileHidden`（事实 30/31）。先让上一次取消落地——在飞时本来就该拒
+        // 主窗本来就收着（托盘那一档）也照样发得出、账也照样是这三扇：还原那两条命令
+        // 不分这一格（窗在这一刻收着，恒要买那一帧）。先让上一次取消落地——在飞时本来就该拒
         let first = st.apply_capture(id_of(&job), capture::Outcome::Cancelled);
         assert!(matches!(first, CaptureApplied::Cancelled));
         st.hidden = true;
@@ -2951,7 +2949,8 @@ mod tests {
         let (Job::ScreenCapture { hidden, .. } | Job::Freeze { hidden, .. }) = &job else {
             unreachable!()
         };
-        assert!(hidden.root_was_hidden);
+        assert_eq!(hidden.viewports.len(), 3);
+        assert!(hidden.viewports.contains(&egui::ViewportId::ROOT));
     }
 
     /// **每一轮冻结都带自己的号**，纹理缓存认的就是这一格（缺陷 D-41 的形状核查）。
