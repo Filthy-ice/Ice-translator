@@ -630,9 +630,9 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             }
         }
 
-        // 键盘：esc 取消、回车确认。收不收得到取决于应用是否前台——那一步在 `cover::focus`，
-        // 头几帧重下、收敛即收手（实测激活要一两帧才落地，"发一次就当成功"是错的）。
-        // **两个键都先过状态机再交意图**：esc 要把这一扇窗自己的框清掉，状态各窗自持，
+        // 键盘：esc 取消、回车确认、command+c／ctrl+c 复制这一张。收不收得到取决于应用是否前台——
+        // 那一步在 `cover::focus`，头几帧重下、收敛即收手（实测激活要一两帧才落地，"发一次就当成功"是错的）。
+        // **三个键都先过状态机再交意图**：esc 要把这一扇窗自己的框清掉，状态各窗自持，
         // 主窗不会替它清，留着它下一次开遮罩就带着上一次的框。
         let mut keys: Vec<MaskOut> = child.input(|i| {
             i.events
@@ -653,6 +653,21 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                     } => {
                         next.confirm();
                         next.rect.map(|rect| MaskOut::Confirm { display, rect })
+                    }
+                    // **command+c（mac）/ ctrl+c（其他）= 药丸上那颗「复制」按了一下**（某截图工具 同款，
+                    // 用户 2026-11-11 第 5 条）。只在**手里真有框**时兑现：没框就什么都不做，
+                    // 不许替用户猜一块全屏当"这张图"复制出去。
+                    egui::Event::Key {
+                        key: egui::Key::C,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if (modifiers.command || modifiers.ctrl)
+                        && !modifiers.alt
+                        && !modifiers.shift
+                        && next.rect.is_some() =>
+                    {
+                        next.rect.map(|rect| MaskOut::ConfirmCopy { display, rect })
                     }
                     _ => None,
                 })
