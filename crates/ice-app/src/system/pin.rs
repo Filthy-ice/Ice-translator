@@ -690,7 +690,11 @@ mod tests {
     #[test]
     fn the_pin_window_is_always_the_image_itself() {
         let l = pin_layout(px(512.0, 360.0), 1.0);
-        assert_eq!(l.window_size, px(512.0, 360.0), "窗口 = 图片，不多出一条带子");
+        assert_eq!(
+            l.window_size,
+            px(512.0, 360.0),
+            "窗口 = 图片，不多出一条带子"
+        );
         assert_eq!(l.image_rect.max, at(512.0, 360.0));
         // 死区被结构性消除：贴图窗里再也没有"画了却不属于图片"的那一块
         assert_eq!(l.window_size, l.image_rect.size(), "窗与图同一块");

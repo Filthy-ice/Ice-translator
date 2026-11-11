@@ -229,16 +229,31 @@ mod tests {
         });
         let hit = hit.expect("画了一颗");
         assert_eq!(hit.width(), TEXT_BTN_W);
-        assert_eq!(hit.height(), 34.0, "行高给多少那颗就占多少，不是上浮后的偏移");
+        assert_eq!(
+            hit.height(),
+            34.0,
+            "行高给多少那颗就占多少，不是上浮后的偏移"
+        );
     }
 
     /// 形状核查：平时那支不画底/框，悬停支读那三个常量各一次、命中与上浮分离。
     #[test]
     fn the_hover_branch_reads_the_three_constants_once_each() {
         let body = crate::system::implementation_lines(include_str!("bar.rs"));
-        assert_eq!(body.matches("HOVER_TINT").count(), 2, "常量定义一处 + 悬停支用一处");
-        assert_eq!(body.matches("HOVER_LIFT").count(), 2, "常量定义一处 + 悬停支用一处");
-        assert!(body.contains("paint_shadow(painter, draw"), "悬停支调那一道共用影");
+        assert_eq!(
+            body.matches("HOVER_TINT").count(),
+            2,
+            "常量定义一处 + 悬停支用一处"
+        );
+        assert_eq!(
+            body.matches("HOVER_LIFT").count(),
+            2,
+            "常量定义一处 + 悬停支用一处"
+        );
+        assert!(
+            body.contains("paint_shadow(painter, draw"),
+            "悬停支调那一道共用影"
+        );
         assert!(
             body.contains("ui.interact(rect, id"),
             "命中拿的是未上浮的原 rect"

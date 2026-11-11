@@ -270,7 +270,10 @@ mod tests {
     /// 位置命令只在真变了那一刻发：0.4 点抖动不发、恰好相等不发、挪 1 点才发一次。
     #[test]
     fn the_position_command_fires_only_on_a_real_move() {
-        assert_eq!(position_command(Some(pos2(100.0, 200.0)), pos2(100.0, 200.0)), None);
+        assert_eq!(
+            position_command(Some(pos2(100.0, 200.0)), pos2(100.0, 200.0)),
+            None
+        );
         assert_eq!(
             position_command(Some(pos2(100.0, 200.0)), pos2(100.4, 200.0)),
             None,
@@ -280,7 +283,10 @@ mod tests {
             position_command(Some(pos2(100.0, 200.0)), pos2(100.0, 210.0)),
             Some(pos2(100.0, 210.0))
         );
-        assert_eq!(position_command(None, pos2(100.0, 200.0)), Some(pos2(100.0, 200.0)));
+        assert_eq!(
+            position_command(None, pos2(100.0, 200.0)),
+            Some(pos2(100.0, 200.0))
+        );
     }
 
     /// 药丸默认在图片下方、离图 3pt、**右缘贴图片右缘**；翻到上方时以图片上缘为基准；窗左上角再让出阴影留白。
@@ -299,7 +305,11 @@ mod tests {
         // 图片贴近屏底：放不下，翻到上方
         let low = Rect::from_min_max(pos2(300.0, 980.0), pos2(812.0, 1075.0));
         let above = pill_window_pos(low, screen());
-        assert_eq!(above.y + SHADOW_PAD, low.min.y - bar::GAP - PILL_H, "翻到图片上方");
+        assert_eq!(
+            above.y + SHADOW_PAD,
+            low.min.y - bar::GAP - PILL_H,
+            "翻到图片上方"
+        );
     }
 
     /// 形状核查（design REQ-004）：本模块 `OuterPosition` 恰好一次，且值只来自那个纯函数；
