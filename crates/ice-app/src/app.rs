@@ -142,6 +142,10 @@ pub struct IceApp {
     window_probe: Option<crate::system::probe::WindowProbe>,
     /// 同上，停靠链那一组。
     dock_probe: Option<crate::system::probe::DockProbe>,
+    /// 截图段末尾（派发 + `probe::SPAN_MS`）：只有段内的帧停顿才算线索。
+    probe_span_until: Option<u64>,
+    /// 上一帧的时刻，用来量"这一帧离上一帧多久"。
+    probe_frame_at: Option<u64>,
     /// 上一帧下到原生层的整窗不透明度（FR-3.7，见 `apply_native_alpha`）。
     /// `None` = 还没下过或上一次没走通。
     native_alpha: Option<f32>,
@@ -237,6 +241,8 @@ impl IceApp {
             geometry_seen: None,
             window_probe: None,
             dock_probe: None,
+            probe_span_until: None,
+            probe_frame_at: None,
             native_alpha: None,
             native_background: None,
             native_flat_titlebar: None,
@@ -735,6 +741,9 @@ impl IceApp {
     /// `want` 是按同一组输入**重算**一遍 `mode::dim_alpha`，不从 `ui` 里那份缓存取：探针不许
     /// 反过来影响判定，也不许因为借用 `self.state` 而卡住后面那次对 `self.window_probe` 的可变借用。
     fn trace_window(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let now = crate::system::probe::now_ms();
+        let in_span = crate::system::probe::in_span(self.probe_span_until, now);
+        crate::system::probe::note_frame_gap(&mut self.probe_frame_at, now, in_span);
         let mode = self.state.mode();
         let focused = ctx.input(|i| i.viewport().focused) == Some(true);
         let (dim_enabled, unfocused_alpha) = (
@@ -1763,8 +1772,14 @@ impl IceApp {
         // 都会进图（事实 32 的正负对照）。**还原不在这里做**：窗收起时帧循环根本不跑，挂在
         // 帧末的还原永远不会执行；那份账跟着任务走，由子进程结束那条线程去放（REQ-010）。
         if effects.capture {
-            // N0 时间轴的起点：白屏那一段到底落在"派发之前"还是"抓屏那一段里"，靠这几个毫秒点对
-            tracing::info!(t_ms = crate::system::probe::now_ms(), "截图：这一帧派发抓屏任务");
+            // N0 时间轴的起点：白屏落在哪一段，靠这几个毫秒点对差值
+            tracing::info!(
+                t_ms = crate::system::probe::now_ms(),
+                "截图：这一帧派发抓屏任务"
+            );
+            // 从这一刻起开一段"看帧停顿"的窗口：平时空闲几秒不重画是正常的，只有这一段里的停顿才是线索
+            self.probe_span_until =
+                Some(crate::system::probe::now_ms() + crate::system::probe::SPAN_MS);
             // 新轮开始：把上一轮可能残留的"F3 请确认"清掉，免得这一轮刚框好就被上一次的触发误钉。
             crate::system::selection::clear_confirm_request(ctx);
             // 屏列表只能由帧循环读（`NSScreen` 要在主线程）：抓哪几块、每块多大，
@@ -2235,6 +2250,7 @@ fn freeze_texture(
     }
     // 这里要的是**四个一组的字节**，不是 Color32 数组——那个签名挨着的 `from_rgb`
     // 也一样，传错编译不过（探针那一轮我就是传错 uv 量出一个假结论，同族的错）
+    let at = std::time::Instant::now();
     let mut bytes = Vec::with_capacity((w * h * 4) as usize);
     for pixel in frame.image.pixels() {
         bytes.extend_from_slice(&pixel.0);
@@ -2242,6 +2258,14 @@ fn freeze_texture(
     let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &bytes);
     let texture = ctx.load_texture("ice-selection.freeze", image, egui::TextureOptions::LINEAR);
     let id = texture.id();
+    // N0 读数：这一轮这块屏的纹理准备耗时。它是主线程上的活，白屏若卡在这里会直接显出来。
+    tracing::debug!(
+        screen = frame.display,
+        ms = at.elapsed().as_millis() as u64,
+        px = (w * h) as u64,
+        t_ms = crate::system::probe::now_ms(),
+        "冻结帧纹理已备好"
+    );
     // 键里不带轮号：新一轮把旧那一格**顶掉**，纹理才不会一轮攒一张
     ctx.data_mut(|d| d.insert_temp(key, (frozen_id, texture)));
     id

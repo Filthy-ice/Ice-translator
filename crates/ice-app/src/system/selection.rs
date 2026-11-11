@@ -556,6 +556,19 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
     let slot = slot_of(ctx, display);
 
     ctx.show_viewport_deferred(viewport, builder, move |ui, _class| {
+        // N0 读数：这一扇遮罩**真的画上第一帧**的时刻——白屏的终点就是这一行。
+        // 按轮号作废，一轮一块屏只记一次；只读缓存，不参与任何判定。
+        let paint_key = Id::NULL.with("ice-selection.first-paint").with(display);
+        if ui.ctx().data(|d| d.get_temp::<u64>(paint_key)) != Some(frozen_id) {
+            // `display` 这个名字在 `tracing` 的字段语法里被占用，先在宏外头落成整数
+            let screen = display;
+            tracing::debug!(
+                screen,
+                t_ms = crate::system::probe::now_ms(),
+                "遮罩：第一帧已画"
+            );
+            ui.ctx().data_mut(|d| d.insert_temp(paint_key, frozen_id));
+        }
         let child = ui.ctx().clone();
         let field = Field::new(Rect::from_min_size(Pos2::ZERO, points), points);
         // 这一扇窗自己的选区：**读写都在这一帧里完成**，不绕主窗一圈。

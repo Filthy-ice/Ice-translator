@@ -4,7 +4,7 @@
 //!
 //! 1. "截图时我们的窗口失焦透明、透出下面的字" → 要的是这一刻的 `mode + focused + capturing
 //!    + 判出来的 want + 原生有没有接住`。`mode::dim_alpha` 里只有"精简 + 失焦 + 开关没关"会
-//!    低于 1.0，这条读数要么坐实它，要么把它排除。
+//!      低于 1.0，这条读数要么坐实它，要么把它排除。
 //! 2. "全量转精简后缩不下去" → 要的是**原生读回来的内容区下限**与该形态**应该**下发的下限。
 //!    两个数不相等就是 `MinInnerSize` 没落到位（与 `mode.rs` 记过的 W-2.1 同形状：全量的
 //!    640×420 漏到精简窗上）；相等说明是数值本身，那是改需求不是修缺陷，得用户给数。
@@ -82,6 +82,28 @@ pub fn note_dock(prev: &mut Option<DockProbe>, now: DockProbe) {
         hidden = now.hidden,
         "停靠探针"
     );
+}
+
+/// 主线程这一帧离上一帧超过这个数就算停顿。抓屏整轮实测只有 256–308ms，用户报的 1–3 秒
+/// 白要么落在"我们的帧根本没跑"，要么落在"帧在跑但遮罩还没画上"——这两个数能把它分开。
+pub const STALL_MS: u64 = 150;
+
+/// 从派发那一刻起，这段时间内才算"截图段"。平时应用按需重画，空闲几秒不跑一帧是正常的，
+/// 只有截图那一段里的停顿才是线索。
+pub const SPAN_MS: u64 = 6_000;
+
+/// 派发之后还在截图段里吗。
+pub fn in_span(until: Option<u64>, now: u64) -> bool {
+    until.is_some_and(|until| now <= until)
+}
+
+/// 帧间隔：缓存每帧都往前挪，**只有段内且超过 `STALL_MS` 才记一行**。
+pub fn note_frame_gap(prev: &mut Option<u64>, now: u64, in_span: bool) {
+    let gap = prev.map_or(0, |at| now.saturating_sub(at));
+    *prev = Some(now);
+    if in_span && gap >= STALL_MS {
+        tracing::debug!(gap_ms = gap, t_ms = now, "截图段内的帧间隔");
+    }
 }
 
 /// 同一条时间轴上的毫秒点，用来把四段串起来对差值。
@@ -185,5 +207,25 @@ mod tests {
         let first = now_ms();
         std::thread::sleep(std::time::Duration::from_millis(3));
         assert!(now_ms() >= first);
+    }
+
+    /// 截图段的口径：派发后 6 秒内算段内，过了或压根没派发过都不算。
+    #[test]
+    fn the_capture_span_has_a_start_and_an_end() {
+        assert!(in_span(Some(11_000), 5_000));
+        assert!(!in_span(Some(4_000), 5_000));
+        assert!(!in_span(None, 5_000));
+    }
+
+    /// 空闲时的长停顿不许当线索：缓存照样往前挪，段外一次都不记，
+    /// 下一次进段时量到的是"离上一帧"的间隔，不是"离昨天那一帧"。
+    #[test]
+    fn the_gap_cache_moves_even_outside_the_span() {
+        let mut prev = None;
+        note_frame_gap(&mut prev, 1_000, false);
+        note_frame_gap(&mut prev, 9_000, false);
+        assert_eq!(prev, Some(9_000));
+        note_frame_gap(&mut prev, 9_200, true);
+        assert_eq!(prev, Some(9_200));
     }
 }
