@@ -403,7 +403,20 @@ impl JobRunner {
             let temp = capture::temp_dir();
             let mut frames = Vec::new();
             for display in &displays {
-                if let Some(frame) = grab(&temp, seq, *display) {
+                // N0 时间轴：按屏记一次耗时与完成时刻。用户报的"有时一块屏有时两块"要的就是
+                // 这一格——两块屏的耗时差会把"只有一块先白"这件事解释清楚。只报序号与毫秒。
+                let at = Instant::now();
+                let frame = grab(&temp, seq, *display);
+                // `display` 这个名字在 `tracing` 的字段语法里被占用，先在宏外头落成整数
+                let screen = *display;
+                tracing::debug!(
+                    screen,
+                    ms = at.elapsed().as_millis() as u64,
+                    got = frame.is_some(),
+                    t_ms = crate::system::probe::now_ms(),
+                    "截图：这一块屏抓完"
+                );
+                if let Some(frame) = frame {
                     frames.push(frame);
                 }
             }
@@ -413,6 +426,7 @@ impl JobRunner {
                 request_id = id,
                 screens = frames.len(),
                 elapsed_ms = started.elapsed().as_millis() as u64,
+                t_ms = crate::system::probe::now_ms(),
                 "画面已冻结"
             );
             if tx.try_send(Outcome::Froze { id, frames }).is_ok() {

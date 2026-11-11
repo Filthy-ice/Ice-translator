@@ -15,6 +15,7 @@ pub mod mouse;
 pub mod panel;
 pub mod pill;
 pub mod pin;
+pub mod probe;
 pub mod screen;
 pub mod secrets;
 pub mod selection;

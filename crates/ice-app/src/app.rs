@@ -138,6 +138,10 @@ pub struct IceApp {
     geometry_rescued: bool,
     /// 上一帧量到的窗口内尺寸与装饰条厚度（缺陷 D-14 的取证，见 `trace_geometry`）
     geometry_seen: Option<(egui::Vec2, f32)>,
+    /// N0 只读探针的上一份读数（见 `system::probe`）：只用于"变了才记"，不参与任何判定。
+    window_probe: Option<crate::system::probe::WindowProbe>,
+    /// 同上，停靠链那一组。
+    dock_probe: Option<crate::system::probe::DockProbe>,
     /// 上一帧下到原生层的整窗不透明度（FR-3.7，见 `apply_native_alpha`）。
     /// `None` = 还没下过或上一次没走通。
     native_alpha: Option<f32>,
@@ -231,6 +235,8 @@ impl IceApp {
             clipboard_watch: clipboard::Watcher::default(),
             geometry_rescued: false,
             geometry_seen: None,
+            window_probe: None,
+            dock_probe: None,
             native_alpha: None,
             native_background: None,
             native_flat_titlebar: None,
@@ -724,6 +730,37 @@ impl IceApp {
         );
     }
 
+    /// N0 只读探针（四条读数的口径与"为什么是这几个数"在 `system::probe` 的模块说明里）。
+    ///
+    /// `want` 是按同一组输入**重算**一遍 `mode::dim_alpha`，不从 `ui` 里那份缓存取：探针不许
+    /// 反过来影响判定，也不许因为借用 `self.state` 而卡住后面那次对 `self.window_probe` 的可变借用。
+    fn trace_window(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let mode = self.state.mode();
+        let focused = ctx.input(|i| i.viewport().focused) == Some(true);
+        let (dim_enabled, unfocused_alpha) = (
+            self.state.config.ui.dim_when_unfocused,
+            self.state.config.ui.unfocused_alpha,
+        );
+        let capturing = self.state.capturing();
+        let want = mode::dim_alpha(mode, focused, dim_enabled, unfocused_alpha);
+        let min = mode::min_size_for(mode);
+        // `native_alpha` 是"这一档真的落到原生层"那份缓存（失败时写 `None`，下一帧重试）
+        let alpha_native = self.native_alpha == Some(want);
+        let min_native = crate::system::probe::content_min_size(frame);
+        crate::system::probe::note_window(
+            &mut self.window_probe,
+            crate::system::probe::WindowProbe {
+                mode,
+                focused,
+                capturing,
+                want,
+                alpha_native,
+                min_native,
+                min_wanted: [min.x, min.y],
+            },
+        );
+    }
+
     /// 把整窗不透明度下到位（FR-3.7），返回**原生层是否接住了这一档**。
     ///
     /// 为什么放在帧循环而不是视图里：`views::compact` 只管画，够不着 `eframe::Frame`；
@@ -974,7 +1011,22 @@ impl IceApp {
     /// `released` 又永远量不出向内的位移，停靠状态解不开。
     fn watch_dock(&mut self, ctx: &egui::Context, area_for: impl Fn() -> Option<Rect>) {
         let edge = self.state.config.ui.docked_edge;
-        if !mode::is_docked(edge, self.state.mode()) {
+        // N0 只读探针：这一串布尔里任何一个假掉，后面整段都不会动（口径见 `system::probe`）。
+        // 排在两个早退之前，正因为"没走进后面的代码"才是这次要看的东西。
+        let docked = mode::is_docked(edge, self.state.mode());
+        crate::system::probe::note_dock(
+            &mut self.dock_probe,
+            crate::system::probe::DockProbe {
+                edge,
+                docked,
+                needs_land: docked && self.dock_anchor.is_none(),
+                shown: self.dock_shown,
+                latched: self.dock_latched,
+                armed: self.drag_settler.is_armed(),
+                hidden: self.state.hidden,
+            },
+        );
+        if !docked {
             self.clear_dock_runtime(ctx);
             return;
         }
@@ -1347,6 +1399,7 @@ impl IceApp {
             None => {
                 let snapshot = std::sync::Arc::new(crate::system::windows::Snapshot::take());
                 tracing::info!(
+                    t_ms = crate::system::probe::now_ms(),
                     "认窗：在线 {} 扇，自家归属名认作 {}",
                     snapshot.entries.len(),
                     snapshot.self_owner
@@ -1710,6 +1763,8 @@ impl IceApp {
         // 都会进图（事实 32 的正负对照）。**还原不在这里做**：窗收起时帧循环根本不跑，挂在
         // 帧末的还原永远不会执行；那份账跟着任务走，由子进程结束那条线程去放（REQ-010）。
         if effects.capture {
+            // N0 时间轴的起点：白屏那一段到底落在"派发之前"还是"抓屏那一段里"，靠这几个毫秒点对
+            tracing::info!(t_ms = crate::system::probe::now_ms(), "截图：这一帧派发抓屏任务");
             // 新轮开始：把上一轮可能残留的"F3 请确认"清掉，免得这一轮刚框好就被上一次的触发误钉。
             crate::system::selection::clear_confirm_request(ctx);
             // 屏列表只能由帧循环读（`NSScreen` 要在主线程）：抓哪几块、每块多大，
@@ -2376,6 +2431,7 @@ impl eframe::App for IceApp {
 
         self.refresh_geometry(&ctx);
         self.trace_geometry(&ctx);
+        self.trace_window(&ctx, frame);
         self.settle_drag(&ctx, || screen::desktop(&ctx), mouse::left_button_down);
         self.watch_dock(&ctx, || screen::desktop(&ctx));
         self.rescue_offscreen(&ctx, |outer| screen::work_area(&ctx, outer));

@@ -458,6 +458,11 @@ pub fn wake_commands(root_was_hidden: bool) -> Vec<Wake> {
 /// 发起前：把这些窗收起。**必须在子进程起来之前调用**——系统的框选界面会把屏幕内容
 /// 原样拍进去，我们自己任何一扇还开着的窗都会出现在图上（事实 32 的正负对照量过）。
 pub fn hide(ctx: &egui::Context, viewports: Vec<egui::ViewportId>) {
+    tracing::debug!(
+        windows = viewports.len(),
+        t_ms = super::probe::now_ms(),
+        "截图：自家窗收起"
+    );
     for id in viewports {
         ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Visible(false));
     }
@@ -468,6 +473,11 @@ pub fn hide(ctx: &egui::Context, viewports: Vec<egui::ViewportId>) {
 /// 由**子进程完成那条线程**调用（不是帧循环）：窗收起时帧循环根本不跑，挂在帧循环上
 /// 的还原永远不会被执行——那就是"截完图界面再也没回来"。
 pub fn show_again(ctx: &egui::Context, hidden: &Hidden) {
+    tracing::debug!(
+        windows = hidden.viewports.len(),
+        t_ms = super::probe::now_ms(),
+        "截图：自家窗放回来"
+    );
     for id in hidden.viewports.iter() {
         ctx.send_viewport_cmd_to(*id, egui::ViewportCommand::Visible(true));
     }
