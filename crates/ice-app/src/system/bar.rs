@@ -94,13 +94,11 @@ pub fn rect(anchor: Rect, bar: Vec2, side: BarSide) -> Rect {
 }
 
 /// 按内容定宽：`n` 颗文字按钮 + 它们之间的缝 + 两端留白。三颗 = 164 点。
-/// 写成 `const fn` 是为了下面那条编译期断言——谁把共用件改成"跟锚点宽走"就编译不过。
+/// 贴图那条药丸的宽就从这里来（`pill::body_size`）；遮罩那条末颗是变宽的尺寸文字，
+/// 宽由 `selection::bar_width` 按同一套留白/缝另算，两边都不跟锚点宽走。
 pub const fn width_for(n: usize) -> f32 {
     n as f32 * TEXT_BTN_W + (n as f32 - 1.0) * BTN_GAP + 2.0 * SIDE_PAD
 }
-
-// 三颗文字药丸必须比遮罩那条（带一句尺寸读数 + 三颗线稿）窄：浮空小条不是一条 bar。
-const _: () = assert!(width_for(3) < crate::system::selection::BAR_W);
 
 /// 贴图药丸里的一颗文字按钮（REQ-002 / REQ-009）。
 ///
@@ -161,7 +159,6 @@ mod tests {
     #[test]
     fn three_text_buttons_are_164_points_wide() {
         assert_eq!(width_for(3), 164.0);
-        assert!(width_for(3) < crate::system::selection::BAR_W);
     }
 
     /// 宽度按内容定，**不随锚点宽变**：窄图与宽图配同一颗药丸。

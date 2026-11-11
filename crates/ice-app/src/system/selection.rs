@@ -379,21 +379,46 @@ fn resize(rect: Rect, index: u8, to: Pos2) -> Rect {
     Rect::from_min_max(pos2(x0, y0), pos2(x1, y1))
 }
 
-// 缝 `GAP`、翻上下 `BarSide`/`side()`、药丸矩形 `rect()` 都在 `system/bar.rs` 那一份共用件里
-// （CHG-011 抽公共：贴图那条药丸与遮罩这条读同一套几何，各写一份迟早分岔）。这里只留
-// 遮罩自己的 `BAR_W/BAR_H` 与下面这一处调用，线稿 `icon_button` 一字不动。
+// 缝 `GAP`、翻上下 `BarSide`/`side()`、药丸矩形 `rect()`、两端留白 `SIDE_PAD`、颗间缝
+// `BTN_GAP` 都在 `system/bar.rs` 那一份共用件里（CHG-011 抽公共：贴图那条药丸与遮罩这条
+// 读同一套几何，各写一份迟早分岔）。这里只留遮罩自己的行高 `BAR_H`、线稿槽宽 `ICON_W`
+// 与下面这一处调用，线稿 `icon_button` 的画法一字不动。
 
 /// 这一刻药丸占的那一块矩形；**没有有效选区就没有药丸**。
 ///
 /// 绘制与"按下落在哪"的判定都读这一处。两处各算一次迟早分岔——上一版正是分岔出来的：
 /// 按下落在药丸上被当成"在空白处起新框"，框缩成一个点、药丸那一帧没了位置，
 /// 那颗按钮再也收不到完整的按下—抬起。
-fn bar_of(sel: &Selection, field: &Field) -> Option<Rect> {
+///
+/// 宽度**按内容定**（[`bar_width`]）：三颗线稿 + 一句尺寸读数 + 两端留白，不再写死一个
+/// 300——内容只占约一半、右边空一大截黑底，正是用户那句"按钮文字排列好丑"（2026-11-11）。
+/// `label_w` 由 [`label_width`] 用绘制同一字体量出，按下判定与绘制各按自己那一刻的选区量，
+/// 读的都是同一个 `next`，不会分岔。
+fn bar_of(sel: &Selection, field: &Field, label_w: f32) -> Option<Rect> {
     let rect = sel
         .rect
         .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)?;
-    let size = Vec2::new(BAR_W, BAR_H);
+    let size = Vec2::new(bar_width(label_w), BAR_H);
     Some(bar::rect(rect, size, bar::side(rect, size, field.bounds)))
+}
+
+/// 药丸宽 = 三颗线稿 + 一句尺寸读数 + 颗间 [`bar::BTN_GAP`] + 两端 [`bar::SIDE_PAD`]。
+/// 没有读数（屏比例不可信、量不出像素）时少一颗、也少一条缝。与贴图那条 `width_for`
+/// 同一条"按内容定宽"的纪律，只是这边末颗是变宽的尺寸文字而非定宽文字按钮。
+fn bar_width(label_w: f32) -> f32 {
+    let icons = BAR_ICONS.len() as f32;
+    let gaps = if label_w > 0.0 { icons } else { icons - 1.0 };
+    2.0 * bar::SIDE_PAD + icons * ICON_W + gaps * bar::BTN_GAP + label_w
+}
+
+/// 量一句尺寸读数在**绘制用的同一字体**（Body）下占多宽（点）。`ui.label` 默认就是 Body，
+/// 这里用同一字体量，量出来的宽与画出来的宽同源——药丸才能恰好贴合内容。
+fn label_width(ui: &egui::Ui, sel: &Selection, field: &Field) -> f32 {
+    let Some(text) = sel.size_label(field) else {
+        return 0.0;
+    };
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    ui.fonts_mut(|f| f.layout_no_wrap(text, font, egui::Color32::TRANSPARENT).size().x)
 }
 
 // 三条常量的边界钉在**编译期**：写成运行期断言会被判"常量比较恒真"而形同虚设，
@@ -697,7 +722,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         // **落在药丸上的那一下不算框选手势。** 先前没有这一条：按下落在对勾上，`press` 先把
         // 旧框换成一个零尺寸的点，药丸那一块下一帧就没了位置，那颗按钮收不到完整的
         // "按下—抬起"——真机上的表现就是"点了对勾什么都不钉"（用户 2026-11-09 晚第二条原话）。
-        let bar_now = bar_of(&next, &field);
+        let bar_now = bar_of(&next, &field, label_width(ui, &next, &field));
         let on_bar = bar_now.is_some_and(|bar| bar.contains(here));
         let pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
@@ -743,53 +768,62 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             // 每帧把它叫醒一次正是 D-31~D-35 那一族。要它醒的只有"推进槽里的那一刻"。
         }
 
-        // 动作条：**圆角药丸，浮在选区下方，放不下翻上方**；不许铺满整幅图宽（REQ-103）
-        if let Some(bar) = bar_of(&next, &field) {
-            // 用 Area 浮在遮罩之上：药丸的位置跟着选区算，不占窗口布局（占位会把图片挤走）
+        // 动作条：**圆角药丸，浮在选区下方，放不下翻上方**；不许铺满整幅图宽（REQ-103）。
+        // 宽度按内容定（[`bar_width`]），版式照贴图那条已批准药丸（`pill.rs`）：两端让出
+        // `SIDE_PAD`、颗间 `BTN_GAP`、整行在 `BAR_H` 里垂直居中——不再齐平顶格、右边空一大截。
+        if let Some(bar) = bar_of(&next, &field, label_width(ui, &next, &field)) {
+            // 用 Area 浮在遮罩之上：药丸的位置跟着选区算，不占窗口布局（占位会把图片挤走）。
+            // Area 原点左移一格 SIDE_PAD，下面那一行就从药丸左缘往里 SIDE_PAD 处起摆。
             egui::Area::new(Id::NULL.with("ice-selection.bar"))
-                .fixed_pos(bar.min)
+                .fixed_pos(bar.min + egui::vec2(bar::SIDE_PAD, 0.0))
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| {
                     // 底色就画在 `bar` 那一块。这里曾经写成 `Rect::from_min_size(Pos2::ZERO, bar.size())`，
-                    // 而 Area 的 painter 用的是**全局**坐标——于是 300×34 的底色跑到屏幕左上角去了，
+                    // 而 Area 的 painter 用的是**全局**坐标——于是底色跑到屏幕左上角去了，
                     // 药丸本体只剩三颗线稿浮在画面上（真机逐点量到：(0,0) 处有一块 36 的暗档，
-                    // 而选区下方那一块仍是 132 的画面对比）。
+                    // 而选区下方那一块仍是 132 的画面对比）。`bar` 是全局矩形，与 Area 原点无关。
                     ui.painter().rect_filled(
                         bar,
                         bar.height() / 2.0,
                         egui::Color32::from_rgba_premultiplied(28, 28, 30, 235),
                     );
-                    ui.horizontal(|ui| {
-                        // 三颗：**对勾 / 复制 / 保存**。对勾就是"完成并钉住"（他原话
-                        // "点对勾和固定到屏幕上是一样的"）；栏里不放「取消」——esc 与右键
-                        // 承担。图标全是**线稿**，不用字符（本仓出过字符显示成方块的缺陷）。
-                        for icon in BAR_ICONS {
-                            if icon_button(ui, icon).clicked() {
-                                // 确认必须带上**这扇窗自己的框**：主窗不用再猜是哪块屏
-                                let out = match (icon, next.rect) {
-                                    (BarIcon::Check, Some(rect)) => {
-                                        MaskOut::Confirm { display, rect }
+                    ui.spacing_mut().item_spacing.x = bar::BTN_GAP;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(bar.width() - 2.0 * bar::SIDE_PAD, bar.height()),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            // 三颗：**对勾 / 复制 / 保存**。对勾就是"完成并钉住"（他原话
+                            // "点对勾和固定到屏幕上是一样的"）；栏里不放「取消」——esc 与右键
+                            // 承担。图标全是**线稿**，不用字符（本仓出过字符显示成方块的缺陷）。
+                            for icon in BAR_ICONS {
+                                if icon_button(ui, icon).clicked() {
+                                    // 确认必须带上**这扇窗自己的框**：主窗不用再猜是哪块屏
+                                    let out = match (icon, next.rect) {
+                                        (BarIcon::Check, Some(rect)) => {
+                                            MaskOut::Confirm { display, rect }
+                                        }
+                                        (BarIcon::Copy, Some(rect)) => {
+                                            MaskOut::ConfirmCopy { display, rect }
+                                        }
+                                        (BarIcon::Save, Some(rect)) => {
+                                            MaskOut::ConfirmSave { display, rect }
+                                        }
+                                        // 还没框就先不响应：不猜一个全屏框给用户，那比不响应更糟
+                                        _ => continue,
+                                    };
+                                    if let Ok(mut queue) = slot.lock() {
+                                        queue.push(out);
                                     }
-                                    (BarIcon::Copy, Some(rect)) => {
-                                        MaskOut::ConfirmCopy { display, rect }
-                                    }
-                                    (BarIcon::Save, Some(rect)) => {
-                                        MaskOut::ConfirmSave { display, rect }
-                                    }
-                                    // 还没框就先不响应：不猜一个全屏框给用户，那比不响应更糟
-                                    _ => continue,
-                                };
-                                if let Ok(mut queue) = slot.lock() {
-                                    queue.push(out);
+                                    wake_root(&root);
                                 }
-                                wake_root(&root);
                             }
-                        }
-                        // 尺寸读数与裁剪同源（同一个 `Field`），这里只报一次
-                        if let Some(text) = next.size_label(&field) {
-                            ui.label(text);
-                        }
-                    });
+                            // 尺寸读数与裁剪同源（同一个 `Field`），这里只报一次。
+                            // 字体就是 Body（[`label_width`] 量的也是它），画出来的宽与量出来的同源。
+                            if let Some(text) = next.size_label(&field) {
+                                ui.label(text);
+                            }
+                        },
+                    );
                 });
         }
     });
@@ -811,7 +845,7 @@ pub const BAR_ICONS: [BarIcon; 3] = [BarIcon::Check, BarIcon::Copy, BarIcon::Sav
 ///
 /// 为什么不用 `ui.button("✔")`：字符依赖字体，本仓因为字符图标出过显示成方块的缺陷（D-5 那一族）。
 fn icon_button(ui: &mut egui::Ui, icon: BarIcon) -> egui::Response {
-    let size = egui::vec2(26.0, 26.0);
+    let size = egui::vec2(ICON_W, ICON_W);
     let (id, rect) = ui.allocate_space(size);
     let response = ui.interact(rect, id, egui::Sense::click());
     let rect = rect.shrink(4.0);
@@ -898,10 +932,14 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon) -> egui::Response {
     response.on_hover_text(tip)
 }
 
-/// 动作条的尺寸（药丸）。宽度按四颗按钮 + 一句尺寸读数估的固定值：
-/// 它 SHALL NOT 跟着选区宽度变（用户那句"标注按钮怎么有背景"要的就是浮着的小条，不是一条 bar）。
-pub const BAR_W: f32 = 300.0;
+/// 动作条的行高（药丸）。**宽度不再写死**——按内容定（[`bar_width`]：三颗线稿、一句尺寸
+/// 读数、两端留白），它 SHALL NOT 跟着选区宽度变（用户那句"标注按钮怎么有背景"要的就是浮着
+/// 的小条，不是一条 bar）。先前写死 300 而内容只占约一半，右边空一大截黑底，正是"排列好丑"那一条。
 pub const BAR_H: f32 = 34.0;
+
+/// 一颗线稿按钮的槽宽（点）。[`icon_button`] 占位与 [`bar_width`] 算宽都读这一处，
+/// 改大改小两边一起动，不会分岔出"按钮挤出去 / 药丸留空"。
+pub const ICON_W: f32 = 26.0;
 
 #[cfg(test)]
 mod tests {
@@ -1261,6 +1299,67 @@ mod tests {
         assert!(!flipped.intersects(low), "翻上去那一档同样不许压住选区");
     }
 
+    /// **药丸宽按内容定**：三颗线稿 + 尺寸读数 + 颗间缝 + 两端留白；没有读数时少一颗少一条缝。
+    /// 锁住"不再写死 300"——一句常见读数（约 60 点）配出来的药丸远窄于 300，右边不再空一大截。
+    #[test]
+    fn the_bar_width_hugs_its_content() {
+        let no_label = 2.0 * bar::SIDE_PAD + 3.0 * ICON_W + 2.0 * bar::BTN_GAP;
+        assert_eq!(bar_width(0.0), no_label, "没读数：三颗 + 两条缝 + 两端留白");
+        assert_eq!(
+            bar_width(60.0),
+            no_label + 60.0 + bar::BTN_GAP,
+            "多一句读数：多它本身的宽 + 多一条缝"
+        );
+        assert!(
+            bar_width(60.0) < 300.0,
+            "常见读数配出的药丸该贴合内容，不是先前写死的 300"
+        );
+    }
+
+    /// 药丸宽**不随选区宽变**：窄框与宽框配同一句读数，药丸一样宽、都以选区中线对齐、都不压选区。
+    #[test]
+    fn the_bar_width_does_not_follow_the_selection() {
+        let field = main_screen();
+        let narrow = Selection::from_rect(
+            &field,
+            Rect::from_min_max(pos2(100.0, 100.0), pos2(140.0, 140.0)),
+        );
+        let wide = Selection::from_rect(
+            &field,
+            Rect::from_min_max(pos2(100.0, 100.0), pos2(900.0, 500.0)),
+        );
+        let a = bar_of(&narrow, &field, 60.0).expect("有框就有药丸");
+        let b = bar_of(&wide, &field, 60.0).expect("有框就有药丸");
+        assert_eq!(a.width(), b.width(), "同一句读数，窄框宽框配同一颗药丸");
+        assert_eq!(a.width(), bar_width(60.0));
+        assert_eq!(a.center().x, narrow.rect.unwrap().center().x, "中线对齐");
+        assert_eq!(b.center().x, wide.rect.unwrap().center().x, "中线对齐");
+        assert!(!a.intersects(narrow.rect.unwrap()) && !b.intersects(wide.rect.unwrap()));
+    }
+
+    /// **形状核查：那一行留白 + 居中，不再齐平顶格。** 锁住用户那句"排列好丑"的修法：
+    /// Area 原点左移 SIDE_PAD、颗间 BTN_GAP、整行在 BAR_H 里 Align::Center 垂直居中。
+    #[test]
+    fn the_bar_row_is_inset_padded_and_centered() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        assert!(
+            body.contains(".fixed_pos(bar.min + egui::vec2(bar::SIDE_PAD, 0.0))"),
+            "那一行从药丸左缘往里 SIDE_PAD 起摆，不再齐平左缘"
+        );
+        assert!(
+            body.contains("ui.spacing_mut().item_spacing.x = bar::BTN_GAP;"),
+            "颗间缝读共用件 BTN_GAP，不用默认间距"
+        );
+        assert!(
+            body.contains("egui::Layout::left_to_right(egui::Align::Center)"),
+            "整行在行高里垂直居中，不再贴着药丸顶"
+        );
+        assert!(
+            body.contains("bar.width() - 2.0 * bar::SIDE_PAD"),
+            "行宽 = 药丸宽减两端留白，恰好贴合"
+        );
+    }
+
     /// **按下落在药丸上，不许当成"在空白处起一个新框"。**
     ///
     /// 分两步钉住。第一步是几何：药丸按定义就在选区外面（缝 3 点），所以那一点对状态机
@@ -1272,7 +1371,7 @@ mod tests {
         let field = main_screen();
         let box_rect = Rect::from_min_max(pos2(600.0, 300.0), pos2(900.0, 500.0));
         let sel = Selection::from_rect(&field, box_rect);
-        let bar = bar_of(&sel, &field).expect("有框就该有药丸");
+        let bar = bar_of(&sel, &field, 60.0).expect("有框就该有药丸");
         assert_eq!(bar.min.y, box_rect.max.y + GAP, "药丸浮在选区下方 3 点");
         assert!(!bar.intersects(box_rect), "药丸不许压住选区");
 
@@ -1314,7 +1413,7 @@ mod tests {
             .find("ice-selection.bar")
             .expect("药丸那一块得有个出处");
         let fill = &body[from..];
-        let fill = &fill[..fill.find("ui.horizontal").unwrap_or(fill.len())];
+        let fill = &fill[..fill.find("allocate_ui_with_layout").unwrap_or(fill.len())];
         assert!(fill.contains("rect_filled("), "底色那一笔就在这个块里");
         assert!(
             !fill.contains("Pos2::ZERO"),
