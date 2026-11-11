@@ -2,9 +2,10 @@
 //!
 //! 四条报告与各自的读数：
 //!
-//! 1. "截图时我们的窗口失焦透明、透出下面的字" → 要的是这一刻的 `mode + focused + capturing
-//!    + 判出来的 want + 原生有没有接住`。`mode::dim_alpha` 里只有"精简 + 失焦 + 开关没关"会
-//!      低于 1.0，这条读数要么坐实它，要么把它排除。
+//! 1. "截图时我们的窗口失焦透明、透出下面的字" + "截图一打开我们的窗成了背景框" → 要的是这一刻
+//!    的 `mode + focused + capturing + 判出来的 want + 原生有没有接住 + 原生回读的可见性与
+//!      alpha`。`mode::dim_alpha` 里只有"精简 + 失焦 + 开关没关"会低于 1.0，这条读数要么坐实它，
+//!      要么把它排除；而"窗还在不在屏幕上"只能问原生——我们那句"收起"只是发了一条命令。
 //! 2. "全量转精简后缩不下去" → 要的是**原生读回来的内容区下限**与该形态**应该**下发的下限。
 //!    两个数不相等就是 `MinInnerSize` 没落到位（与 `mode.rs` 记过的 W-2.1 同形状：全量的
 //!    640×420 漏到精简窗上）；相等说明是数值本身，那是改需求不是修缺陷，得用户给数。
@@ -32,6 +33,11 @@ pub struct WindowProbe {
     pub min_native: Option<[f32; 2]>,
     /// 该形态**应该**下发的下限（`mode::min_size_for`，数值出处是 `ice-core::config`）
     pub min_wanted: [f32; 2],
+    /// 原生 `isVisible` 的回读。截图那段里"我们把窗收起了"只是**发了一条命令**，
+    /// 窗真没了要以这一格为准——它要是还 `Some(true)`，抓屏就把我们自己拍进定格里。
+    pub native_visible: Option<bool>,
+    /// 原生 `alphaValue` 的回读（不是我们想下的那一档，是窗口此刻真的是多少）
+    pub native_alpha: Option<f32>,
 }
 
 /// 窗口侧读数变了才记一行（形态、焦点、截图态、alpha、下限五项任一变化）。
@@ -48,6 +54,8 @@ pub fn note_window(prev: &mut Option<WindowProbe>, now: WindowProbe) {
         alpha_native = now.alpha_native,
         min_native = ?now.min_native,
         min_wanted = ?now.min_wanted,
+        native_visible = ?now.native_visible,
+        native_alpha = ?now.native_alpha,
         "窗口探针"
     );
 }
@@ -131,6 +139,24 @@ pub fn content_min_size(_frame: &eframe::Frame) -> Option<[f32; 2]> {
     None
 }
 
+/// 读原生这扇窗**此刻**是不是可见、alpha 实际是多少。
+///
+/// 为什么非要回读：截图前那句"把自家窗收起"只是往事件队列里发了一条命令，窗真没了
+/// 要等主线程走一轮、再等窗口服务器把它从屏幕上摘掉。抓屏子进程是**另一条线程立刻起的**，
+/// 两边抢的是同一段时间。用户 2026-11-11 的截图正是抢输的样子：定格里我们的窗还在，
+/// 而且是透着底下代码的半透明那一份。`None` = 拿不到句柄 / 不在主线程 / 非 mac。
+#[cfg(target_os = "macos")]
+pub fn native_visibility(frame: &eframe::Frame) -> Option<(bool, f32)> {
+    let ns_window = super::window::ns_window(frame)?;
+    Some((ns_window.isVisible(), ns_window.alphaValue() as f32))
+}
+
+/// 非 mac 没有这条原生入口，恒 `None`（那一侧的可见性由窗口管理器决定）。
+#[cfg(not(target_os = "macos"))]
+pub fn native_visibility(_frame: &eframe::Frame) -> Option<(bool, f32)> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +171,8 @@ mod tests {
             alpha_native: true,
             min_native: Some([400.0, 160.0]),
             min_wanted: [400.0, 160.0],
+            native_visible: Some(true),
+            native_alpha: Some(1.0),
         }
     }
 

@@ -756,6 +756,11 @@ impl IceApp {
         // `native_alpha` 是"这一档真的落到原生层"那份缓存（失败时写 `None`，下一帧重试）
         let alpha_native = self.native_alpha == Some(want);
         let min_native = crate::system::probe::content_min_size(frame);
+        // 窗真没了没有、alpha 实际是多少：以原生回读为准，不以"我们发过命令"为准
+        let (native_visible, native_alpha) = match crate::system::probe::native_visibility(frame) {
+            Some((visible, alpha)) => (Some(visible), Some(alpha)),
+            None => (None, None),
+        };
         crate::system::probe::note_window(
             &mut self.window_probe,
             crate::system::probe::WindowProbe {
@@ -766,6 +771,8 @@ impl IceApp {
                 alpha_native,
                 min_native,
                 min_wanted: [min.x, min.y],
+                native_visible,
+                native_alpha,
             },
         );
     }
