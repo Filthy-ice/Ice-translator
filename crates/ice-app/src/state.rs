@@ -467,6 +467,21 @@ impl CaptureStage {
     }
 }
 
+/// 贴图首用提示这一格的状态（CHG-011 REQ-005）。**一次启动弹一次**：
+/// - `NotShown`：本进程还没弹过（第一张贴图钉上时才可能转 `Showing`）；
+/// - `Showing`：正弹着，`dont_show_again` 是「以后不再提示」那个勾选此刻的状态；
+/// - `DoneThisRun`：本进程已经弹过（确认了、或关掉那张图了），此后不再弹。
+///
+/// 勾了并确认 ⇒ 另写 `config.ui.pin_hint_dismissed = true`（跨启动也不弹）；没勾就确认 ⇒
+/// 只到 `DoneThisRun`、不写配置，下次启动再弹一次。esc 关那张图走的是同一条 `Close`，
+/// 图关了提示也跟着没（它画在药丸窗里），本进程仍算 `DoneThisRun`——不做两段式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinHint {
+    NotShown,
+    Showing { dont_show_again: bool },
+    DoneThisRun,
+}
+
 /// 一张钉在屏幕上的图。
 ///
 /// **状态层只存"它存在、它现在在做什么"**：窗口的建/销、几何、带子开合都在 `system::pin`，
@@ -1050,6 +1065,9 @@ pub struct AppState {
     /// 因为"钉满了"而没钉上的那一张：它**已经在盘上**了，用户关掉一张之后按「固定」
     /// 还能补钉上，不必重截（REQ-006 那条"固定"的语义）
     pub unpinned_capture: Option<PathBuf>,
+    /// 贴图首用提示这一格（CHG-011 REQ-005）。**运行态、不落盘**：跨启动的"不再提示"由
+    /// `config.ui.pin_hint_dismissed` 承载，这一格只管"本次启动弹没弹、勾没勾"。
+    pub pin_hint: PinHint,
 }
 
 impl AppState {
@@ -1124,6 +1142,7 @@ impl AppState {
             pins_new: Vec::new(),
             unpinned_capture: None,
             hotkey_capture: None,
+            pin_hint: PinHint::NotShown,
         }
     }
 
@@ -1800,6 +1819,16 @@ impl AppState {
         self.next_pin_id += 1;
         let id = self.next_pin_id;
         self.pins.push(Pin::new(id, path, at));
+        // 首用提示（CHG-011 REQ-005）：**第一张**钉上（0→1）、配置里没勾过「不再提示」、
+        // 且本进程还没弹过，才弹一次。三个条件少一个都不弹——同一进程钉第二张不再弹。
+        if self.pins.len() == 1
+            && !self.config.ui.pin_hint_dismissed
+            && self.pin_hint == PinHint::NotShown
+        {
+            self.pin_hint = PinHint::Showing {
+                dont_show_again: false,
+            };
+        }
         Some(id)
     }
 
@@ -1829,7 +1858,13 @@ impl AppState {
     pub fn close_pin(&mut self, id: RequestId) -> bool {
         let before = self.pins.len();
         self.pins.retain(|pin| pin.id != id);
-        self.pins.len() != before
+        let removed = self.pins.len() != before;
+        // 首用提示画在药丸窗里：关掉那张图，窗没了提示也跟着没（esc 一下做到两件，REQ-005）。
+        // 本进程仍算弹过 ⇒ DoneThisRun，下一张不再弹。只在真摘掉了一张时才算。
+        if removed && matches!(self.pin_hint, PinHint::Showing { .. }) {
+            self.pin_hint = PinHint::DoneThisRun;
+        }
+        removed
     }
 
     /// 给某张贴图派一次"只识别"。**这一支里一个翻译任务都不许出现**（REQ-001 主干：
@@ -1894,6 +1929,29 @@ impl AppState {
             }
             None => false,
         }
+    }
+
+    /// 首用提示里那个「以后不再提示」勾选翻一下（CHG-011 REQ-005）。只在正弹着时有效。
+    pub fn toggle_pin_hint_dont_show(&mut self) {
+        if let PinHint::Showing { dont_show_again } = &mut self.pin_hint {
+            *dont_show_again = !*dont_show_again;
+        }
+    }
+
+    /// 首用提示那颗「知道了」按下（CHG-011 REQ-005）。勾了 ⇒ 写配置 bool（跨启动不再弹）；
+    /// 没勾 ⇒ 只到 `DoneThisRun`、**不写配置**，下次启动再弹一次。无论勾没勾，本进程都不再弹。
+    /// 返回是否真写了配置（调用方据此决定要不要落盘）。
+    pub fn ack_pin_hint(&mut self, dont_show_again: bool) -> bool {
+        if !matches!(self.pin_hint, PinHint::Showing { .. }) {
+            return false;
+        }
+        self.pin_hint = PinHint::DoneThisRun;
+        if dont_show_again {
+            self.config.ui.pin_hint_dismissed = true;
+            self.config_dirty = true;
+            return true;
+        }
+        false
     }
 
     /// 记下一张贴图此刻拖选了哪些块（REQ-005）。**空表也是一次合法写入**——它就是"取消选中"，
@@ -3504,6 +3562,101 @@ mod tests {
         assert!(st.set_pin_band(1, false));
         assert!(!st.pins[0].band_open);
         assert!(!st.set_pin_band(77, true));
+    }
+
+    /// 首用提示（CHG-011 REQ-005）：第一张钉上才弹、同一进程第二张不再弹、勾了确认写配置。
+    #[test]
+    fn the_pin_hint_shows_once_on_the_first_pin_and_checked_ack_persists() {
+        let mut st = capture_state();
+        assert_eq!(st.pin_hint, PinHint::NotShown);
+
+        st.push_pin(PathBuf::from("/tmp/history/1.png"), None);
+        assert_eq!(
+            st.pin_hint,
+            PinHint::Showing {
+                dont_show_again: false
+            },
+            "第一张钉上且配置没勾过 ⇒ 弹一次"
+        );
+
+        // 同一进程钉第二张：不重置、不再弹（仍是那个 Showing）
+        st.push_pin(PathBuf::from("/tmp/history/2.png"), None);
+        assert_eq!(
+            st.pin_hint,
+            PinHint::Showing {
+                dont_show_again: false
+            }
+        );
+
+        st.toggle_pin_hint_dont_show();
+        assert_eq!(
+            st.pin_hint,
+            PinHint::Showing {
+                dont_show_again: true
+            }
+        );
+
+        // 勾了确认 ⇒ 写配置 bool + 本进程收掉
+        assert!(st.ack_pin_hint(true));
+        assert_eq!(st.pin_hint, PinHint::DoneThisRun);
+        assert!(st.config.ui.pin_hint_dismissed, "勾了就要跨启动不再弹");
+        assert!(st.config_dirty, "写了配置就得落盘");
+
+        st.push_pin(PathBuf::from("/tmp/history/3.png"), None);
+        assert_eq!(st.pin_hint, PinHint::DoneThisRun, "此后再钉也不弹");
+    }
+
+    /// 没勾就确认：不写持久化标记，本进程不再弹，但**下次启动**第一张又弹。
+    #[test]
+    fn acking_without_the_check_does_not_persist_and_next_launch_shows_again() {
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/1.png"), None);
+        assert!(!st.ack_pin_hint(false), "没勾不该报告写了配置");
+        assert_eq!(st.pin_hint, PinHint::DoneThisRun);
+        assert!(!st.config.ui.pin_hint_dismissed, "没勾不许写持久化标记");
+        assert!(!st.config_dirty);
+
+        // 下一次启动（配置仍 false）：新进程第一张又弹
+        let mut next = capture_state();
+        next.config.ui.pin_hint_dismissed = st.config.ui.pin_hint_dismissed;
+        next.push_pin(PathBuf::from("/tmp/history/1.png"), None);
+        assert_eq!(
+            next.pin_hint,
+            PinHint::Showing {
+                dont_show_again: false
+            }
+        );
+    }
+
+    /// 提示开着时 esc 关那张图：提示随之收（画在药丸窗里，窗没了就没了），本进程算弹过、不写配置。
+    #[test]
+    fn closing_the_pin_while_the_hint_is_up_dismisses_it_for_this_run() {
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/1.png"), None);
+        assert_eq!(
+            st.pin_hint,
+            PinHint::Showing {
+                dont_show_again: false
+            }
+        );
+        assert!(st.close_pin(1));
+        assert_eq!(
+            st.pin_hint,
+            PinHint::DoneThisRun,
+            "关图一下做到两件，不做两段式"
+        );
+        assert!(!st.config.ui.pin_hint_dismissed, "关图不该写持久化标记");
+        st.push_pin(PathBuf::from("/tmp/history/2.png"), None);
+        assert_eq!(st.pin_hint, PinHint::DoneThisRun, "再钉一张不再弹");
+    }
+
+    /// 勾过「不再提示」的机器：第一张也不弹（配置 bool 为 true 那一支）。
+    #[test]
+    fn a_dismissed_config_never_shows_the_hint() {
+        let mut st = capture_state();
+        st.config.ui.pin_hint_dismissed = true;
+        st.push_pin(PathBuf::from("/tmp/history/1.png"), None);
+        assert_eq!(st.pin_hint, PinHint::NotShown);
     }
 
     /// 文字层是不是"长出来了"：判据是**识别完成且文档真在**，两张都要。

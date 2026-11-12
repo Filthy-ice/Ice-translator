@@ -1638,13 +1638,26 @@ impl IceApp {
         if let Some(area) = screen::desktop(ctx) {
             crate::system::pill::cache_screen(ctx, area);
         }
+        // 首用提示只挂在**第一张**贴图的药丸上（REQ-005：第一次钉上那一张弹一次，钉第二张不再弹）。
+        // 提示是全局一格状态（`AppState.pin_hint`），不属于某张 Pin；这里按"状态在 Showing"算出
+        // 这一帧的视图（勾没勾），循环里只发给第一张。药丸与贴图窗都不读 AppState。
+        let first_id = self.state.pins.first().map(|p| p.id);
+        let hint_view = match self.state.pin_hint {
+            crate::state::PinHint::Showing { dont_show_again } => Some(dont_show_again),
+            _ => None,
+        };
         for pin in self.state.pins.clone() {
+            let hint = if Some(pin.id) == first_id {
+                hint_view
+            } else {
+                None
+            };
             // 贴图窗只画图片那块；带子展开时它这一帧的回调把自己位置现推给药丸窗
-            crate::system::pin::show(ctx, &pin);
+            crate::system::pin::show(ctx, &pin, hint);
             // 进度话由状态算出来再传给那扇药丸窗（贴图与药丸都不读 AppState，不存全局进度）。
             // 收起那一帧起不再 show ⇒ egui 删掉药丸窗，不需单独发关闭命令
             if pin.band_open {
-                crate::system::pill::show(ctx, pin.id, pin_band_line(&pin));
+                crate::system::pill::show(ctx, pin.id, pin_band_line(&pin), hint);
                 // 两扇窗都建出来、且药丸**已被摆到过一次正确位置**之后，才用原生 `addChildWindow:`
                 // 把药丸绑成贴图的子窗——绑那一刻抓的是相对偏移，没摆对就绑会把错偏移锁死。
                 // 之后系统按固定偏移带着药丸走，拖动零延迟（治跟随的根本办法）。
@@ -1664,6 +1677,18 @@ impl IceApp {
             }
             for intent in crate::system::pin::take_intents(ctx, pin.id) {
                 self.apply_pin_intent(pin.id, intent, effects);
+            }
+        }
+        // 首用提示那两条意图（勾选翻一下 / 知道了）走**全局**槽，落到状态层就地做完——
+        // 它们只改 `pin_hint` 与那一个配置 bool，不碰剪贴板/网络/原生面板，所以不进 Effects。
+        for intent in crate::system::pill::take_hint_intents(ctx) {
+            match intent {
+                crate::system::pill::HintIntent::ToggleDontShow => {
+                    self.state.toggle_pin_hint_dont_show();
+                }
+                crate::system::pill::HintIntent::Ack { dont_show_again } => {
+                    self.state.ack_pin_hint(dont_show_again);
+                }
             }
         }
     }

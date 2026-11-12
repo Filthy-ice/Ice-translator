@@ -157,6 +157,10 @@ pub struct UiConfig {
     pub unfocused_alpha: f32,
     /// 复制即翻（FR-3.8）
     pub clipboard_watch: bool,
+    /// 贴图首用提示「以后不再提示」勾过没有（CHG-011 REQ-006）。默认 `false` = 还要提示。
+    /// 只是一个"提示过没有"的标记，**不承载任何用户内容**（不含文本/路径/图像），NFR-3 隐私口径不动。
+    /// 形状照 `clipboard_watch`：旧配置文件缺这一格时 `#[serde(default)]` 回 false。
+    pub pin_hint_dismissed: bool,
     pub full_rect: WindowRect,
     pub compact_rect: WindowRect,
     pub docked_edge: DockEdge,
@@ -180,6 +184,7 @@ impl Default for UiConfig {
             dim_when_unfocused: true,
             unfocused_alpha: DEFAULT_UNFOCUSED_ALPHA,
             clipboard_watch: false,
+            pin_hint_dismissed: false,
             full_rect: WindowRect {
                 x: 120.0,
                 y: 120.0,
@@ -690,6 +695,28 @@ mod tests {
         assert!(cfg.ui.always_on_top);
         assert_eq!(cfg.ui.font_scale, 1.0);
         assert_eq!(cfg.translation.target, Language::ZhHans);
+    }
+
+    /// 贴图首用提示那个 bool（CHG-011 REQ-006）：默认 false（还要提示）、勾了能往返存住、
+    /// 旧配置文件缺这一格回 false、`sanitized()` 不把它夹坏。配置面只多这一个字段。
+    #[test]
+    fn the_pin_hint_flag_defaults_false_and_survives_a_roundtrip() {
+        assert!(!Config::default().ui.pin_hint_dismissed, "出厂默认还要提示");
+
+        // 旧配置（没有这一格）必须回 false，而不是报错
+        let old: Config = toml::from_str("[ui]\nclipboard_watch = true\n").unwrap();
+        assert!(!old.ui.pin_hint_dismissed, "旧配置缺这一格回默认 false");
+
+        // 勾了之后写盘再读回来仍是 true
+        let mut cfg = Config::default();
+        cfg.ui.pin_hint_dismissed = true;
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        let back: Config = toml::from_str(&text).unwrap();
+        assert!(back.ui.pin_hint_dismissed);
+
+        // sanitized 不该把 true 夹回 false（bool 无需夹取，但往返里不许丢）
+        assert!(cfg.sanitized().ui.pin_hint_dismissed);
+        assert!(!Config::default().sanitized().ui.pin_hint_dismissed);
     }
 
     #[test]

@@ -25,6 +25,23 @@ pub const PILL_H: f32 = 34.0;
 /// **这是死区的唯一来源**（design REQ-001 死区量级那条要写进 docs/05 的就是它）。
 pub const SHADOW_PAD: f32 = 6.0;
 
+/// 首用提示那一块（REQ-005）的几何预算。**宽度恒等于药丸本体**（[`body_size`] 的宽），
+/// 所以提示长出来只让窗**长高**、不改宽——这一点是刻意的：药丸被 `addChildWindow:` 绑成
+/// 贴图子窗后系统按固定偏移带它走，宽度若随提示变，绑那一刻的偏移就在提示消失后失效。
+/// 宽度不变 ⇒ 下方那一档提示弹出/收起时窗左上角不动，绑定偏移始终对。
+///
+/// 高度按"两行文案 + 一行（勾选 + 知道了）"预算，绘制在这一块里竖排（[`HINT_H`]）。
+pub const HINT_PAD: f32 = 8.0;
+pub const HINT_LINE_H: f32 = 17.0;
+pub const HINT_ROW_H: f32 = 26.0;
+/// 药丸本体下缘到提示块上缘的缝（点）。与药丸离图那条缝（[`bar::GAP`]=3）分开：
+/// 这是同一扇窗里两个物体之间的留白，不是窗与锚点之间的缝。
+pub const HINT_GAP: f32 = 6.0;
+/// 提示块的高（点）= 上下留白 + 两行文案 + 一行控件。纯预算，无头可断言。
+pub const HINT_H: f32 = 2.0 * HINT_PAD + 2.0 * HINT_LINE_H + HINT_ROW_H;
+/// 提示里那两句与两颗控件的字号（点）。比药丸按钮略小，读得清又不抢戏。
+pub const HINT_TEXT_SIZE: f32 = 12.0;
+
 /// 药丸那一扇视口的号——**唯一构造点**。贴图窗与药丸窗是两个不同的 id，esc 转交、
 /// 位置命令都按这个号找窗。
 pub fn viewport_id(pin_id: u64) -> egui::ViewportId {
@@ -39,6 +56,12 @@ pub fn window_title(pin_id: u64) -> String {
 /// 上一帧发出去的药丸窗左上角（点）。缓存"发出去的值"用于去重，不是位置权威。
 fn pos_key(pin_id: u64) -> Id {
     Id::NULL.with("ice-translator.pill.pos").with(pin_id)
+}
+
+/// 上一帧发出去的药丸窗内容尺寸（点）。缓存"发出去的值"用于尺寸去重（提示长出来/收回去
+/// 那一格才发一次 `InnerSize`），不是第二份尺寸权威——尺寸每帧从 [`window_size`] 现算。
+fn size_key(pin_id: u64) -> Id {
+    Id::NULL.with("ice-translator.pill.size").with(pin_id)
 }
 
 /// 这扇药丸**已被 macOS 绑成贴图窗的子窗没有**。绑上之后位置由系统按固定偏移带着走，
@@ -84,21 +107,55 @@ pub fn body_size() -> Vec2 {
     Vec2::new(bar::width_for(3), PILL_H)
 }
 
-/// 药丸窗的内容尺寸 = 本体 + 四周阴影留白。
-pub fn window_size() -> Vec2 {
+/// 这一扇窗里**看得见的物体**占多大：药丸本体，外加（提示开着时）下方那一块提示。
+/// 宽恒等于药丸本体宽（提示块同宽，见 [`HINT_PAD`] 那段），只有高随提示长。
+pub fn assembly_size(hint: bool) -> Vec2 {
     let body = body_size();
-    Vec2::new(body.x + 2.0 * SHADOW_PAD, body.y + 2.0 * SHADOW_PAD)
+    let h = if hint {
+        body.y + HINT_GAP + HINT_H
+    } else {
+        body.y
+    };
+    Vec2::new(body.x, h)
+}
+
+/// 药丸窗的内容尺寸 = 可见物体 + 四周阴影留白。`hint` 决定要不要把提示那一块算进去。
+pub fn window_size(hint: bool) -> Vec2 {
+    let a = assembly_size(hint);
+    Vec2::new(a.x + 2.0 * SHADOW_PAD, a.y + 2.0 * SHADOW_PAD)
 }
 
 /// 药丸本体在**它自己那扇窗**里占的那块（窗原点起算，四周各让出 [`SHADOW_PAD`]）。
-/// 绘制三颗按钮与那道影都相对这一块。
+/// 绘制三颗按钮与那道影都相对这一块。提示长出来只往下加块，本体这块不动。
 pub fn body_in_window() -> Rect {
     Rect::from_min_size(pos2(SHADOW_PAD, SHADOW_PAD), body_size())
+}
+
+/// 首用提示那一块在窗里占的矩形：药丸本体下缘再让出一条 [`HINT_GAP`]，同宽、左缘对齐。
+/// 只在提示开着时有意义；绘制与命中都读这一块（与本体共用同一套窗内坐标）。
+pub fn hint_in_window() -> Rect {
+    let body = body_size();
+    Rect::from_min_size(
+        pos2(SHADOW_PAD, SHADOW_PAD + body.y + HINT_GAP),
+        Vec2::new(body.x, HINT_H),
+    )
 }
 
 /// 这一帧要不要给药丸窗发"挪位置"命令。**只在真的挪了 ≥0.5 点那一刻发一次**
 /// （形状同 [`pin::inner_size_command`]：0.4 点的抖动不发，每帧发会把窗反复叫醒）。
 pub fn position_command(previous: Option<egui::Pos2>, now: egui::Pos2) -> Option<egui::Pos2> {
+    match previous {
+        Some(prev) if prev == now => None,
+        Some(prev) if (prev - now).length() < 0.5 => None,
+        _ => Some(now),
+    }
+}
+
+/// 这一帧要不要给药丸窗发"改尺寸"命令。提示长出来/收回去那一格窗高会变，而
+/// `ViewportBuilder` 的尺寸只在创建那一帧生效（事实 26），之后只能靠 `InnerSize`。
+/// 形状照 [`position_command`] 与 [`pin::inner_size_command`]：相等或差 <0.5 点不发，
+/// 每帧发会把窗反复叫醒（D-31~D-35 那一族）。
+pub fn size_command(previous: Option<Vec2>, now: Vec2) -> Option<Vec2> {
     match previous {
         Some(prev) if prev == now => None,
         Some(prev) if (prev - now).length() < 0.5 => None,
@@ -113,23 +170,28 @@ pub fn position_command(previous: Option<egui::Pos2>, now: egui::Pos2) -> Option
 /// 水平这维贴图这颗**靠右对齐**（药丸右边缘贴图片右边缘），不居中（居中是遮罩那颗的样子，两者分开）。
 /// 窗左上角 = 药丸本体左上角再让出一格阴影留白。**只读 `outer_rect` 的几何、只调纯函数**，
 /// 不许出现坐标字段读写（design REQ-004 把这条写成形状核查）。
-pub fn pill_window_pos(outer_rect: Rect, screen: Rect) -> egui::Pos2 {
-    let body = body_size();
-    let side = bar::side(outer_rect, body, screen);
+///
+/// `hint` 开着时翻转判据用**整个可见物体**（药丸 + 提示）的高去量（[`assembly_size`]）：
+/// 药丸单独放得下、加上提示放不下时，整块一起翻上方（REQ-005"与药丸一起翻"）。提示块恒在
+/// 药丸下方（窗内坐标不随上下翻），所以翻上去之后仍是"药丸在上、提示在下"那一摞整体挪到图上方。
+pub fn pill_window_pos(outer_rect: Rect, screen: Rect, hint: bool) -> egui::Pos2 {
+    let assembly = assembly_size(hint);
+    let side = bar::side(outer_rect, assembly, screen);
     let top = match side {
         bar::BarSide::Below => outer_rect.max.y + bar::GAP,
-        bar::BarSide::Above => outer_rect.min.y - bar::GAP - body.y,
+        bar::BarSide::Above => outer_rect.min.y - bar::GAP - assembly.y,
     };
     // 水平：贴图这颗**靠右**——药丸右边缘贴图片右边缘（某截图工具 那种操作条落图下方靠右），
     // 左边 = 图右缘 − 药丸宽。**不居中**（居中是遮罩那颗的已批准样子，两者分开，`bar::rect` 不改）。
-    let left = outer_rect.max.x - body.x;
+    let left = outer_rect.max.x - assembly.x;
     pos2(left - SHADOW_PAD, top - SHADOW_PAD)
 }
 
 /// 贴图窗子回调每帧调它：把自己所在的 `outer_rect` 换算成药丸位置，**只在真变了那一刻**
-/// 发给药丸窗那一扇（不绕主窗）。`screen` 是主窗这一帧缓存的可用区。
-pub fn follow(root: &egui::Context, pin_id: u64, outer_rect: Rect, screen: Rect) {
-    let now = pill_window_pos(outer_rect, screen);
+/// 发给药丸窗那一扇（不绕主窗）。`screen` 是主窗这一帧缓存的可用区。`hint` 决定按多大的
+/// 可见物体去量翻转与落点（与 [`show`] 那一帧读同一个标记）。
+pub fn follow(root: &egui::Context, pin_id: u64, outer_rect: Rect, screen: Rect, hint: bool) {
+    let now = pill_window_pos(outer_rect, screen, hint);
     let previous = root.data(|d| d.get_temp::<egui::Pos2>(pos_key(pin_id)));
     if let Some(pos) = position_command(previous, now) {
         root.data_mut(|d| d.insert_temp(pos_key(pin_id), pos));
@@ -159,6 +221,67 @@ pub fn screen_of(root: &egui::Context) -> Option<Rect> {
 /// 都读得清，[bar::HOVER_TINT] 那"一成白"叠在它上面才看得出是"变淡"。不跟应用主题走。
 pub const PILL_BG: egui::Color32 = egui::Color32::from_rgba_premultiplied(28, 28, 30, 235);
 
+/// 首用提示的文案——**全仓唯一一处**（REQ-005"文案与代码同源一处"，docs/03 引这张表，不另抄）。
+/// 两句话说清两件事（esc 关这张、右键有菜单），一个勾选「以后不再提示」，一颗确认「知道了」。
+/// 改文案只改这里；改这里不改 docs/03 等于偷偷改口径（spec REQ-005 末句）。
+pub const HINT_LINE_1: &str = "这张图按 esc 关闭";
+pub const HINT_LINE_2: &str = "右键还有菜单";
+pub const HINT_CHECKBOX_LABEL: &str = "以后不再提示";
+pub const HINT_ACK_LABEL: &str = "知道了";
+
+/// 提示那两句话的墨色：比药丸按钮的静息色略亮一档，深底上读得清。不跟应用主题走
+/// （与药丸本体同源，浮在桌面上的独立物体）。
+pub const HINT_TEXT: egui::Color32 = egui::Color32::from_rgb(0xE2, 0xE4, 0xE8);
+
+/// 首用提示能发出的**全部意图**（与贴图那七种 [`pin::PinIntent`] 分开：提示是全局一格，
+/// 不属于某张贴图的操作矩阵）。勾选翻一下、确认收掉，两条都只改 `AppState.pin_hint`，
+/// 不碰剪贴板/网络/原生面板，所以也不进 `Effects`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HintIntent {
+    /// 「以后不再提示」那颗勾选被翻了一下（状态层就地翻 `Showing` 里那个 bool）。
+    ToggleDontShow,
+    /// 「知道了」按下：收掉提示。勾了才写配置 bool（持久化），没勾只本进程不再弹。
+    Ack { dont_show_again: bool },
+}
+
+/// 提示意图的交接槽——**全局一格**（同一时刻只有一张贴图带着提示，见 `app.rs` 只给
+/// `pins.first()` 传提示）。与贴图意图槽同一条纪律：子窗闭包往里塞、主窗下一帧取，
+/// 不在闭包里直接改 `AppState`（那会让状态多一条跨窗生命周期）。
+fn hint_slot_key() -> Id {
+    Id::NULL.with("ice-translator.pill.hint_intents")
+}
+
+fn hint_slot(ctx: &egui::Context) -> std::sync::Arc<std::sync::Mutex<Vec<HintIntent>>> {
+    ctx.data_mut(|d| {
+        if let Some(existing) =
+            d.get_temp::<std::sync::Arc<std::sync::Mutex<Vec<HintIntent>>>>(hint_slot_key())
+        {
+            return existing;
+        }
+        let fresh = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        d.insert_temp(hint_slot_key(), fresh.clone());
+        fresh
+    })
+}
+
+/// 药丸窗子回调把这一帧攒下的提示意图塞进交接槽（空表不塞，与 [`pin::submit_intents`] 同）。
+pub fn submit_hint_intents(ctx: &egui::Context, intents: Vec<HintIntent>) {
+    if intents.is_empty() {
+        return;
+    }
+    if let Ok(mut queue) = hint_slot(ctx).lock() {
+        queue.extend(intents);
+    }
+}
+
+/// 主窗下一帧取走提示意图。锁 poison 时当"没有意图"（别处已 panic 过，这里不二次 panic）。
+pub fn take_hint_intents(ctx: &egui::Context) -> Vec<HintIntent> {
+    match hint_slot(ctx).lock() {
+        Ok(mut queue) => std::mem::take(&mut *queue),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// 把这一帧这张药丸画出来并跟随。**每帧必须调**（`show_viewport_deferred` 不调那一帧起
 /// 窗就被 egui 删掉，与 `pin::show` 同一条纪律）；收起带子那一帧起调用方不再调它，
 /// 窗随之消失，不需要单独发关闭命令。
@@ -166,10 +289,20 @@ pub const PILL_BG: egui::Color32 = egui::Color32::from_rgba_premultiplied(28, 28
 /// `line` 是这一帧这张的进度话（"识别中…" / "翻译中 3/7" / 按 `C` 会给什么），由帧循环从
 /// 状态算好传进来——药丸不读 `AppState`，也不留一份全局可变的"当前进度"（六张各有各的）。
 /// 它挂在整个药丸的悬停上，不再占宽度（REQ-002 / Q-003）。
-pub fn show(ctx: &egui::Context, pin_id: u64, line: Option<String>) {
+///
+/// `hint` 是首用提示那一格（REQ-005）：`Some(勾没勾)` 时这一帧在药丸下方多画一块提示，
+/// 窗随之长高（[`window_size`]）；`None` 时只有药丸。它由帧循环从 `AppState.pin_hint` 算好
+/// 传进来（只给 `pins.first()`），药丸同样不读 `AppState`。提示里的勾选/确认走 [`HintIntent`]
+/// 那条全局槽回主窗，**esc 仍走同一条 `Close`**——提示开着按 esc 一下关图也关提示，不做两段式。
+pub fn show(ctx: &egui::Context, pin_id: u64, line: Option<String>, hint: Option<bool>) {
     let viewport = viewport_id(pin_id);
+    let win = window_size(hint.is_some());
+    // 尺寸只在真变了那一刻发一次（提示长出来/收回去那一格）。builder 的尺寸只在创建帧生效，
+    // 之后窗高变化只能靠 InnerSize（事实 26）；缓存的是"上次发出去的值"，不是第二份尺寸权威。
+    let previous_size = ctx.data(|d| d.get_temp::<Vec2>(size_key(pin_id)));
+    let resize = size_command(previous_size, win);
     let mut builder = egui::ViewportBuilder::default()
-        .with_inner_size(window_size())
+        .with_inner_size(win)
         .with_decorations(false)
         .with_transparent(true)
         // 事实 17：macOS 上透明窗必须关整窗窗影，否则 ghosting 残影；影改用 painter 画（Q-002）
@@ -186,8 +319,16 @@ pub fn show(ctx: &egui::Context, pin_id: u64, line: Option<String>) {
     let root = ctx.clone();
     ctx.show_viewport_deferred(viewport, builder, move |ui, _class| {
         let child = ui.ctx().clone();
+        // 窗高变化（提示那一格）只发一次 InnerSize；首帧把期望值记下，不留"没人发过"的空档
+        if let Some(size) = resize {
+            child.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+            root.data_mut(|d| d.insert_temp(size_key(pin_id), size));
+        } else if previous_size.is_none() {
+            root.data_mut(|d| d.insert_temp(size_key(pin_id), win));
+        }
         // esc 从药丸窗转交：**只取 esc 那一支**（空格与 C 仍归贴图窗，避免两扇窗各收一份）。
         // 推进所属那张贴图的槽，再点名叫醒主窗那一帧来取（子窗闭包里 request_repaint 只叫得醒自己）。
+        // 提示开着时这一支照跑——esc 不被提示挡（REQ-005），关图的同时窗没了提示也没了。
         let fired: Vec<pin::PinIntent> = child.input(|i| {
             i.events
                 .iter()
@@ -245,7 +386,59 @@ pub fn show(ctx: &egui::Context, pin_id: u64, line: Option<String>) {
             pin::submit_intents(&root, pin_id, local);
             wake_root(&root);
         }
+
+        // 首用提示那一块（REQ-005）：药丸下方多出来的一块，同一扇透明窗。勾选/确认走全局
+        // 提示槽回主窗（不碰 AppState）；它不吃 esc，esc 仍由上面那一支关图。
+        if let Some(dont_show_again) = hint {
+            let mut hint_intents: Vec<HintIntent> = Vec::new();
+            draw_hint(ui, pin_id, dont_show_again, &mut hint_intents);
+            if !hint_intents.is_empty() {
+                submit_hint_intents(&root, hint_intents);
+                wake_root(&root);
+            }
+        }
     });
+}
+
+/// 画首用提示那一块：深底圆角 + 两句话 + 一行（「以后不再提示」勾选 + 「知道了」）。
+///
+/// 文案全读上面那张常量表（[`HINT_LINE_1`] 等），不在这里另写一份。「知道了」复用
+/// [`bar::text_button`]（与药丸那三颗同一画法，深底浅字、悬停浮起），勾选是 egui 原生
+/// checkbox——这一块的 visuals 就地设成深色，不依赖主窗那一帧的主题（药丸窗是独立视口）。
+/// 勾选翻一下发 [`HintIntent::ToggleDontShow`]；确认发 [`HintIntent::Ack`]，带上**这一刻**
+/// 勾没勾（用闭包里的本地值，同一帧先勾再点也对）。两条都只塞槽，主窗下一帧落到状态层。
+fn draw_hint(ui: &egui::Ui, pin_id: u64, dont_show_again: bool, sink: &mut Vec<HintIntent>) {
+    let rect = hint_in_window();
+    let painter = ui.painter();
+    bar::paint_shadow(painter, rect, bar::ROUNDING);
+    painter.rect_filled(rect, bar::ROUNDING, PILL_BG);
+    egui::Area::new(Id::NULL.with("ice-pill.hint").with(pin_id))
+        .fixed_pos(rect.min + egui::vec2(HINT_PAD, HINT_PAD))
+        .order(egui::Order::Middle)
+        .show(ui.ctx(), |ui| {
+            // 独立视口未必跟着主窗主题，这里就地给深色，保证 checkbox 在深底上读得清
+            ui.style_mut().visuals = egui::Visuals::dark();
+            ui.set_width(rect.width() - 2.0 * HINT_PAD);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            let line = |s: &str| egui::RichText::new(s).size(HINT_TEXT_SIZE).color(HINT_TEXT);
+            ui.label(line(HINT_LINE_1));
+            ui.label(line(HINT_LINE_2));
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                let mut checked = dont_show_again;
+                let cb = ui.checkbox(&mut checked, line(HINT_CHECKBOX_LABEL));
+                if cb.clicked() {
+                    sink.push(HintIntent::ToggleDontShow);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if bar::text_button(ui, HINT_ACK_LABEL).clicked() {
+                        sink.push(HintIntent::Ack {
+                            dont_show_again: checked,
+                        });
+                    }
+                });
+            });
+        });
 }
 
 #[cfg(test)]
@@ -259,7 +452,7 @@ mod tests {
 
     #[test]
     fn the_window_is_the_body_plus_one_shadow_margin_all_around() {
-        let w = window_size();
+        let w = window_size(false);
         let b = body_size();
         assert_eq!(w.x, b.x + 2.0 * SHADOW_PAD);
         assert_eq!(w.y, b.y + 2.0 * SHADOW_PAD);
@@ -294,7 +487,7 @@ mod tests {
     fn the_pill_hangs_below_right_aligned_and_flips_above() {
         // 图片在屏幕中部：药丸在下、靠右
         let mid = Rect::from_min_max(pos2(300.0, 200.0), pos2(812.0, 560.0));
-        let pos = pill_window_pos(mid, screen());
+        let pos = pill_window_pos(mid, screen(), false);
         assert_eq!(
             pos.x + SHADOW_PAD + bar::width_for(3),
             mid.max.x,
@@ -304,12 +497,95 @@ mod tests {
 
         // 图片贴近屏底：放不下，翻到上方
         let low = Rect::from_min_max(pos2(300.0, 980.0), pos2(812.0, 1075.0));
-        let above = pill_window_pos(low, screen());
+        let above = pill_window_pos(low, screen(), false);
         assert_eq!(
             above.y + SHADOW_PAD,
             low.min.y - bar::GAP - PILL_H,
             "翻到图片上方"
         );
+    }
+
+    /// 提示长出来：窗只**长高**、宽不变（绑定偏移不失效那条），多出来的高 = 缝 + 提示块；
+    /// 提示块紧接药丸本体下缘、同宽、左缘对齐。
+    #[test]
+    fn the_hint_grows_the_window_downward_without_changing_its_width() {
+        let plain = window_size(false);
+        let with_hint = window_size(true);
+        assert_eq!(
+            with_hint.x, plain.x,
+            "提示不改宽（addChildWindow 偏移才不失效）"
+        );
+        assert_eq!(
+            with_hint.y,
+            plain.y + HINT_GAP + HINT_H,
+            "只往下长一条缝 + 一块提示"
+        );
+
+        let body = body_in_window();
+        let hint = hint_in_window();
+        assert_eq!(
+            hint.min.y,
+            body.max.y + HINT_GAP,
+            "提示紧接药丸下缘再让一条缝"
+        );
+        assert_eq!(hint.min.x, body.min.x, "提示与药丸左缘对齐");
+        assert_eq!(hint.width(), body.width(), "提示与药丸同宽");
+        assert_eq!(hint.height(), HINT_H);
+        // 提示块整个落在窗里（四周仍各让出阴影留白）
+        assert!(with_hint.y >= hint.max.y + SHADOW_PAD);
+    }
+
+    /// 药丸单独放得下、加上提示放不下时，**整块一起翻上方**（翻转判据用整个可见物体的高）。
+    #[test]
+    fn the_hint_flips_above_together_with_the_pill_when_below_would_not_fit() {
+        // 图下方只剩 60pt：药丸 + 缝放得下，再加一整块提示就放不下
+        let low = Rect::from_min_max(pos2(300.0, 900.0), pos2(812.0, 1020.0));
+        let below = pill_window_pos(low, screen(), false);
+        assert_eq!(
+            below.y + SHADOW_PAD,
+            low.max.y + bar::GAP,
+            "没提示时仍在下方"
+        );
+
+        let above = pill_window_pos(low, screen(), true);
+        let assembly_h = PILL_H + HINT_GAP + HINT_H;
+        assert_eq!(
+            above.y + SHADOW_PAD,
+            low.min.y - bar::GAP - assembly_h,
+            "带提示时整块翻到图片上方，基准是整个可见物体的高"
+        );
+        // 翻上去之后窗内仍是"药丸在上、提示在下"那一摞（提示块恒在本体下缘）
+        assert_eq!(hint_in_window().min.y, body_in_window().max.y + HINT_GAP);
+    }
+
+    /// 尺寸命令只在真变了那一刻发：相等不发、0.4 点抖动不发、长高一截才发一次（形状同位置命令）。
+    #[test]
+    fn the_size_command_fires_only_on_a_real_resize() {
+        let a = Vec2::new(176.0, 46.0);
+        assert_eq!(size_command(Some(a), a), None);
+        assert_eq!(
+            size_command(Some(a), Vec2::new(176.0, 46.4)),
+            None,
+            "0.4 点的抖动不该发一次改尺寸"
+        );
+        let tall = Vec2::new(176.0, 46.0 + HINT_GAP + HINT_H);
+        assert_eq!(size_command(Some(a), tall), Some(tall));
+        assert_eq!(size_command(None, a), Some(a));
+    }
+
+    /// 文案那张常量表是**唯一出处**：两句话 + 勾选 + 确认四句都在，且绘制处只引常量不另抄。
+    #[test]
+    fn the_hint_copy_lives_in_one_constant_table() {
+        assert_eq!(HINT_LINE_1, "这张图按 esc 关闭");
+        assert_eq!(HINT_LINE_2, "右键还有菜单");
+        assert_eq!(HINT_CHECKBOX_LABEL, "以后不再提示");
+        assert_eq!(HINT_ACK_LABEL, "知道了");
+        let body = crate::system::implementation_lines(include_str!("pill.rs"));
+        // 绘制处引的是常量名，不是把文案再抄一遍（抄一遍就会与表分岔）
+        assert!(body.contains("ui.label(line(HINT_LINE_1))"));
+        assert!(body.contains("ui.label(line(HINT_LINE_2))"));
+        assert!(body.contains("ui.checkbox(&mut checked, line(HINT_CHECKBOX_LABEL))"));
+        assert!(body.contains("bar::text_button(ui, HINT_ACK_LABEL)"));
     }
 
     /// 形状核查（design REQ-004）：本模块 `OuterPosition` 恰好一次，且值只来自那个纯函数；

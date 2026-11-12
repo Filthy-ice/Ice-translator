@@ -463,9 +463,12 @@ pub fn take_intents(ctx: &egui::Context, id: u64) -> Vec<PinIntent> {
 /// 自绘遮罩（CHG-010）交得出矩形，就该钉回用户框住的那一块。
 /// 每帧传的仍是同一个值——egui 只在 builder 的 `position` **变了**的时候才发位置命令，
 /// 所以用户拖动之后窗不会被弹回原地（攒一份"我们以为它在哪"的坐标仍然是禁止的）。
-pub fn show(ctx: &egui::Context, pin: &crate::state::Pin) {
+pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, hint: Option<bool>) {
     let id = pin.id;
     let band_open = pin.band_open;
+    // 这一帧这张的药丸带不带首用提示（REQ-005）：只影响药丸窗按多大的可见物体去量翻转/落点。
+    // 提示本体画在药丸窗里（`pill::show`），贴图窗自己恒等于图片，不受它影响。
+    let hint_present = hint.is_some();
     let Some(visual) = visual_of(ctx, pin) else {
         return;
     };
@@ -623,7 +626,7 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin) {
                 pill::screen_of(&root),
                 child.input(|i| i.viewport().outer_rect),
             ) {
-                pill::follow(&root, id, outer, screen);
+                pill::follow(&root, id, outer, screen, hint_present);
             }
         }
         if !local.is_empty() {
@@ -929,7 +932,7 @@ mod tests {
             modifiers: egui::Modifiers::NONE,
         });
         pass(&ctx, input, |ui| {
-            show(ui.ctx(), &crate::state::Pin::for_test(1, png.clone()));
+            show(ui.ctx(), &crate::state::Pin::for_test(1, png.clone()), None);
         });
 
         assert_eq!(take_intents(&ctx, 1), vec![PinIntent::Close]);
@@ -961,7 +964,7 @@ mod tests {
         pass(&ctx, input, |ui| {
             let mut pin = crate::state::Pin::for_test(2, png.clone());
             pin.band_open = false;
-            show(ui.ctx(), &pin);
+            show(ui.ctx(), &pin, None);
         });
         assert_eq!(take_intents(&ctx, 2), vec![PinIntent::ToggleBand]);
     }
@@ -975,7 +978,11 @@ mod tests {
         ctx.set_embed_viewports(true);
         let missing = std::path::PathBuf::from("/tmp/definitely-not-a-screenshot.png");
         pass(&ctx, egui::RawInput::default(), |ui| {
-            show(ui.ctx(), &crate::state::Pin::for_test(3, missing.clone()));
+            show(
+                ui.ctx(),
+                &crate::state::Pin::for_test(3, missing.clone()),
+                None,
+            );
         });
         assert!(take_intents(&ctx, 3).is_empty());
     }
