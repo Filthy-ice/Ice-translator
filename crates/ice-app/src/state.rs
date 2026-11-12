@@ -503,6 +503,12 @@ pub struct Pin {
     pub document: Option<ice_core::document::OcrDocument>,
     /// 带子开着还是收着（REQ-003：收起 = 窗口缩到图片本身）
     pub band_open: bool,
+    /// 这张四周那道窗影开不开（用户 2026-11-12："截图后图片要有阴影…不然不突出"，
+    /// 右键可关）。**默认开**：钉上来就要从桌面里凸出来。每张一条，跟着贴图走——
+    /// 共用一条就会出"关了第一张的影，第三张也跟着没了"。这是对 CHG-011 Q-002
+    /// "with_has_shadow(false) 这一格不动它"的改判：那一格当时说的是药丸的影，
+    /// 现在用户要的是图片本体的窗影，两件事，故另立这一格。
+    pub shadow: bool,
     /// 这张**该钉在哪儿**：确认那一刻选区的左上角，全局点坐标。
     ///
     /// CHG-009 REQ-001 原话是"选完**原地**钉成一张浮在屏幕上的图"。系统框选那个年代拿不到
@@ -561,6 +567,7 @@ impl Pin {
             stage: RecognitionStage::Idle,
             document: None,
             band_open: true,
+            shadow: true,
             at,
             source: None,
             translate_stage: TranslateStage::Idle,
@@ -1925,6 +1932,19 @@ impl AppState {
         match self.pins.iter_mut().find(|p| p.id == pin) {
             Some(p) => {
                 p.band_open = open;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 右键那颗「图片阴影」勾选翻一下（用户 2026-11-12）。只改状态——真正下到原生窗
+    /// 由贴图窗那一帧的 `system::shadow::apply` 幂等重下（与 cover/background 同族）。
+    /// 只认真存在的贴图，不存在的号返回 false。
+    pub fn toggle_pin_shadow(&mut self, pin: RequestId) -> bool {
+        match self.pins.iter_mut().find(|p| p.id == pin) {
+            Some(p) => {
+                p.shadow = !p.shadow;
                 true
             }
             None => false,
@@ -3562,6 +3582,24 @@ mod tests {
         assert!(st.set_pin_band(1, false));
         assert!(!st.pins[0].band_open);
         assert!(!st.set_pin_band(77, true));
+    }
+
+    /// 阴影默认开、右键翻一下只动这一张、不存在的号拒绝（用户 2026-11-12 那条改判的状态面）。
+    #[test]
+    fn the_shadow_defaults_on_and_toggles_per_pin() {
+        let mut st = capture_state();
+        st.push_pin(PathBuf::from("/tmp/history/1.png"), None);
+        st.push_pin(PathBuf::from("/tmp/history/2.png"), None);
+        assert!(
+            st.pins[0].shadow,
+            "刚钉上时阴影是开着的（要从桌面里凸出来）"
+        );
+        assert!(st.toggle_pin_shadow(1));
+        assert!(!st.pins[0].shadow);
+        assert!(st.pins[1].shadow, "关第一张的影不许波及第二张");
+        assert!(st.toggle_pin_shadow(1));
+        assert!(st.pins[0].shadow, "再翻一下又开回来");
+        assert!(!st.toggle_pin_shadow(77));
     }
 
     /// 首用提示（CHG-011 REQ-005）：第一张钉上才弹、同一进程第二张不再弹、勾了确认写配置。

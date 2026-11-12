@@ -19,6 +19,7 @@ pub mod probe;
 pub mod screen;
 pub mod secrets;
 pub mod selection;
+pub mod shadow;
 pub mod single_instance;
 pub mod titlebar;
 pub mod tray;

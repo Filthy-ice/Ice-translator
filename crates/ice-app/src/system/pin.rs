@@ -112,9 +112,9 @@ pub fn pin_layout(image_px: Vec2, scale: f32) -> PinLayout {
     }
 }
 
-/// 一张贴图能对外发出的**全部意图**。带子里的按钮、右键菜单里的四项、键盘那几颗、
-/// 文字层那一次拖选，四处都只能落到这七种之一——矩阵一旦分叉，"点按钮有效、按键没反应"
-/// 这类只对一半的缺陷就回来了（图钉那次是两条通道，本包同一条纪律：一个枚举、一处映射）。
+/// 一张贴图能对外发出的**全部意图**。带子里的按钮、右键菜单里的四项动作加那颗阴影勾选、
+/// 键盘那几颗、文字层那一次拖选，几处都只能落到这八种之一——矩阵一旦分叉，"点按钮有效、
+/// 按键没反应"这类只对一半的缺陷就回来了（图钉那次是两条通道，本包同一条纪律：一个枚举、一处映射）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PinIntent {
     Translate,
@@ -124,6 +124,9 @@ pub enum PinIntent {
     Close,
     /// 空格：收放带子
     ToggleBand,
+    /// 右键那颗「图片阴影」勾选：翻一下这张四周的窗影（用户 2026-11-12）。
+    /// 只改 `Pin::shadow` 状态，真正下到原生窗由 `show` 那一帧的 `shadow::apply` 幂等重下。
+    ToggleShadow,
     /// 裸 `C`。这一层**不判**它该复制字还是图——选中集合在状态层，分派在 `app.rs`
     /// （REQ-004 末段 + REQ-005：判据依赖文字层状态，而文字层状态不归这个模块持有）。
     Copy,
@@ -281,16 +284,24 @@ pub fn drag_rect(from: Pos2, to: Pos2) -> Rect {
     Rect::from_two_pos(from, to)
 }
 
-/// 右键菜单：画在图片本体上，**恰好四项**，与带子里那四颗同一张表（[`ACTIONS`]）。
+/// 右键菜单：画在图片本体上。上半截**恰好四项动作**，与带子里那四颗同一张表（[`ACTIONS`]）；
+/// 下半截隔一条线，单独一颗「图片阴影」勾选（用户 2026-11-12："右键要有关闭图片周围阴影的选项"）。
 ///
-/// 项数由那一张表一处决定；`exactly_four_actions_shared_by_the_band_and_the_menu` 钉住
-/// "只要四项"这句原话——加第五项要改表，而断言会先响。
-pub fn image_menu(ui: &mut Ui, sink: &mut Vec<PinIntent>) {
+/// 四项动作的项数由那一张表一处决定；`exactly_four_actions_shared_by_the_band_and_the_menu`
+/// 钉住"只要四项"这句原话。阴影勾选是**一格持续显示设置**，不是第五个一次性动作，所以不进
+/// `ACTIONS`、也不上带子——它只活在这里，翻一下发 [`PinIntent::ToggleShadow`]。
+pub fn image_menu(ui: &mut Ui, sink: &mut Vec<PinIntent>, shadow: bool) {
     for action in ACTIONS {
         if ui.button(action.menu_label()).clicked() {
             sink.push(PinIntent::from_action(action));
             ui.close();
         }
+    }
+    ui.separator();
+    let mut show = shadow;
+    if ui.checkbox(&mut show, SHADOW_MENU_LABEL).changed() {
+        sink.push(PinIntent::ToggleShadow);
+        ui.close();
     }
 }
 
@@ -483,7 +494,9 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, hint: Option<bool>) {
         .with_inner_size(layout.window_size)
         .with_decorations(false)
         .with_transparent(false)
-        .with_has_shadow(false)
+        // 创建期就把窗影给对（默认开）：用户 2026-11-12 要图片从桌面里凸出来。运行期开关
+        // 由闭包里的 `shadow::apply` 幂等重下——egui 的 has_shadow 只在创建时用一次。
+        .with_has_shadow(pin.shadow)
         .with_always_on_top()
         // **不开 `movable_by_background`**。它看着是"实测能拖"的那条路，但无边框窗的整片
         // 内容都算背景：每一次按下都被 AppKit 当成拖窗口吃掉，于是带子按钮收不到点击、
@@ -504,9 +517,13 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, hint: Option<bool>) {
     let document = pin.document.clone();
     let selected = pin.selected.clone();
     let text_ready = pin.text_ready();
+    let shadow = pin.shadow;
 
     ctx.show_viewport_deferred(viewport, builder, move |ui, _class| {
         let child = ui.ctx().clone();
+        // 窗影每帧幂等重下：egui 运行期够不到这一格，只能原生补（与 cover/background 同族）。
+        // 拿不到窗（头一两帧还没建出来）就返回 false，下一帧再试，不缓存"我设过了"。
+        crate::system::shadow::apply(&window_title(id), shadow);
         // 键盘只落在有焦点的那一张上（事实 27）：子 viewport 里的 `input` 就是这个窗的事件
         let fired: Vec<PinIntent> = child.input(|i| {
             i.events
@@ -613,8 +630,8 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, hint: Option<bool>) {
             let _ = from;
             child.data_mut(|d| d.remove::<Pos2>(sel_start_key(id)));
         }
-        // 右键：恰好四项，与药丸同一张表
-        area.context_menu(|ui| image_menu(ui, &mut local));
+        // 右键：四项动作与药丸同一张表，外加一颗阴影勾选
+        area.context_menu(|ui| image_menu(ui, &mut local, shadow));
 
         // 文字层那句手势说明留在**图片本体**的悬停里（REQ-002：不进药丸）
         area.on_hover_text(TEXT_LAYER_TIP);
@@ -651,6 +668,9 @@ pub fn default_save_name(id: u64) -> String {
 
 /// 悬停在那句进度上时给的那句手势说明。
 const TEXT_LAYER_TIP: &str = "按住 Shift 在字上拖可多选几行；在空白处拖一下则取消选中";
+
+/// 右键菜单那颗阴影勾选的字（一处给，菜单与任何核查都读它）。
+const SHADOW_MENU_LABEL: &str = "图片阴影";
 
 /// 测试夹具：一块 1000×400 像素的文档，上下两行可读文字（id 0 与 1）。
 /// 贴图文字层的用例（本模块与 `app.rs`）都从这里造，不各写一份字段。
@@ -873,6 +893,25 @@ mod tests {
         );
         // ToggleBand 只能来自空格，带子上没有第五颗按钮能干这件事
         assert!(!from_band.contains(&PinIntent::ToggleBand));
+    }
+
+    /// 阴影勾选是**独立的一格显示设置**，不是第五个动作（用户 2026-11-12 加的是勾选，
+    /// 不是第五颗按钮）：四个动作的映射里不许出现 ToggleShadow，菜单文案一处给。
+    #[test]
+    fn the_shadow_toggle_is_not_a_fifth_action() {
+        for action in ACTIONS {
+            assert_ne!(
+                PinIntent::from_action(action),
+                PinIntent::ToggleShadow,
+                "阴影开关混进动作表了：它该是菜单下方单独那颗勾选"
+            );
+        }
+        assert!(
+            !BAND_ACTIONS
+                .iter()
+                .any(|a| PinIntent::from_action(*a) == PinIntent::ToggleShadow)
+        );
+        assert_eq!(SHADOW_MENU_LABEL, "图片阴影");
     }
 
     /// 尺寸命令只在真的变了那一刻发：收起那一下发，之后每帧不再发。

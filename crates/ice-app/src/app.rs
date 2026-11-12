@@ -1718,6 +1718,10 @@ impl IceApp {
                     .is_some_and(|p| !p.band_open);
                 self.state.set_pin_band(id, open);
             }
+            // 右键那颗阴影勾选：只翻状态，真正下到原生窗由贴图窗那一帧幂等重下
+            PinIntent::ToggleShadow => {
+                self.state.toggle_pin_shadow(id);
+            }
             // T-007 的前半：这颗按下才走链（识别 → 翻译 → 回填 → 成品原地替换）
             // 这颗按下走链：整条链（翻译→回填→成品）在 T-007 后半接，这一格先把意图
             // 原样带出去——**不在这里吞掉它**，吞掉的意图会让矩阵缺一格而没人发现
