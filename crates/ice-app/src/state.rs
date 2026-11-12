@@ -635,6 +635,10 @@ pub struct Capture {
     /// 认窗那一份快照（REQ-108）。`None` = 这一轮还没问过系统；帧循环在遮罩开的第一帧
     /// 问一次就存进来，之后整段不再问（画面已冻结，问第二遍只会认出图里不存在的窗）。
     pub windows: Option<std::sync::Arc<crate::system::windows::Snapshot>>,
+    /// 光标此刻在哪块屏（display 序号）。认窗高亮只在那块屏上做，另一块压暗不亮窗
+    /// （用户那句「两块屏上的窗都亮了」）。`None` = 问不到光标，退回各遮罩自己的指针判法。
+    /// 帧循环每帧问一次窗口服务器，跨屏那一刻变了就叫醒各扇遮罩重画。
+    pub lit: Option<u8>,
     /// 这一轮冻结的号（= 回信那个 `request_id`）。**纹理缓存靠它认"这是新一轮的像素"**。
     ///
     /// 缺陷 D-41：缓存原先只按"哪块屏 + 多大"认，而同一块屏每轮抓出来尺寸都一样，
@@ -1603,6 +1607,7 @@ impl AppState {
             raised: false,
             push_frames: PUSH_FRAMES,
             windows: None,
+            lit: None,
         });
         self.capture_stage = CaptureStage::Frozen;
         CaptureApplied::Frozen { screens }

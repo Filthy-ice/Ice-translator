@@ -418,7 +418,11 @@ fn label_width(ui: &egui::Ui, sel: &Selection, field: &Field) -> f32 {
         return 0.0;
     };
     let font = egui::TextStyle::Body.resolve(ui.style());
-    ui.fonts_mut(|f| f.layout_no_wrap(text, font, egui::Color32::TRANSPARENT).size().x)
+    ui.fonts_mut(|f| {
+        f.layout_no_wrap(text, font, egui::Color32::TRANSPARENT)
+            .size()
+            .x
+    })
 }
 
 // 三条常量的边界钉在**编译期**：写成运行期断言会被判"常量比较恒真"而形同虚设，
@@ -454,6 +458,22 @@ pub enum MaskOut {
 /// 遮罩窗的标题。**抬层那一步按它找窗**（`system::cover`），所以这一格只许有一处定义。
 pub fn mask_title(display: u8) -> String {
     format!("IceTranslator 选区 {display}")
+}
+
+/// 光标此刻落在哪块屏：返回那块屏的序号（`-D` 那个 display）。
+///
+/// 输入是「全局光标 + 各屏的全局矩形」，纯函数，无头可断言（副屏负偏移那条照样成立）。
+/// 认窗高亮只许发生在光标真所在的那块屏上——另一扇遮罩读不到指针就退回本地 (0,0)，
+/// 拿那个点去认窗会把它左上角那扇窗点亮，正是用户那句「两块屏上的窗都亮了、只有周边灰」。
+///
+/// 光标问不到（`None`：非 mac、无头不在主线程）或落在屏间缝隙里 → `None`，
+/// 调用方退回「各遮罩沿用各自的指针判法」（与今天一致，不许因为问不到就永不认窗）。
+pub fn lit_display(cursor: Option<Pos2>, screens: &[(u8, Rect)]) -> Option<u8> {
+    let point = cursor?;
+    screens
+        .iter()
+        .find(|(_, rect)| rect.contains(point))
+        .map(|(display, _)| *display)
 }
 
 fn slot_key(display: u8) -> Id {
@@ -506,6 +526,12 @@ fn viewport_of(display: u8) -> egui::ViewportId {
     egui::ViewportId::from_hash_of(Id::NULL.with("ice-selection.mask").with(display))
 }
 
+/// 叫醒某一扇遮罩重画。光标跨屏时「认窗高亮的那扇」要换人，而子窗不会自己醒
+/// （指针事件只到鼠标底下那一扇，另一扇收不到任何事件），得由主窗点名让它重画一次。
+pub fn wake_mask(ctx: &egui::Context, display: u8) {
+    ctx.request_repaint_of(viewport_of(display));
+}
+
 /// 取走这一扇遮罩攒下的意图（帧循环每帧一次）。
 pub fn take_outs(ctx: &egui::Context, display: u8) -> Vec<MaskOut> {
     let key = slot_key(display);
@@ -548,6 +574,11 @@ pub struct MaskScreen {
     pub texture: egui::TextureId,
     /// 这一轮冻结的轮号。选区那格带着它存取：轮号一换就当空白（D-42）
     pub frozen_id: u64,
+    /// 光标此刻是不是真在这块屏上（由帧循环问窗口服务器算出，见 [`lit_display`]）。
+    /// **认窗高亮只在这块屏上做**：另一扇遮罩读不到指针会退回本地 (0,0)，拿那个点认窗
+    /// 会把它左上角那扇窗点亮（用户那句「两块屏上的窗都亮了」）。问不到光标时帧循环给
+    /// `true`，退回各窗自己的指针判法（与今天一致）。压暗那一档不受它影响。
+    pub cursor_here: bool,
 }
 
 /// 画一扇遮罩。每帧对该 show 的每块屏各调一次（CHG-009 事实 25 那条：deferred viewport 是每帧 show）。
@@ -574,6 +605,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
     let points = screen.points;
     let origin = screen.origin;
     let frozen_id = screen.frozen_id;
+    let cursor_here = screen.cursor_here;
     let windows = screen.windows.clone();
     // 闭包要 'static：把这一帧要用的几个数**按值**带走，不带引用
 
@@ -602,9 +634,11 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         let mut changed = false;
         let here = ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO);
         let holding = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
-        // 认窗（REQ-108）：**还没框、也没在拖**的时候，鼠标底下那扇应用窗亮出来。
+        // 认窗（REQ-108）：**光标真在这块屏、还没框、也没在拖**的时候，鼠标底下那扇应用窗亮出来。
         // 已经有框就不再认——那会儿用户在调自己那个框，亮另一扇窗只会跟他抢注意力。
-        let hover = if next.rect.is_none() && !holding {
+        // `cursor_here` 把另一块屏挡在外面：那扇遮罩读不到指针，`here` 会是本地 (0,0)，
+        // 不挡的话它左上角那扇窗会被点亮（用户那句「两块屏上的窗都亮了、只有周边灰」）。
+        let hover = if cursor_here && next.rect.is_none() && !holding {
             windows.candidate(origin, here, field.bounds)
         } else {
             None
@@ -1218,6 +1252,48 @@ mod tests {
                 pos2(1800.0, 1000.0),
                 pos2(1920.0, 1080.0)
             ))
+        );
+    }
+
+    /// 认窗高亮跟着光标走：光标在哪块屏就只亮哪块（用户那句「两块屏上的窗都亮了」的修法）。
+    /// 纯函数，喂「全局光标 + 各屏全局矩形」，副屏负偏移那条照样成立。
+    #[test]
+    fn the_lit_display_is_the_one_containing_the_cursor() {
+        let screens = [
+            (1_u8, main_screen().bounds),
+            (2_u8, left_screen_global().bounds),
+        ];
+        // 光标在主屏里：亮主屏
+        assert_eq!(lit_display(Some(pos2(900.0, 500.0)), &screens), Some(1));
+        // 光标在副屏里（负坐标）：亮副屏，不许因为 x 是负的就认不出
+        assert_eq!(lit_display(Some(pos2(-1000.0, 300.0)), &screens), Some(2));
+        // 问不到光标：None，调用方退回各窗自己的判法（不许因为问不到就永不认窗）
+        assert_eq!(lit_display(None, &screens), None);
+    }
+
+    /// 光标落在两块屏之间的缝隙里：哪块都不亮（None），不许硬塞给最近的那块。
+    #[test]
+    fn a_cursor_in_the_gap_between_screens_lights_neither() {
+        let screens = [
+            (1_u8, Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 100.0))),
+            (
+                2_u8,
+                Rect::from_min_max(pos2(200.0, 0.0), pos2(300.0, 100.0)),
+            ),
+        ];
+        assert_eq!(lit_display(Some(pos2(150.0, 50.0)), &screens), None);
+        // 一块屏都没有时同样不认
+        assert_eq!(lit_display(Some(pos2(50.0, 50.0)), &[]), None);
+    }
+
+    /// 形状核查：认窗高亮必须先问「光标真在这块屏」（`cursor_here`），不许拿本地 (0,0) 去认。
+    /// 真机读数：双屏时没鼠标的那扇遮罩也亮窗——它读不到指针退回 (0,0)，认了左上角那扇。
+    #[test]
+    fn the_window_hover_is_gated_by_the_cursor_being_on_this_screen() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        assert!(
+            body.contains("if cursor_here && next.rect.is_none() && !holding"),
+            "认窗高亮只在光标真所在的那块屏上做，另一块不许亮"
         );
     }
 

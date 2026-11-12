@@ -1426,6 +1426,26 @@ impl IceApp {
                 snapshot
             }
         };
+        // 光标此刻在哪块屏：问窗口服务器（与事件投递无关，D-16/D-22 同一条纪律）。
+        // 认窗高亮只在那块屏上做——另一扇遮罩读不到指针会退回本地 (0,0)，不挡的话它左上角
+        // 那扇窗会被点亮（用户那句「两块屏上的窗都亮了、只有周边灰」）。问不到（非 mac、
+        // 无头不在主线程）退回 None：各遮罩沿用各自的指针判法，与今天一致。
+        let screens: Vec<(u8, Rect)> = capture
+            .frames
+            .iter()
+            .map(|f| (f.display, Rect::from_min_size(f.origin, f.points)))
+            .collect();
+        let lit = crate::system::selection::lit_display(mouse::cursor(), &screens);
+        if lit != capture.lit {
+            if let Some(live) = self.state.capture.as_mut() {
+                live.lit = lit;
+            }
+            // 跨屏那一刻：亮的那扇要换人。子窗不会自己醒（指针只到鼠标底下那一扇），
+            // 主窗点名让每一扇都重画一次，带上各自新的 cursor_here。
+            for frame in capture.frames.iter() {
+                crate::system::selection::wake_mask(ctx, frame.display);
+            }
+        }
         // 原生那两下（抬层 / 激活）只在头几帧重下。**配额是真的会减的**：减到 0 或已收敛
         // 就一次都不再问，主窗也跟着睡——每帧枚举窗口、重设 frame 正是 D-31~D-34 把主线程
         // 拖死的那条路（`Capture::push_frames`）
@@ -1442,6 +1462,10 @@ impl IceApp {
                     windows: windows.clone(),
                     texture: freeze_texture(ctx, frame, capture.frozen_id),
                     frozen_id: capture.frozen_id,
+                    cursor_here: match lit {
+                        Some(d) => d == frame.display,
+                        None => true,
+                    },
                 },
             );
             if pushing {
@@ -1484,6 +1508,10 @@ impl IceApp {
         for out in outs {
             self.apply_mask_out(out, ctx, effects);
         }
+        // 遮罩开着就一直醒着问光标：鼠标跨屏时指针事件只到鼠标底下那一扇遮罩，主窗收不到
+        // 任何事件，不自己叫帧就永远停在第一帧算出的那块亮屏。这一段只在截图期间存在
+        // （遮罩一关 `capturing()` 就假），每帧问光标的成本与停靠那条路相同（D-16/D-22）。
+        ctx.request_repaint();
     }
 
     /// 遮罩那四颗 + esc 的落点。**五个入口汇到同一个出口**（REQ-105），
@@ -5259,6 +5287,7 @@ mod tests {
             windows: Some(std::sync::Arc::new(
                 crate::system::windows::Snapshot::default(),
             )),
+            lit: None,
         });
         app.state.capture_stage = crate::state::CaptureStage::Frozen;
         app
