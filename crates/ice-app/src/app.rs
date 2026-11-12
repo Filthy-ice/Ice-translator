@@ -1663,10 +1663,9 @@ impl IceApp {
                 // 之后系统按固定偏移带着药丸走，拖动零延迟（治跟随的根本办法）。
                 if !crate::system::pill::is_attached(ctx, pin.id)
                     && crate::system::pill::is_positioned(ctx, pin.id)
+                    && crate::system::attach::attach_pill_to_pin(pin.id)
                 {
-                    if crate::system::attach::attach_pill_to_pin(pin.id) {
-                        crate::system::pill::set_attached(ctx, pin.id);
-                    }
+                    crate::system::pill::set_attached(ctx, pin.id);
                 }
             } else {
                 // 带子收起 = 药丸窗没了；先解绑（窗真被销毁时这句是空操作），再清掉"已绑/已摆位"标记，
