@@ -1,0 +1,17 @@
+
+running 9 tests
+test system::bar::tests::a_tiny_anchor_still_centers_the_pill ... ok
+test system::pill::tests::the_hint_grows_the_window_downward_without_changing_its_width ... ok
+test system::pill::tests::the_hint_flips_above_together_with_the_pill_when_below_would_not_fit ... ok
+test system::pill::tests::the_position_command_fires_only_on_a_real_move ... ok
+test system::pill::tests::the_pill_hangs_below_right_aligned_and_flips_above ... ok
+test system::pill::tests::the_window_is_the_body_plus_one_shadow_margin_all_around ... ok
+test system::pill::tests::the_hint_copy_lives_in_one_constant_table ... ok
+test system::pill::tests::position_is_sent_from_exactly_one_place_and_only_from_the_pure_fn ... ok
+test system::pill::tests::the_size_command_fires_only_on_a_real_resize ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 551 filtered out; finished in 0.00s
+
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.11s
+     Running unittests src/main.rs (target/debug/deps/ice_translator-fec042200a847954)

@@ -1,0 +1,43 @@
+
+running 35 tests
+test system::bar::tests::below_sits_three_points_under_and_never_touches_the_anchor ... ok
+test system::bar::tests::the_gap_is_the_three_points_he_gave ... ok
+test system::bar::tests::it_flips_above_when_below_would_not_fit_and_still_clears_the_anchor ... ok
+test system::bar::tests::a_tiny_anchor_still_centers_the_pill ... ok
+test system::bar::tests::the_width_does_not_follow_the_anchor ... ok
+test system::bar::tests::three_text_buttons_are_164_points_wide ... ok
+test system::dblclick::tests::a_click_in_the_middle_of_the_title_bar_counts ... ok
+test system::screen::tests::the_fallback_area_subtracts_an_approximate_menu_bar ... ok
+test system::selection::tests::the_action_bar_flips_above_when_it_would_not_fit_below ... ok
+test system::global_hotkeys::tests::the_three_defaults_register_as_bare_function_keys ... ok
+test system::bar::tests::the_hover_branch_reads_the_three_constants_once_each ... ok
+test system::selection::tests::the_bar_width_does_not_follow_the_selection ... ok
+test system::selection::tests::the_bar_width_hugs_its_content ... ok
+test system::titlebar::tests::one_click_is_handed_over_exactly_once ... ok
+test system::selection::tests::a_press_on_the_bar_is_not_a_selection_gesture ... ok
+test system::selection::tests::the_bar_background_is_painted_on_the_bar_itself ... ok
+test system::selection::tests::the_bar_row_is_inset_padded_and_centered ... ok
+test views::full::tests::the_bar_meta_line_carries_every_result_marker ... ok
+test views::full::tests::the_bar_meta_line_stays_quiet_without_a_result ... ok
+test views::full::tests::the_bar_shrinks_before_it_wraps ... ok
+test mode::tests::hide_with_a_tray_tucks_the_window_into_the_menu_bar ... ok
+test app::tests::a_title_bar_click_toggles_through_the_same_effect_as_the_shortcut ... ok
+test app::tests::a_title_bar_double_click_queues_the_fill_effect_once ... ok
+test app::tests::bare_c_dispatches_between_text_and_image_by_selection ... ok
+test system::bar::tests::the_hit_rect_is_the_un_lifted_slot ... ok
+test views::compact::tests::a_short_translation_does_not_invent_a_scrollbar ... ok
+test views::compact::tests::the_input_row_is_the_first_band_now_the_handle_bar_is_gone ... ok
+test views::full::tests::the_pane_boxes_reach_down_to_the_bottom_bar ... ok
+test views::full::tests::the_bottom_bar_occupies_its_own_row_below_both_panes ... ok
+test views::tests::the_toolbar_separator_matches_the_bottom_bar_and_has_no_frame ... ok
+test views::full::tests::a_narrow_window_wraps_the_bar_instead_of_overflowing ... ok
+test views::tests::the_toolbar_takes_one_row_so_the_panes_sit_right_under_it ... ok
+test views::tests::the_text_page_bottom_bar_hugs_the_status_bar ... ok
+test views::full::tests::the_last_line_stops_above_the_bottom_bar ... ok
+test app::tests::a_native_titlebar_drag_arms_the_settler_and_snaps ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 525 filtered out; finished in 0.20s
+
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.37s
+     Running unittests src/main.rs (target/debug/deps/ice_translator-fec042200a847954)

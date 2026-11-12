@@ -1,0 +1,37 @@
+
+running 29 tests
+test config::tests::every_preset_except_custom_has_an_address ... ok
+test config::tests::combos_are_parsed_leniently_and_reject_ambiguous_input ... ok
+test config::tests::ai_endpoint_accepts_both_forms ... ok
+test config::tests::ai_not_ready_without_key ... ok
+test config::tests::an_intentional_unbind_survives_sanitizing_while_garbage_does_not ... ok
+test config::tests::custom_without_url_is_not_ready ... ok
+test config::tests::an_unparsable_hotkey_falls_back_silently_in_text_but_loudly_in_log ... ok
+test config::tests::manual_values_beat_the_preset ... ok
+test config::tests::preset_provider_supplies_url_and_model ... ok
+test config::tests::remember_target_keeps_five_and_most_recent_first ... ok
+test config::tests::sanitize_clamps_out_of_range_values ... ok
+test config::tests::sanitize_keeps_the_unfocused_alpha_inside_its_band ... ok
+test config::tests::sanitize_keeps_the_typography_fields_inside_their_bands ... ok
+test config::tests::load_at_missing_file_returns_defaults_without_reason ... ok
+test config::tests::sanitize_leaves_a_larger_compact_rect_alone ... ok
+test config::tests::corrupt_config_is_rejected_not_panic ... ok
+test config::tests::sanitize_lifts_a_hand_edited_compact_rect_to_the_native_floor ... ok
+test config::tests::thinking_off_field_follows_each_vendors_spelling ... ok
+test config::tests::window_off_screen_detection ... ok
+test config::tests::visible_languages_always_includes_preferred ... ok
+test glossary::tests::write_to_config_dedupes_and_sorts ... ok
+test config::tests::partial_config_uses_defaults_for_missing_sections ... ok
+test config::tests::config_without_provider_field_still_loads ... ok
+test config::tests::roundtrip_keeps_values ... ok
+test glossary::tests::terms_render_as_term_tables_inside_config ... ok
+test config::tests::the_pin_hint_flag_defaults_false_and_survives_a_roundtrip ... ok
+test config::tests::load_at_falls_back_to_defaults_with_reason ... ok
+test glossary::tests::import_legacy_is_idempotent_once_config_has_terms ... ok
+test config::tests::save_at_creates_dirs_and_leaves_no_temp_file ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 37 filtered out; finished in 0.00s
+
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.05s
+     Running unittests src/lib.rs (target/debug/deps/ice_core-bd209e2c22d0b7a8)

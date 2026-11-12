@@ -1,0 +1,74 @@
+
+running 66 tests
+test state::tests::a_cancelled_reply_touches_nothing_but_its_own_stage ... ok
+test state::tests::a_capture_reply_builds_a_pin_and_dispatches_recognize_not_translation ... ok
+test state::tests::a_colliding_target_flips_to_the_other_side ... ok
+test state::tests::a_dismissed_config_never_shows_the_hint ... ok
+test state::tests::a_failed_compose_keeps_the_previous_product ... ok
+test state::tests::a_chinese_source_against_a_chinese_target_goes_to_english ... ok
+test state::tests::a_failed_product_keeps_the_picture_instead_of_blanking_it ... ok
+test state::tests::a_late_pin_reply_cannot_overwrite_the_newer_generation ... ok
+test state::tests::a_new_image_voids_the_previous_rows_and_blocks_at_dispatch ... ok
+test state::tests::a_new_image_voids_the_translation_batch_and_the_product ... ok
+test state::tests::a_pin_with_no_text_is_not_a_failure_and_has_nothing_to_select ... ok
+test state::tests::a_second_capture_while_one_is_in_flight_is_ignored ... ok
+test state::tests::a_stale_capture_reply_leaves_the_screen_alone ... ok
+test state::tests::a_selection_yields_text_or_nothing_not_an_empty_string ... ok
+test state::tests::a_stale_image_result_is_dropped_without_touching_the_visible_document ... ok
+test state::tests::a_toast_fades_linearly_over_its_whole_lifetime ... ok
+test state::tests::acking_without_the_check_does_not_persist_and_next_launch_shows_again ... ok
+test state::tests::an_empty_freeze_is_a_failure_never_a_cancellation ... ok
+test state::tests::an_english_source_against_an_english_target_is_reversed_before_the_request ... ok
+test state::tests::an_explicit_source_language_is_never_overridden ... ok
+test state::tests::char_count_is_cached_until_source_changes ... ok
+test state::tests::clearing_a_selection_is_a_write_not_a_no_op ... ok
+test state::tests::closing_a_pin_reports_whether_it_was_actually_there ... ok
+test state::tests::closing_the_pin_while_the_hint_is_up_dismisses_it_for_this_run ... ok
+test state::tests::empty_source_does_not_submit_and_clears_stale_result ... ok
+test state::tests::failure_keeps_source_and_maps_action ... ok
+test state::tests::losing_ocr_lands_in_the_same_failure_shape_whatever_the_platform ... ok
+test state::tests::mode_toggle_preserves_content_and_does_not_request ... ok
+test state::tests::rate_limit_keeps_retry_possible_and_has_no_action ... ok
+test state::tests::replies_for_a_closed_pin_are_dropped ... ok
+test state::tests::corrupt_history_shows_reason_and_keeps_app_usable ... ok
+test state::tests::history_row_loads_without_submitting ... ok
+test state::tests::stale_outcome_is_dropped_without_touching_visible_text ... ok
+test state::tests::status_text_reflects_state_and_ai_availability ... ok
+test jobs::tests::submitted_job_lands_in_state_and_history ... ok
+test state::tests::submit_while_in_flight_is_ignored ... ok
+test state::tests::stopping_the_translate_segment_only_arms_the_sentinel ... ok
+test state::tests::switching_engine_or_target_resubmits_current_source ... ok
+test state::tests::each_capture_carries_its_own_generation_for_the_texture_cache ... ok
+test state::tests::term_edits_flow_into_config_and_mark_dirty ... ok
+test state::tests::the_band_toggle_refuses_a_pin_that_is_not_there ... ok
+test state::tests::the_button_gate_and_the_status_line_read_one_source ... ok
+test state::tests::the_capture_job_carries_which_windows_to_put_back ... ok
+test state::tests::the_native_repush_quota_is_spent_and_then_stops ... ok
+test state::tests::the_pin_hint_shows_once_on_the_first_pin_and_checked_ack_persists ... ok
+test state::tests::the_seventh_pin_is_refused_without_disturbing_the_six_already_there ... ok
+test state::tests::the_text_and_image_channels_invalidate_only_their_own_results ... ok
+test state::tests::the_text_layer_only_counts_when_recognition_finished ... ok
+test state::tests::the_three_image_segments_expire_independently ... ok
+test state::tests::the_translate_batch_always_carries_a_concrete_language_pair ... ok
+test state::tests::undetectable_text_does_not_trigger_a_reversal ... ok
+test state::tests::timeout_on_ai_offers_machine_fallback_but_not_on_machine ... ok
+test system::capture::tests::unsupported_is_a_fourth_state_with_its_own_sentence ... ok
+test system::selection::tests::cancelling_drops_the_box_and_lands_in_one_terminal_state ... ok
+test system::pin::tests::the_place_comes_from_the_state_and_never_from_our_own_guess ... ok
+test views::settings::tests::theme_labels_cover_all_three_states ... ok
+test state::tests::the_pin_chain_and_the_page_chain_do_not_block_each_other ... ok
+test views::tests::the_pin_tip_names_the_shortcut_in_both_states ... ok
+test state::tests::the_pin_chain_replaces_the_picture_in_place_and_owes_one_compose ... ok
+test views::compact::tests::all_three_states_show_both_icons_and_no_text ... ok
+test state::tests::cancelling_a_capture_leaves_no_selection_and_no_path ... ok
+test state::tests::a_confirmed_pin_is_placed_where_the_box_was ... ok
+test state::tests::a_selection_belongs_to_the_screen_it_was_started_on ... ok
+test views::image::tests::clicking_a_row_checkbox_routes_through_the_state_action ... ok
+test views::tests::tab_state_survives_a_round_trip_through_every_tab ... ok
+test state::tests::a_confirmed_selection_crops_to_the_size_the_label_promised ... ok
+
+test result: ok. 66 passed; 0 failed; 0 ignored; 0 measured; 494 filtered out; finished in 0.01s
+
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.11s
+     Running unittests src/main.rs (target/debug/deps/ice_translator-fec042200a847954)

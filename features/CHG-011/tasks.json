@@ -88,8 +88,12 @@
         "REQ-005"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": [],
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/state.rs",
+        "crates/ice-app/src/system/pill.rs",
+        "crates/ice-app/src/app.rs"
+      ],
       "verify_note": "提示画在药丸窗里 ⇒ 一定在用户正看着的那块屏上，主窗收在托盘里也看得见（Q-004）。不是 toast：现有 toast 会自己淡出、没有勾选、不持久化（事实 10），复用它会丢掉「以后不再提示」那一格。"
     },
     {
@@ -99,8 +103,10 @@
         "REQ-006"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": [],
+      "status": "done",
+      "code_refs": [
+        "crates/ice-core/src/config.rs"
+      ],
       "verify_note": "本条就是 CHG-009 停止条件 5 要的那一次批准请求：批准本包即批准这一个字段，不多不少。实施后与批准前的字段清单逐条比对，差集只许有这一个，写进 evidence。"
     },
     {
@@ -110,8 +116,11 @@
         "REQ-007"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": [],
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/cover.rs",
+        "crates/ice-app/src/main.rs"
+      ],
       "verify_note": "不许用画成桌面色假装浮空（REQ-007 明令）。退回也不许让既有断言变红：退回路径同样跑全量。不用 git checkout --/restore 动任何带未提交工作的文件，看旧写法用只读的 git show HEAD:<path>。"
     },
     {
@@ -121,8 +130,15 @@
         "REQ-008"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": [],
+      "status": "done",
+      "code_refs": [
+        "docs/02-architecture.md",
+        "docs/03-ui-design.md",
+        "docs/05-dev-guide.md",
+        "docs/06-test-cases.md",
+        "docs/07-acceptance.md",
+        "docs/traceability.md"
+      ],
       "verify_note": "docs/ 在树指纹内（sdd.py:164-188，LEDGER 只排除 features/quick/incidents/STATE.md/.sdd/），改文档会让已录证据过期；commit 与录证据都不改 tree_hash，所以留档必须在文档定稿之后一次性做完。W-7.1~W-7.4 只有用户的眼睛和手能定，不计开发工时，也不许替他写成已验。"
     }
   ]

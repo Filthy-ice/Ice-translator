@@ -1,0 +1,65 @@
+
+running 57 tests
+test mode::tests::clamping_a_compact_rect_only_lifts_the_too_small_axes ... ok
+test mode::tests::snapping_an_already_docked_window_changes_nothing ... ok
+test mode::tests::snapping_to_the_left_edge_mirrors_the_right_one ... ok
+test mode::tests::snapping_to_the_right_edge_uses_the_specified_formula ... ok
+test app::tests::snapping_again_from_the_docked_position_is_a_no_op ... ok
+test app::tests::the_space_key_toggles_the_band_of_that_pin_only ... ok
+test app::tests::the_pin_effect_and_the_hotkey_share_one_path ... ok
+test state::tests::a_capture_reply_builds_a_pin_and_dispatches_recognize_not_translation ... ok
+test state::tests::a_pin_with_no_text_is_not_a_failure_and_has_nothing_to_select ... ok
+test app::tests::a_drag_selection_lands_on_its_own_pin_only ... ok
+test state::tests::closing_the_pin_while_the_hint_is_up_dismisses_it_for_this_run ... ok
+test state::tests::replies_for_a_closed_pin_are_dropped ... ok
+test state::tests::the_band_toggle_refuses_a_pin_that_is_not_there ... ok
+test state::tests::closing_a_pin_reports_whether_it_was_actually_there ... ok
+test state::tests::a_late_pin_reply_cannot_overwrite_the_newer_generation ... ok
+test state::tests::stopping_the_translate_segment_only_arms_the_sentinel ... ok
+test state::tests::the_pin_hint_shows_once_on_the_first_pin_and_checked_ack_persists ... ok
+test state::tests::the_seventh_pin_is_refused_without_disturbing_the_six_already_there ... ok
+test system::pin::tests::a_click_on_blank_space_selects_nothing ... ok
+test system::pin::tests::a_drag_only_collects_the_blocks_it_touches ... ok
+test system::pin::tests::a_plain_press_still_belongs_to_the_window_drag ... ok
+test system::pin::tests::a_missing_scale_falls_back_to_one_not_to_zero ... ok
+test state::tests::the_pin_chain_and_the_page_chain_do_not_block_each_other ... ok
+test system::pin::tests::band_toggle_does_not_resize_the_pin_window ... ok
+test system::pin::tests::an_unreadable_file_paints_nothing_instead_of_a_white_block ... ok
+test state::tests::the_pin_chain_replaces_the_picture_in_place_and_owes_one_compose ... ok
+test system::pin::tests::exactly_four_actions_shared_by_the_band_and_the_menu ... ok
+test app::tests::confirming_closes_the_mask_and_pins_the_shot ... ok
+test system::pin::tests::both_the_band_and_the_menu_iterate_the_one_table ... ok
+test system::pin::tests::intents_are_delivered_by_waking_the_root_viewport ... ok
+test system::pin::tests::the_band_and_the_menu_emit_the_same_four_intents ... ok
+test system::pin::tests::only_one_drag_path_exists_in_this_module ... ok
+test system::pin::tests::the_band_drops_only_the_close_action ... ok
+test system::pin::tests::the_close_action_is_only_about_this_pin ... ok
+test system::pin::tests::the_key_matrix_maps_each_key_to_exactly_one_intent ... ok
+test system::pin::tests::the_hit_rect_and_the_painted_rect_use_one_conversion ... ok
+test system::pin::tests::the_layout_never_invents_a_position ... ok
+test system::pin::tests::the_pin_window_is_always_the_image_itself ... ok
+test system::pin::tests::the_pixel_to_point_division_happens_exactly_once ... ok
+test app::tests::closing_a_pin_with_escape_only_drops_the_window ... ok
+test system::pin::tests::the_resize_command_fires_once_per_change ... ok
+test system::pin::tests::the_save_name_is_a_readable_name_not_our_internal_id ... ok
+test system::screen::tests::flipping_a_full_frame_covers_the_screen ... ok
+test system::screen::tests::flipping_the_main_screen_moves_the_origin_to_the_top_left ... ok
+test system::pin::tests::the_place_comes_from_the_state_and_never_from_our_own_guess ... ok
+test views::compact::tests::the_slot_mapping_has_three_positions_with_hysteresis ... ok
+test system::windows::tests::clamping_uses_the_given_screen_not_a_zero_origin_assumption ... ok
+test views::tests::the_pin_tip_names_the_shortcut_in_both_states ... ok
+test app::tests::typing_or_a_held_button_keeps_the_window_out ... ok
+test app::tests::saving_a_pin_writes_the_same_export_seam_and_refuses_a_gone_one ... ok
+test views::compact::tests::the_theme_switch_is_pinned_to_the_bottom_right ... ok
+test system::pin::tests::a_real_pass_turns_space_into_a_band_toggle ... ok
+test system::pin::tests::a_real_pass_turns_escape_into_a_close_intent ... ok
+test views::compact::tests::the_blank_between_the_row_and_the_pin_is_a_handle ... ok
+test views::compact::tests::the_pin_sits_left_of_the_theme_switch_and_shares_the_topmost_channel ... ok
+test views::tests::the_pin_sits_left_of_the_floating_button_and_sets_the_same_intent ... ok
+test state::tests::a_confirmed_pin_is_placed_where_the_box_was ... ok
+
+test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 503 filtered out; finished in 0.00s
+
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.13s
+     Running unittests src/main.rs (target/debug/deps/ice_translator-fec042200a847954)
