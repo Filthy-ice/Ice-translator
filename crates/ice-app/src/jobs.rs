@@ -163,15 +163,10 @@ impl JobRunner {
                 blocks,
                 cancel,
             } => self.submit_image_translate(runtime, id, owner, engine, blocks, cancel, ctx),
-            Job::ScreenCapture { id, seq, hidden } => {
-                self.submit_screen_capture(runtime, id, seq, hidden, ctx)
+            Job::ScreenCapture { id, seq } => self.submit_screen_capture(runtime, id, seq, ctx),
+            Job::Freeze { id, seq, displays } => {
+                self.submit_freeze(runtime, id, seq, displays, ctx)
             }
-            Job::Freeze {
-                id,
-                seq,
-                displays,
-                hidden,
-            } => self.submit_freeze(runtime, id, seq, displays, hidden, ctx),
             Job::PinRecognize {
                 pin,
                 generation,
@@ -392,7 +387,6 @@ impl JobRunner {
         id: RequestId,
         seq: u64,
         displays: Vec<u8>,
-        hidden: capture::Hidden,
         ctx: &Context,
     ) {
         let tx = self.tx.clone();
@@ -431,7 +425,7 @@ impl JobRunner {
             // 顺序按 `displays` 来（`apply_frozen` 就按这个顺序把像素配回各屏的矩形）
             let frames: Vec<crate::state::Freeze> = grabbed.into_iter().flatten().collect();
             capture::purge_temp(&temp);
-            capture::show_again(&ctx, &hidden);
+            capture::wake_after_capture(&ctx);
             tracing::info!(
                 request_id = id,
                 screens = frames.len(),
@@ -445,14 +439,7 @@ impl JobRunner {
         });
     }
 
-    fn submit_screen_capture(
-        &mut self,
-        runtime: &Runtime,
-        id: RequestId,
-        seq: u64,
-        hidden: capture::Hidden,
-        ctx: &Context,
-    ) {
+    fn submit_screen_capture(&mut self, runtime: &Runtime, id: RequestId, seq: u64, ctx: &Context) {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         // 执行体整个换成共享的：`spawn_blocking` 的闭包必须是 'static，借不动 &self
@@ -465,9 +452,9 @@ impl JobRunner {
                 Err(kind) => capture::Outcome::Failed(kind),
             };
             let elapsed_ms = started.elapsed().as_millis() as u64;
-            // 先把窗放回来并买那一帧，再发回信。反过来的话，回信落帧循环去建贴图窗时
-            // 主窗还收着（隐藏态那一次按下正是这一格，事实 30/31）
-            capture::show_again(&ctx, &hidden);
+            // 先叫醒帧循环再发回信：隐藏态那一次按下时主窗收着，回信落帧循环去建贴图窗
+            // 要靠 RequestPaintWhileHidden 那一帧（事实 30/31）。CHG-013 起不再收起/还原自家窗。
+            capture::wake_after_capture(&ctx);
             tracing::info!(
                 request_id = id,
                 result = outcome_name(&outcome),

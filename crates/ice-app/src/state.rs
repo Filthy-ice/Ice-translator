@@ -293,9 +293,6 @@ pub enum Job {
         id: RequestId,
         /// 历史文件名的第三段（同 pid 同秒的两次连点靠它分开）
         seq: u64,
-        /// 发起前被收起的那些窗（含主窗）。**子进程结束时由那条线程放回来**——
-        /// 挂在帧循环上不行：窗收起时帧循环根本不跑，还原就永远不会执行
-        hidden: capture::Hidden,
     },
     /// 抓每块屏的冻结帧（CHG-010 REQ-101）。`displays` 是要点名的屏序号（`-D`，1 起）；
     /// 序号由 `app.rs` 从 `NSScreen` 列表按位置编出来，回信再按它配对（不做缓存，
@@ -304,7 +301,6 @@ pub enum Job {
         id: RequestId,
         seq: u64,
         displays: Vec<u8>,
-        hidden: capture::Hidden,
     },
     /// 一张贴图自己的"只识别"（REQ-005）。**不带翻译**：那颗「翻译」是人按的。
     /// `gen` 是派发那一刻的代序号，回信原样带回来，对不上就丢弃。
@@ -1568,29 +1564,7 @@ impl AppState {
             id,
             seq: self.capture_seq,
             displays: screens.into_iter().map(|spec| spec.display).collect(),
-            // 发起前要收起哪些窗，账跟着任务走：子进程结束时由**那条线程**放回来
-            hidden: self.capture_hidden_record(),
         })
-    }
-
-    /// 那颗按钮灰不灰与状态行说哪句话，**读同一个来源**（与 `translate_gate` /
-    /// `compose_gate` 同形）。三道门从上往下依次是：这台机器没这件事、上一次还在画、
-    /// 屏幕上钉满了。
-    /// 这次框选要临时收起哪些窗。
-    ///
-    /// 主窗 + 每一张贴图，一个都不能漏：系统的框选界面把屏幕原样拍进去，任何一扇还开着
-    /// 的自家窗都会进图（事实 32）。还原时那两条命令的顺序与"要不要买一帧"不在这里决定，
-    /// 见 `capture::wake_commands`——窗在这一刻收着，这一条对截图这一档恒成立。
-    pub fn capture_hidden_record(&self) -> capture::Hidden {
-        capture::Hidden {
-            viewports: std::iter::once(egui::ViewportId::ROOT)
-                .chain(
-                    self.pins
-                        .iter()
-                        .map(|pin| crate::system::pin::viewport_id(pin.id)),
-                )
-                .collect(),
-        }
     }
 
     /// 冻结帧回来了。**像素只在这里进状态**，遮罩一关就清（确认之前盘上不许有东西）。
@@ -2997,10 +2971,10 @@ mod tests {
         assert!(st.submit_pin_translate(pin).is_none());
     }
 
-    /// 收起哪些窗这份账**跟着任务走**，不是留在状态里等帧循环去做：窗收起时帧循环根本
-    /// 不跑，挂在帧末的还原永远不会执行（那就是"截完图界面再也没回来"）。
+    /// CHG-013：截图任务**不再带"收起哪些窗"那份账**（改口 CHG-009 REQ-010）。发起框选
+    /// 不收起自家窗，任务里只剩号与屏序号；"不再发 Visible(false)"由 app.rs 帧末队列断言守。
     #[test]
-    fn the_capture_job_carries_which_windows_to_put_back() {
+    fn the_capture_job_no_longer_carries_a_hide_list() {
         fn id_of(job: &Job) -> RequestId {
             match job {
                 Job::ScreenCapture { id, .. } | Job::Freeze { id, .. } => *id,
@@ -3012,28 +2986,21 @@ mod tests {
         st.push_pin(PathBuf::from("/tmp/history/a.png"), None);
         st.push_pin(PathBuf::from("/tmp/history/b.png"), None);
         let job = st.submit_capture(two_screens()).expect("空闲时该发得出");
-        // 两条路（系统框选 / 自绘遮罩）都必须带这份账：断言对两支都成立，
-        // 免得切换派发口时这组测试变成"只有某一条路能过"
-        let (Job::ScreenCapture { hidden, .. } | Job::Freeze { hidden, .. }) = &job else {
-            panic!("派出的必须是截图任务：{job:?}");
+        // 派发口只发自绘冻结这一支，且结构上已经没有 hidden 那一格，只带号与屏序号
+        let Job::Freeze { displays, .. } = &job else {
+            panic!("派发口只发自绘冻结这一支：{job:?}");
         };
-        // 主窗 + 两张贴图，一个都不能漏
-        assert_eq!(hidden.viewports.len(), 3);
-        assert!(hidden.viewports.contains(&egui::ViewportId::ROOT));
+        assert_eq!(displays.len(), 2, "两块屏都要点名");
 
-        // 主窗本来就收着（托盘那一档）也照样发得出、账也照样是这三扇：还原那两条命令
-        // 不分这一格（窗在这一刻收着，恒要买那一帧）。先让上一次取消落地——在飞时本来就该拒
+        // 主窗本来就收着（托盘那一档）也照样发得出：唤醒不分这一格（CHG-013 保留唤醒）。
+        // 先让上一次取消落地——在飞时本来就该拒
         let first = st.apply_capture(id_of(&job), capture::Outcome::Cancelled);
         assert!(matches!(first, CaptureApplied::Cancelled));
         st.hidden = true;
         let job = st
             .submit_capture(two_screens())
             .expect("上一次落地之后该再发得出");
-        let (Job::ScreenCapture { hidden, .. } | Job::Freeze { hidden, .. }) = &job else {
-            unreachable!()
-        };
-        assert_eq!(hidden.viewports.len(), 3);
-        assert!(hidden.viewports.contains(&egui::ViewportId::ROOT));
+        assert!(matches!(job, Job::Freeze { .. }));
     }
 
     /// **每一轮冻结都带自己的号**，纹理缓存认的就是这一格（缺陷 D-41 的形状核查）。

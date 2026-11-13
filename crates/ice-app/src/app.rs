@@ -1831,9 +1831,9 @@ impl IceApp {
             }
         }
         // 「框选贴图」那颗与全局截图热键**落同一格**（形状核查也锁这一条：派发只这一处）。
-        // 发起前先把自家窗收起——系统的框选界面会把屏幕原样拍进去，我们任何一扇还开着的窗
-        // 都会进图（事实 32 的正负对照）。**还原不在这里做**：窗收起时帧循环根本不跑，挂在
-        // 帧末的还原永远不会执行；那份账跟着任务走，由子进程结束那条线程去放（REQ-010）。
+        // CHG-013 改口 CHG-009 REQ-010：发起框选**不再收起自家窗**（用户 2026-11-13
+        // "不用将我们的软件收起/透明"）。自家窗全程保持原样、遮罩盖在其上；可见则按当前
+        // 不透明状态进冻结帧（登记为已知限制，不想被拍由用户自行管理可见性）。
         if effects.capture {
             // N0 时间轴的起点：白屏落在哪一段，靠这几个毫秒点对差值
             tracing::info!(
@@ -1849,13 +1849,7 @@ impl IceApp {
             // 都在这一下定下来交给任务，回信再按它配对（CHG-010 REQ-102"每块屏一扇遮罩"）。
             let screens = capture_screens(self);
             if let Some(job) = self.state.submit_capture(screens) {
-                // 两条截图任务（老的系统框选 / 新的先冻结）收窗的是同一处：
-                // 少收一扇，我们自己就会出现在自己截出来的图上
-                if let crate::state::Job::ScreenCapture { hidden, .. }
-                | crate::state::Job::Freeze { hidden, .. } = &job
-                {
-                    capture::hide(ctx, hidden.viewports.clone());
-                }
+                // CHG-013：不再收起自家窗，直接派发；收尾叫醒帧循环由子进程那条线程做。
                 self.runner.submit(&self.runtime, job, ctx);
             }
         }
@@ -5253,11 +5247,11 @@ mod tests {
         );
     }
 
-    /// 帧末**没有截图意图**时一家窗都不许收。这条是给一个我自己引进的错误锁门的：
-    /// 重写那段时把 `if effects.capture` 的守卫写丢了，于是每一帧末都发起一次框选——
-    /// 症状是界面不停闪、窗不停收起，而它不会编译失败，只会在真机上被发现。
+    /// 截图**不再收起自家窗**（CHG-013 改口 CHG-009 REQ-010，用户"不用将我们的软件收起/透明"）。
+    /// 没有意图时一家窗都不收；真有意图时也一家都不收——自家窗全程保持原样，遮罩盖在其上。
+    /// 这条同时给一个我自己引进过的错误锁门：把 `if effects.capture` 守卫写丢会每帧发起框选。
     #[test]
-    fn a_frame_without_the_capture_intent_hides_nothing() {
+    fn capture_never_hides_our_own_window() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = app(dir.path(), plain_state());
         app.state.push_pin(dir.path().join("a.png"), None);
@@ -5273,17 +5267,18 @@ mod tests {
             queued(&c)
         );
 
-        // 真有意图时才收：主窗在其中（贴图那一扇是发给子视口的，不在这份队列里）
+        // 真有意图时也不收：CHG-013 起截图全程不收起自家窗
         let effects = Effects {
             capture: true,
             ..Default::default()
         };
         app.run_effects(&c, effects);
         assert!(
-            queued(&c)
+            !queued(&c)
                 .iter()
                 .any(|command| matches!(command, ViewportCommand::Visible(false))),
-            "点了那颗却没收起主窗：截图就会把我们自己的界面拍进去"
+            "截图收起了自家窗：回到被改口的老路（CHG-009 REQ-010）了：{:?}",
+            queued(&c)
         );
         assert_eq!(
             app.state.capture_stage,
