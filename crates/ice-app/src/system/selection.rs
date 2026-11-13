@@ -593,7 +593,13 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
     let builder = egui::ViewportBuilder::default()
         .with_title(mask_title(display))
         .with_decorations(false)
-        .with_transparent(false)
+        // 透明底是为了根除按 F1 那一瞬白屏（用户 2026-11-13 真机复报）。deferred 子视口拿不到
+        // eframe 只给根窗那层"建窗先藏、第一帧画完再露"的防白闪（wgpu_integration 的 create_window），
+        // 而不透明窗的默认原生底是白——窗先露、第一帧 wgpu 还没把冻结图盖上那一小段就是白。改成
+        // 透明底，那一小段透出的是桌面（冻结图本就是桌面快照，几乎一样）；第一帧把冻结图不透明铺满
+        // 整屏（下方 painter.image），稳态仍是整屏不透明。"先藏再露"这条路走不通：eframe 对不可见的
+        // deferred 视口直接不跑 UI 闭包（wgpu_integration「Nothing will be shown」），藏了就永远画不出第一帧。
+        .with_transparent(true)
         .with_has_shadow(false)
         // 这一档只是**下限**：真盖住 Dock 与菜单栏靠 `system::cover` 那一次原生抬层，
         // 头几帧幂等重下、收敛即收手。留着它是为了让抬层失败时退回"至少还置顶在普通窗之上"。
@@ -1560,6 +1566,22 @@ mod tests {
         assert!(
             body.contains("data(|d| load_selection(d, display, frozen_id))"),
             "帧里的读法必须走那一个函数"
+        );
+    }
+
+    /// 形状核查：遮罩窗必须透明底，根除按 F1 那一瞬白屏（用户 2026-11-13 真机复报）。
+    /// deferred 子视口没有 eframe 只给根窗那层"建窗先藏、画完再露"的防白闪，不透明窗默认
+    /// 原生底是白，窗先露而第一帧冻结图还没盖上那一小段就是白。透明底让那一小段透出桌面而非白。
+    #[test]
+    fn the_mask_window_keeps_a_transparent_backing_to_kill_the_white_flash() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        assert!(
+            body.contains(".with_transparent(true)"),
+            "遮罩窗必须透明底，否则按 F1 那一瞬白屏会长回来"
+        );
+        assert!(
+            !body.contains(".with_transparent(false)"),
+            "遮罩窗不许回到不透明底——那正是白屏的来源"
         );
     }
 }
