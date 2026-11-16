@@ -176,12 +176,17 @@ pub struct Selection {
     pub stage: Stage,
     /// 屏上的那块矩形（点）。`Ready`/`Confirmed` 时一定非空
     pub rect: Option<egui::Rect>,
-    /// 按下那一点（拖新框与移动的锚点）
+    /// 按下那一点（拖新框与框内移动的锚点）。框内移动期间**不改写**：始终拿它和
+    /// [`Self::grabbed`] 算绝对位移，按住的那一点才会一直贴在鼠标下。
     anchor: egui::Pos2,
     /// 这次按下抢到了什么
     grab: Grab,
     /// 这一帧有没有在拖
     dragging: bool,
+    /// **框内按下那一刻**的矩形。移动永远从这份原始位置 +（当前点 − 按下点）算起，
+    /// 不逐帧累加——累加写法在屏缘夹取之后会把抓取点漂掉（用户 2026-11-16 真机报的
+    /// "左上角粘鼠标"就是把锚点记成了框角，D-43）。
+    grabbed: Option<Rect>,
     /// **空白处按下之前**那块矩形。空白单击是"要鼠标底下那扇窗"（REQ-108），
     /// 不是"把上一个框弄没"——所以旧框先押着，真的拖起来了才丢。
     previous: Option<Rect>,
@@ -197,6 +202,7 @@ impl Default for Selection {
             anchor: Pos2::ZERO,
             grab: Grab::Blank,
             dragging: false,
+            grabbed: None,
             previous: None,
             moved: false,
         }
@@ -225,8 +231,15 @@ impl Selection {
                 self.previous = self.rect;
                 self.rect = Some(Rect::from_min_max(at, at));
                 self.moved = false;
+                self.grabbed = None;
             }
-            Grab::Inside | Grab::Handle(_) => {}
+            // 框内按下：押住原始矩形，移动从它算绝对位移（抓取点不漂）
+            Grab::Inside => {
+                self.grabbed = self.rect;
+            }
+            Grab::Handle(_) => {
+                self.grabbed = None;
+            }
         }
         self.grab
     }
@@ -250,19 +263,19 @@ impl Selection {
                 self.rect = Some(Rect::from_two_pos(self.anchor, to));
             }
             Grab::Inside => {
-                if let Some(rect) = self.rect {
-                    let size = rect.size();
-                    // 移动不许把框推出屏外：先算整块能放得下的范围，再平移
+                if let Some(base) = self.grabbed {
+                    let size = base.size();
+                    // 移动不许把框推出屏外：先算整块能放得下的范围，再平移。
+                    // 从原始矩形算绝对位移：夹在屏缘再拖回来，抓取点仍贴在鼠标下。
                     let min_x = field.bounds.min.x;
                     let max_x = (field.bounds.max.x - size.x).max(min_x);
                     let min_y = field.bounds.min.y;
                     let max_y = (field.bounds.max.y - size.y).max(min_y);
                     let moved = pos2(
-                        (rect.min.x + (to.x - self.anchor.x)).clamp(min_x, max_x),
-                        (rect.min.y + (to.y - self.anchor.y)).clamp(min_y, max_y),
+                        (base.min.x + (to.x - self.anchor.x)).clamp(min_x, max_x),
+                        (base.min.y + (to.y - self.anchor.y)).clamp(min_y, max_y),
                     );
                     self.rect = Some(Rect::from_min_size(moved, size));
-                    self.anchor = moved;
                 }
             }
             Grab::Handle(index) => {
@@ -331,6 +344,7 @@ impl Selection {
         self.rect = None;
         self.dragging = false;
         self.grab = Grab::Blank;
+        self.grabbed = None;
     }
 
     /// 尺寸读数（`宽 × 高`，**像素**不是点）。
@@ -1123,6 +1137,45 @@ mod tests {
             pos2(1920.0, 1080.0),
             "往屏外推要停在屏角，而不是把框推出可见区"
         );
+    }
+
+    /// D-43（用户 2026-11-16 真机报）：框内按住拖动，**按下那一点要一直贴在鼠标下**。
+    /// 遮罩每帧调一次 drag，旧写法把锚点记成框的新左上角，第二帧起左上角就粘了鼠标；
+    /// 只拖一步的旧用例抓不到，这条专门多帧连拖。夹到屏缘再拖回来，抓取点也不许漂。
+    #[test]
+    fn moving_inside_keeps_the_pressed_point_under_the_cursor_across_frames() {
+        let field = main_screen();
+        let base = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
+        let mut sel = Selection {
+            stage: Stage::Ready,
+            rect: Some(base),
+            ..Selection::default()
+        };
+        let press_at = pos2(250.0, 180.0);
+        let offset = press_at - base.min; // (150, 80)：抓取点相对框左上角的位置
+        assert_eq!(sel.press(&field, press_at, HANDLE_RADIUS), Grab::Inside);
+
+        // 连拖三帧（真机就是每帧一步）：每一步框左上角都该等于 鼠标 − 固定偏移
+        for to in [pos2(260.0, 190.0), pos2(350.0, 260.0), pos2(400.0, 300.0)] {
+            sel.drag(&field, to);
+            let rect = sel.rect.expect("还在拖");
+            assert_eq!(rect.size(), base.size(), "移动不许改尺寸");
+            assert_eq!(rect.min, to - offset, "按下那一点必须一直贴在鼠标下");
+        }
+
+        // 推到屏缘夹住，再拖回来：绝对位移算法要把抓取点原样还回来，不许漂
+        sel.drag(&field, pos2(1900.0, 1060.0));
+        assert_eq!(sel.rect.unwrap().max, pos2(1920.0, 1080.0), "夹在屏角");
+        sel.drag(&field, pos2(400.0, 300.0));
+        assert_eq!(
+            sel.rect.unwrap().min,
+            pos2(400.0, 300.0) - offset,
+            "从屏缘拖回来，抓取点仍贴在鼠标下"
+        );
+
+        assert_eq!(sel.release(&field, pos2(400.0, 300.0)), Stage::Ready);
+        assert_eq!(sel.rect.unwrap().min, pos2(400.0, 300.0) - offset);
+        assert_eq!(sel.rect.unwrap().size(), base.size());
     }
 
     /// 一次按下**只落一处判定**：把手优先于框内。反过来的话靠内那一圈把手永远点不到，
