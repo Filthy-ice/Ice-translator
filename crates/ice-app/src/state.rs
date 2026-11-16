@@ -419,8 +419,6 @@ pub enum CaptureStage {
     Capturing,
     /// 冻结帧拿到了，遮罩开着、用户正在选（CHG-010 REQ-102）
     Frozen,
-    /// 已确认但还没钉住的那一张（CHG-010 REQ-106：F3「固定」的落点就在这格）
-    Selected,
     /// 拿到图并且钉上了。贴图的细节在 [`AppState::pins`] 里，这一态只说"这一段成功了"
     Pinned,
     /// 工具报错、权限被拒、图坏了——装的是一句能行动的话（`capture` 那侧算好的）
@@ -436,7 +434,6 @@ impl CaptureStage {
             CaptureStage::Idle => None,
             CaptureStage::Capturing => Some("正在冻结画面…"),
             CaptureStage::Frozen => Some("在选区里…"),
-            CaptureStage::Selected => Some("已确认，没钉住"),
             CaptureStage::Pinned => Some("已钉住"),
             // 失败那句已经在 `Failed` 里带着了，这一层不再造第二句
             CaptureStage::Failed(_) => Some("截不出来"),
@@ -448,7 +445,7 @@ impl CaptureStage {
     pub const fn phase(&self) -> Phase {
         match self {
             CaptureStage::Capturing | CaptureStage::Frozen => Phase::Busy,
-            CaptureStage::Pinned | CaptureStage::Selected => Phase::Done,
+            CaptureStage::Pinned => Phase::Done,
             CaptureStage::Failed(_) => Phase::Bad,
             CaptureStage::Idle | CaptureStage::Cancelled => Phase::Idle,
         }
@@ -708,8 +705,7 @@ pub enum CaptureApplied {
     Stale,
     /// 用户取消：不建贴图、不改图片页任何东西
     Cancelled,
-    /// 失败，带那句能行动的话。**"屏幕上已经钉满"也走这一档**（Q-007）：
-    /// 那句话同样是一句能行动的提示（"先 esc 关掉一张"），而不是"截图失败了"
+    /// 失败，带那句能行动的话
     Failed(String),
     /// 新建的贴图号。帧循环拿它去开窗（`system::pin::open`）并派"只识别"
     Pinned { pin: RequestId },
@@ -717,13 +713,6 @@ pub enum CaptureApplied {
     /// 少一块就是那一屏没盖住，界面说一句，不假装全屏定格了）
     Frozen { screens: usize },
 }
-
-/// 同时能钉几张。**6 不是能力上限**（本机实测同时钉 8 张各自出图，事实 33），
-/// 它是"屏幕上摆六张还找得着"那个判断（Q-007）。
-///
-/// 满了的行为是**拒绝新的那一张**，不是撤掉最老的那一张：用户正对着的那张凭空消失，
-/// 比"这张没钉上，先关一张"糟糕得多——后者他一眼就看见、一句话就知道下一步。
-pub const PIN_MAX: usize = 6;
 
 /// 图片页识别段的五态（CHG-005 REQ-006）。
 ///
@@ -968,6 +957,9 @@ pub struct AppState {
     pub in_flight: Option<RequestId>,
     pub request_id: RequestId,
     pub toasts: Vec<Toast>,
+    /// 后台也看得见的那条浮空提示（用户 2026-11-16）。与 `toasts` 分开存：主窗收着时
+    /// `toasts` 画在主窗里没人看，F2"没得翻"那两句改走这一扇独立浮窗（`system::hint`）。
+    pub float_hint: Option<Toast>,
     /// 启动时的一次性提示（配置损坏降级、旧术语表导入条数）
     pub startup_notice: Option<String>,
     pub key: KeyState,
@@ -1076,9 +1068,6 @@ pub struct AppState {
     /// 设置页里"正在等你按一个键"的那一格（capture / pin_last / reopen 之一）。
     /// `None` = 没在采集。这是运行态、不进配置：采集态是界面的临时状态，重启后不该还开着
     pub hotkey_capture: Option<&'static str>,
-    /// 因为"钉满了"而没钉上的那一张：它**已经在盘上**了，用户关掉一张之后按「固定」
-    /// 还能补钉上，不必重截（REQ-006 那条"固定"的语义）
-    pub unpinned_capture: Option<PathBuf>,
     /// 贴图首用提示这一格（CHG-011 REQ-005）。**运行态、不落盘**：跨启动的"不再提示"由
     /// `config.ui.pin_hint_dismissed` 承载，这一格只管"本次启动弹没弹、勾没勾"。
     pub pin_hint: PinHint,
@@ -1105,6 +1094,7 @@ impl AppState {
             in_flight: None,
             request_id: 0,
             toasts: Vec::new(),
+            float_hint: None,
             startup_notice,
             key,
             focus_key_input: false,
@@ -1155,7 +1145,6 @@ impl AppState {
             browse_anchor: None,
             capture_applied: None,
             pins_new: Vec::new(),
-            unpinned_capture: None,
             hotkey_capture: None,
             pin_hint: PinHint::NotShown,
         }
@@ -1192,6 +1181,25 @@ impl AppState {
         let before = self.toasts.len();
         self.toasts.retain(|toast| !toast.expired());
         self.toasts.len() != before
+    }
+
+    /// 立一条浮空提示（后台可见）。整条替换：同一时刻只浮一句，新的顶掉旧的。
+    pub fn set_float_hint(&mut self, tone: Tone, text: impl Into<String>) {
+        self.float_hint = Some(Toast {
+            tone,
+            text: text.into(),
+            shown_at: std::time::Instant::now(),
+        });
+    }
+
+    /// 每帧调一次：到期就收掉。返回是否刚收掉（调用方据此决定要不要再画一帧把窗撤掉）。
+    pub fn tick_float_hint(&mut self) -> bool {
+        if self.float_hint.as_ref().is_some_and(Toast::expired) {
+            self.float_hint = None;
+            true
+        } else {
+            false
+        }
     }
 
     /// 提交一次翻译。返回 `None` 表示"不该发请求"（正在飞行中，或源文为空）。
@@ -1651,16 +1659,8 @@ impl AppState {
         capture.sel = sel;
     }
 
-    /// 确认之后：像素从状态里撤掉（一块屏几十 MB，看完就该放），路径留下等钉/等复制。
-    /// 这一格的存在就是 F3「固定」的落点（REQ-106）。
-    pub fn confirm_capture(&mut self, path: PathBuf) {
-        self.capture = None;
-        self.unpinned_capture = Some(path);
-        self.capture_stage = CaptureStage::Selected;
-    }
-
     /// 钉住遮罩里确认的那一张（走的是与老流程同一条 `pin_from_history`，不开第二条钉图路）
-    pub fn pin_confirmed_capture(&mut self, path: PathBuf) -> Option<RequestId> {
+    pub fn pin_confirmed_capture(&mut self, path: PathBuf) -> RequestId {
         // 「原地」那一格在这里兑现：确认这一刻选区在哪，钉出来就在那儿。
         // 换算只在这一处：那块屏的全局原点 + 选区在那块屏里的左上角。
         // 先算再清 `capture`——清完就没有这份几何了。
@@ -1735,9 +1735,6 @@ impl AppState {
         if self.capture_in_flight.is_some() || self.capture.is_some() {
             return Some("上一次截图还没完");
         }
-        if self.pins.len() >= PIN_MAX {
-            return Some("屏幕上已经钉满 6 张，先 esc 关掉一张");
-        }
         None
     }
 
@@ -1772,43 +1769,20 @@ impl AppState {
                 CaptureApplied::Failed(text)
             }
             capture::Outcome::Captured(path) => {
-                // 满了：**图仍然留在历史里**（老化照常），只是不再往屏幕上钉。
-                // 撤掉用户已经钉着的那一张来腾位置是不可接受的（Q-007）。
-                if self.pins.len() >= PIN_MAX {
-                    self.unpinned_capture = Some(path.clone());
-                    let text = "屏幕上已经钉满 6 张，先 esc 关掉一张".to_string();
-                    self.capture_stage = CaptureStage::Failed(text.clone());
-                    return CaptureApplied::Failed(text);
-                }
-                let pin = self.push_pin(path.clone(), None);
+                let id = self.push_pin(path, None);
                 self.capture_stage = CaptureStage::Pinned;
-                if let Some(id) = pin {
-                    self.pins_new.push(id);
-                } else {
-                    // 这一张没钉上但**已经在盘上**：留给「固定」那一格
-                    self.unpinned_capture = Some(path);
-                }
-                match pin {
-                    Some(id) => CaptureApplied::Pinned { pin: id },
-                    None => {
-                        // 只有并发才可能到这里（同一帧内两次 push），保底说"钉不上"
-                        let text = "这张没钉上，先 esc 关掉一张".to_string();
-                        self.capture_stage = CaptureStage::Failed(text.clone());
-                        CaptureApplied::Failed(text)
-                    }
-                }
+                self.pins_new.push(id);
+                CaptureApplied::Pinned { pin: id }
             }
         }
     }
 
-    /// 记下一张新的贴图，返回它的号。满了返回 `None`（调用方负责给那句话）。
+    /// 记下一张新的贴图，返回它的号。**没有数量上限**（用户 2026-11-16 改口 CHG-009 Q-007：
+    /// 6 张那档"找得着"的判断作废，钉多少张由用户自己决定）。
     ///
     /// 号只往前走、不复用：窗口关掉之后那个号不会被下一张顶替，所以任何一条晚到的回信
     /// 都不可能落在一张新贴图上（[`Pin::recognize_gen`] 是同一族纪律的第二层）。
-    pub fn push_pin(&mut self, path: PathBuf, at: Option<Pos2>) -> Option<RequestId> {
-        if self.pins.len() >= PIN_MAX {
-            return None;
-        }
+    pub fn push_pin(&mut self, path: PathBuf, at: Option<Pos2>) -> RequestId {
         self.next_pin_id += 1;
         let id = self.next_pin_id;
         self.pins.push(Pin::new(id, path, at));
@@ -1822,43 +1796,28 @@ impl AppState {
                 dont_show_again: false,
             };
         }
-        Some(id)
-    }
-
-    /// 「固定」那一格：把最近一次没钉上的那张补钉上。没有就说 `None`，**什么都不做**
-    /// （REQ-006 明写"没有就什么都不做"，不许拿历史里更早那张顶上去——那用户会以为
-    /// 这把键是"打开上一次"，两把键就成一把了）
-    pub fn pin_last_capture(&mut self) -> Option<RequestId> {
-        let path = self.unpinned_capture.take()?;
-        // 这一格没有矩形可给：那是"满了之后补钉"那一档，位置只能交给系统
-        let id = self.push_pin(path, None)?;
-        self.pins_new.push(id);
-        self.capture_stage = CaptureStage::Pinned;
-        Some(id)
+        id
     }
 
     /// 「打开上一次截图」那一格：把历史里最新那张钉出来。**取图那一条路不重开**——
     /// 这张已经在盘上，走的还是 `push_pin` + 派识别那一套
-    pub fn pin_from_history(&mut self, path: PathBuf, at: Option<Pos2>) -> Option<RequestId> {
-        let id = self.push_pin(path, at)?;
+    pub fn pin_from_history(&mut self, path: PathBuf, at: Option<Pos2>) -> RequestId {
+        let id = self.push_pin(path, at);
         self.pins_new.push(id);
         self.capture_stage = CaptureStage::Pinned;
-        Some(id)
+        id
     }
 
     /// **只给 F2**「依次往回翻」用的薄包装：把某张历史图钉出来，并给它打上来源标记、
     /// 记住游标锚点（CHG-012 REQ-001）。钉图仍复用 [`Self::pin_from_history`] 那一条路，
     /// 不开第二条。
-    ///
-    /// 顺序很要紧：**先钉成功再记游标**。满 6 时 `pin_from_history` 返回 `None`，`?` 直接退出，
-    /// 于是既不置标记、也不推进锚点——下一次按 F2 会对**同一张**重试，而不是跳过它（REQ-002）。
-    pub fn browse_older(&mut self, path: PathBuf) -> Option<RequestId> {
-        let id = self.pin_from_history(path.clone(), None)?;
+    pub fn browse_older(&mut self, path: PathBuf) -> RequestId {
+        let id = self.pin_from_history(path.clone(), None);
         if let Some(pin) = self.pins.iter_mut().find(|p| p.id == id) {
             pin.history_browse = true;
         }
         self.browse_anchor = Some(path);
-        Some(id)
+        id
     }
 
     /// 关掉一张：从状态里摘掉，返回是否真摘掉了（`false` = 那个号本来就不在，
@@ -2816,12 +2775,11 @@ mod tests {
     /// 让一张贴图走到"识别已回来"的状态
     fn recognized_pin(st: &mut AppState) -> u64 {
         st.push_pin(PathBuf::from("/tmp/history/pin.png"), None)
-            .expect("能钉一张")
     }
 
     /// CHG-012 REQ-001/002/003：F2 翻历史的游标与来源标记，纯状态层（不碰盘、不读 fs）。
     /// - `browse_older` 钉一张、给它打 `history_browse` 标记、把游标锚点记成那张的路径；
-    /// - `push_pin`（F1 遮罩确认 / F3 补钉那条路）钉的图**不带标记**，因此不算"历史贴图"；
+    /// - `push_pin`（F1 遮罩确认那条路）钉的图**不带标记**，因此不算"历史贴图"；
     /// - 只有"屏幕上再没有一张带标记的图"时 `close_pin` 才把游标退回 `None`；锚点那张关了
     ///   但别的带标记的还开 → 不重置；关掉不带标记的图 → 不触发重置；
     /// - 新建 `AppState` 游标 `None`（从最新开始，即重启档）。
@@ -2831,27 +2789,21 @@ mod tests {
         assert_eq!(st.browse_anchor, None, "新建状态游标为空＝从最新开始");
 
         // F2 翻一张：钉上、打标记、游标记路径
-        let a = st
-            .browse_older(PathBuf::from("/shots/a.png"))
-            .expect("空闲时钉得上");
+        let a = st.browse_older(PathBuf::from("/shots/a.png"));
         assert_eq!(st.browse_anchor, Some(PathBuf::from("/shots/a.png")));
         assert!(st.pins.iter().find(|p| p.id == a).unwrap().history_browse);
 
         // 再 F2 翻更早一张：两张都带标记，游标挪到第二张，累积不替换
-        let b = st
-            .browse_older(PathBuf::from("/shots/b.png"))
-            .expect("还没钉满，钉得上");
+        let b = st.browse_older(PathBuf::from("/shots/b.png"));
         assert_eq!(st.browse_anchor, Some(PathBuf::from("/shots/b.png")));
         assert!(b != a, "第二次是另一张号，不是顶替");
         assert_eq!(st.pins.len(), 2, "累积在屏上");
 
-        // F1/F3 那条路钉的图不带标记（走 push_pin，不是 browse_older）
-        let c = st
-            .push_pin(PathBuf::from("/shots/c.png"), None)
-            .expect("还没钉满，钉得上");
+        // F1 那条路钉的图不带标记（走 push_pin，不是 browse_older）
+        let c = st.push_pin(PathBuf::from("/shots/c.png"), None);
         assert!(
             !st.pins.iter().find(|p| p.id == c).unwrap().history_browse,
-            "F1/F3 的图不该带翻历史标记"
+            "F1 的图不该带翻历史标记"
         );
 
         // 关掉锚点那张 b：还有另一张带标记的 a 开着 → 不重置（下一次接着往更早翻）
@@ -2867,7 +2819,7 @@ mod tests {
         assert_eq!(
             st.browse_anchor,
             Some(PathBuf::from("/shots/b.png")),
-            "关 F1/F3 的图不该重置游标"
+            "关 F1 的图不该重置游标"
         );
 
         // 关掉最后一张带标记的 a：再没有 F2 历史图 → 游标退回 None
@@ -2943,7 +2895,7 @@ mod tests {
         let before = std::fs::read(&file).unwrap();
 
         let mut st = capture_state();
-        let pin = st.push_pin(file.clone(), None).unwrap();
+        let pin = st.push_pin(file.clone(), None);
         let (admitted, document) = pixels_and_doc(60, 40);
         let mut document = document;
         document.blocks = pin_doc().blocks;
@@ -3191,9 +3143,7 @@ mod tests {
             ),
         );
 
-        let id = st
-            .pin_confirmed_capture(PathBuf::from("/tmp/x.png"))
-            .expect("该钉上一张");
+        let id = st.pin_confirmed_capture(PathBuf::from("/tmp/x.png"));
         let pin = st.pins.iter().find(|p| p.id == id).expect("钉完就在集合里");
         assert_eq!(
             pin.at,
@@ -3202,9 +3152,7 @@ mod tests {
         );
 
         // 「打开上一次」那一张：没有原地可给，交给系统摆，不许拿上一张的位置顶替
-        let other = st
-            .pin_from_history(PathBuf::from("/tmp/y.png"), None)
-            .expect("历史里那张也该钉上");
+        let other = st.pin_from_history(PathBuf::from("/tmp/y.png"), None);
         let other = st.pins.iter().find(|p| p.id == other).expect("同上");
         assert_eq!(other.at, None, "这条入口本来就没有矩形");
     }
@@ -3236,16 +3184,10 @@ mod tests {
         st.end_capture(CaptureStage::Cancelled);
         assert!(st.capture.is_none());
         assert_eq!(st.capture_stage, CaptureStage::Cancelled);
-        assert!(
-            st.unpinned_capture.is_none(),
-            "取消了就不该有『已确认那张』"
-        );
 
         // 同一批像素不能既被取消又被钉住
-        assert!(
-            st.pin_confirmed_capture(PathBuf::from("/tmp/x.png"))
-                .is_some()
-        );
+        st.pin_confirmed_capture(PathBuf::from("/tmp/x.png"));
+        assert_eq!(st.pins.len(), 1);
     }
 
     /// 原生重下的配额**真的会减**。D-31~D-34 的病因就是"每帧重下、永不收手"：
@@ -3509,22 +3451,19 @@ mod tests {
         assert_eq!(st.capture_in_flight, Some(7));
     }
 
-    /// 满 6 张时**拒绝新的那一张**，而且不动已经钉着的任何一张（Q-007）。
-    /// 撤最老那张来腾位置是不可接受的：用户正对着的那张会凭空消失。
+    /// **没有数量上限**（用户 2026-11-16 改口 CHG-009 Q-007）：第七张、第八张照样钉得上，
+    /// 已经钉着的那些一张不少、次序不变。门也不因数量变灰。
     #[test]
-    fn the_seventh_pin_is_refused_without_disturbing_the_six_already_there() {
+    fn pins_have_no_count_cap_and_the_gate_never_grays_on_count() {
         let mut st = capture_state();
-        let before: Vec<PathBuf> = (1..=PIN_MAX as u64)
+        let before: Vec<PathBuf> = (1..=6)
             .map(|i| PathBuf::from(format!("/tmp/history/{i}.png")))
             .collect();
         for path in &before {
-            st.push_pin(path.clone(), None).expect("前六张该钉得上");
+            st.push_pin(path.clone(), None);
         }
-        assert_eq!(st.pins.len(), PIN_MAX);
-        assert_eq!(
-            st.capture_gate(),
-            Some("屏幕上已经钉满 6 张，先 esc 关掉一张")
-        );
+        assert_eq!(st.pins.len(), 6);
+        assert_eq!(st.capture_gate(), None, "钉了六张门也不该灰");
 
         st.capture_in_flight = Some(1);
         let applied = st.apply_capture(
@@ -3532,16 +3471,19 @@ mod tests {
             capture::Outcome::Captured(PathBuf::from("/tmp/history/7.png")),
         );
         assert!(
-            matches!(applied, CaptureApplied::Failed(_)),
-            "第七张要被拒绝"
+            matches!(applied, CaptureApplied::Pinned { .. }),
+            "第七张照样钉得上"
         );
         // 已经钉着的六张：一张不少、次序不变、路径没被换
-        assert_eq!(st.pins.len(), PIN_MAX);
+        assert_eq!(st.pins.len(), 7);
         assert_eq!(
-            st.pins.iter().map(|p| p.path.clone()).collect::<Vec<_>>(),
+            st.pins
+                .iter()
+                .take(6)
+                .map(|p| p.path.clone())
+                .collect::<Vec<_>>(),
             before
         );
-        assert!(st.pins.iter().all(|p| p.id <= PIN_MAX as RequestId));
     }
 
     /// 贴图的识别按**代**丢弃：重派之后上一代的回信整条作废，
@@ -3623,10 +3565,7 @@ mod tests {
         assert_eq!(st.pins.len(), 1);
         assert_eq!(st.pins[0].id, 2);
         // 关过的号不会被下一张顶替
-        assert_eq!(
-            st.push_pin(PathBuf::from("/tmp/history/3.png"), None),
-            Some(3)
-        );
+        assert_eq!(st.push_pin(PathBuf::from("/tmp/history/3.png"), None), 3);
     }
 
     /// 带子开合只认真存在的贴图（REQ-003 那条"收起=窗口缩到图片本身"的状态面）。
@@ -3808,8 +3747,8 @@ mod tests {
         assert!(!st.set_pin_selection(99, vec![1]));
     }
 
-    /// 那颗按钮的话与状态行读**同一个来源**：三道门从上往下——这台机器没这件事、
-    /// 上一次还在画、屏幕上钉满了。这里锁后两道（第一道要换平台才看得到）。
+    /// 那颗按钮的话与状态行读**同一个来源**：两道门从上往下——这台机器没这件事、
+    /// 上一次还在画。这里锁后一道（第一道要换平台才看得到）。数量不设门（Q-007 已改口）。
     #[test]
     fn the_button_gate_and_the_status_line_read_one_source() {
         let mut st = capture_state();
@@ -3825,16 +3764,10 @@ mod tests {
         st.submit_capture(two_screens());
         assert_eq!(st.capture_gate(), Some("上一次截图还没完"));
         st.capture_in_flight = None;
-        for i in 0..PIN_MAX {
+        for i in 0..8 {
             st.push_pin(PathBuf::from(format!("/tmp/history/{i}.png")), None);
         }
-        assert_eq!(
-            st.capture_gate(),
-            Some("屏幕上已经钉满 6 张，先 esc 关掉一张")
-        );
-        // 关掉一张，门就开了（拒绝的前提是"满"，不是"截图这件事坏了"）
-        st.close_pin(1);
-        assert_eq!(st.capture_gate(), None);
+        assert_eq!(st.capture_gate(), None, "钉再多张门也不灰");
     }
 
     use super::*;
@@ -4051,6 +3984,30 @@ mod tests {
         );
         assert!(state.tick_toasts(), "到点要收掉，并让调用方补一次重绘");
         assert!(state.toasts.is_empty());
+    }
+
+    /// 浮空提示（用户 2026-11-16）：同一时刻只浮一句，新的整条顶掉旧的；寿命与 toasts
+    /// 同一条式子，到点 tick 收掉。它不进 `toasts`——两条路各画各的，不许叠在一起。
+    #[test]
+    fn a_float_hint_is_replaced_wholesale_and_expires_on_its_own_clock() {
+        let mut state = app_with_source("hello");
+        state.set_float_hint(Tone::Info, "还没有截图记录");
+        assert!(state.toasts.is_empty(), "浮空提示不走主窗那条 toasts");
+        let first = state.float_hint.as_ref().unwrap();
+        assert!((first.opacity() - 1.0).abs() < 0.05, "刚出生几乎实心");
+
+        state.set_float_hint(Tone::Info, "没有更早的截图了");
+        assert_eq!(
+            state.float_hint.as_ref().unwrap().text,
+            "没有更早的截图了",
+            "新的整条顶掉旧的，不攒第二条"
+        );
+
+        assert!(!state.tick_float_hint(), "没到点不收");
+        state.float_hint.as_mut().unwrap().shown_at -= TOAST_LIFETIME;
+        assert!(state.tick_float_hint(), "到点要收掉");
+        assert!(state.float_hint.is_none());
+        assert!(!state.tick_float_hint(), "已经没了再 tick 不报变化");
     }
 
     /// 检不出语言（纯数字）：不翻、不拦，请求按 P4 的回退照常发

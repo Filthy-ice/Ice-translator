@@ -275,35 +275,30 @@ impl IceApp {
             Action::PinLast => {
                 // 「固定」与「对勾」同义（本文件那条注释 + 用户原话）。遮罩还开着时，F3 就
                 // 递一个"替我按下对勾"给遮窗——那一刻框在哪只有那一扇知道，选区不回传主窗，
-                // 主窗只触发。遮罩没开才是原来的"钉上次截好没钉住的那张"。
+                // 主窗只触发。遮罩没开时**什么都不做**（REQ-006"没有就什么都不做"；上限去掉后
+                // 不再有"确认了没钉上"的那一格，用户 2026-11-16 拍板保持这一档）。
                 if self.state.capturing() {
                     crate::system::selection::request_confirm(ctx);
                     // 让遮窗这一帧就重画一次去消费这个请求，不然要等它下一次恰好醒
                     ctx.request_repaint();
-                } else {
-                    self.state.pin_last_capture();
                 }
             }
             Action::ReopenLast => {
-                // 读盘在帧末这一层，状态层不碰 fs（CHG-009 REQ-005 分层纪律）。三档分流照
+                // 读盘在帧末这一层，状态层不碰 fs（CHG-009 REQ-005 分层纪律）。两档分流照
                 // CHG-012 REQ-002：空→"还没有截图记录"；翻到头（next_older=None）→"没有更早的
-                // 截图了"且不推进锚点；钉满（browse_older=None）→沿用既有那句且不推进、下次对
-                // 同一张重试。先钉成功才由 browse_older 记锚点、打来源标记。
+                // 截图了"且不推进锚点。钉上才由 browse_older 记锚点、打来源标记。
                 let shots = self
                     .shots_dir
                     .clone()
                     .map(|dir| capture::list(&dir))
                     .unwrap_or_default();
                 if shots.is_empty() {
-                    self.state.toast(Tone::Info, "还没有截图记录");
+                    self.f2_notice("还没有截图记录");
                 } else {
                     match capture::next_older(&shots, self.state.browse_anchor.as_deref()) {
-                        None => self.state.toast(Tone::Info, "没有更早的截图了"),
+                        None => self.f2_notice("没有更早的截图了"),
                         Some(shot) => {
-                            if self.state.browse_older(shot.path.clone()).is_none() {
-                                self.state
-                                    .toast(Tone::Info, "屏幕上已经钉满 6 张，先 esc 关掉一张");
-                            }
+                            self.state.browse_older(shot.path.clone());
                         }
                     }
                 }
@@ -368,8 +363,20 @@ impl IceApp {
         if !self.state.hidden {
             return;
         }
+        // 浮空提示是"收着时"那条路；唤回后主窗自己能画 toasts，把浮空那条收掉免得两扇叠着。
+        self.state.float_hint = None;
         let tray = self.state.tray;
         mode::reveal(ctx, &mut self.state, &mut self.pending_geometry, tray);
+    }
+
+    /// F2 那两句"没得翻"的提示走哪条路：主窗看得见就进 toasts（画在主窗里），收着就进
+    /// 浮空窗（独立一扇，后台也看得见，用户 2026-11-16）。两条不叠加，唤回时浮空那条收掉。
+    fn f2_notice(&mut self, text: &str) {
+        if self.state.hidden {
+            self.state.set_float_hint(Tone::Info, text);
+        } else {
+            self.state.toast(Tone::Info, text);
+        }
     }
 
     /// 全局热键：装上 handler、按需注册、把命中的那一下送进**既有的 `Action` 分派**。
@@ -1623,13 +1630,8 @@ impl IceApp {
                 self.state.capture_seq += 1;
                 // 确认即收尾：像素从状态里撤掉、遮罩那几扇窗跟着关，再走 CHG-009 那条钉图链
                 // （REQ-104）。**「对勾」与「固定」是同一件事**（用户 2026-11-09 晚原话），
-                // 所以这里不留"已确认还没钉"那一格给 F3——除非真钉不上（满了），
-                // 那就退回那一格并说一句，不许把已经落在盘上的这张悄悄丢掉
-                if self.state.pin_confirmed_capture(path.clone()).is_none() {
-                    self.state.confirm_capture(path.clone());
-                    self.state
-                        .toast(Tone::Warn, "屏幕上已经钉满 6 张，先 esc 关掉一张");
-                }
+                // 确认这一刻就钉上，不留"已确认还没钉"那一格（上限已去掉，钉图必成）
+                self.state.pin_confirmed_capture(path.clone());
                 self.age_shots();
                 Some(path)
             }
@@ -2052,6 +2054,9 @@ impl IceApp {
             match self.shots_dir.clone() {
                 Some(dir) => {
                     let removed = capture::clear_all(&dir);
+                    // 盘上的图没了，F2 游标也得归零：不然锚点还停在旧图上，清完再截、
+                    // 按 F2 会从旧位置接着翻甚至翻不动（用户 2026-11-16 真机报的那一次）
+                    self.state.browse_anchor = None;
                     let line = if removed == 0 {
                         "截图历史已经是空的".to_string()
                     } else {
@@ -2488,6 +2493,13 @@ impl eframe::App for IceApp {
         self.pump_hotkeys(ctx, &mut effects);
         self.pump_tray(scale, tray::take_outcome(), ctx, &mut effects);
         self.run_effects(ctx, effects);
+        // 浮空提示活着且主窗收着：每帧补一次"隐藏也画"的请求，并按淡出步长续期。
+        // RequestPaintWhileHidden 画完一帧就被 eframe 消费掉，所以必须每帧重发——
+        // 只发一次的话第二帧起又回到"不跑 pass"，浮窗就停在那儿不淡也不收。
+        if self.state.hidden && self.state.float_hint.is_some() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
+            ctx.request_repaint_after(state::TOAST_FADE_STEP);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -2576,6 +2588,10 @@ impl eframe::App for IceApp {
         // `it was never used this pass` 删掉。反过来，"关掉一张"的实现就是这一帧起不再 show 它。
         self.draw_capture(&ctx, &mut effects);
         self.draw_pins(&ctx, &mut effects);
+
+        // 浮空提示：先 tick（到期就收），再 show（活着才画，None 那一帧窗被 egui 撤掉）。
+        self.state.tick_float_hint();
+        crate::system::hint::show(&ctx, self.state.float_hint.as_ref());
 
         self.run_effects(&ctx, effects);
         self.renew_repaints(&ctx);
@@ -2825,6 +2841,30 @@ mod tests {
         app.renew_repaints(&c);
         app.renew_repaints(&c);
         assert_eq!(seen.lock().unwrap().len(), 1, "隐藏期两次续期一次都不许发");
+    }
+
+    /// F2"没得翻"那两句的分流（用户 2026-11-16）：主窗看得见走 toasts，收着走浮空窗；
+    /// 唤回时浮空那条收掉，免得主窗 toasts 与浮窗两扇叠着说同一句。
+    #[test]
+    fn f2_notices_route_by_visibility_and_reveal_drops_the_float() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), plain_state());
+        let c = ctx();
+
+        app.f2_notice("还没有截图记录");
+        assert_eq!(app.state.toasts.len(), 1, "可见时走主窗 toasts");
+        assert!(app.state.float_hint.is_none());
+
+        app.state.hidden = true;
+        app.f2_notice("没有更早的截图了");
+        assert_eq!(app.state.toasts.len(), 1, "收着时不再往主窗 toasts 里塞");
+        assert_eq!(
+            app.state.float_hint.as_ref().unwrap().text,
+            "没有更早的截图了"
+        );
+
+        app.reveal(&c);
+        assert!(app.state.float_hint.is_none(), "唤回把浮空那条收掉");
     }
 
     /// 托盘装上以后，唤醒只剩"点那枚图标"一条路：`watch_visibility` 整条跳过，
@@ -5165,7 +5205,7 @@ mod tests {
         let before = std::fs::read(&file).unwrap();
 
         let mut state = plain_state();
-        let pin = state.push_pin(file.clone(), None).unwrap();
+        let pin = state.push_pin(file.clone(), None);
         let mut app = app(dir.path(), state);
         let mut effects = Effects::default();
 
@@ -5185,13 +5225,13 @@ mod tests {
         assert!(again.copy_pin.is_none());
     }
 
-    /// 空格只收放这一张的带子，别把别人的也收了（六张同时在屏是合法情况）。
+    /// 空格只收放这一张的带子，别把别人的也收了（多张同时在屏是合法情况）。
     #[test]
     fn the_space_key_toggles_the_band_of_that_pin_only() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = plain_state();
         for name in ["a.png", "b.png"] {
-            state.push_pin(dir.path().join(name), None).unwrap();
+            state.push_pin(dir.path().join(name), None);
         }
         let mut app = app(dir.path(), state);
         let mut effects = Effects::default();
@@ -5263,6 +5303,37 @@ mod tests {
         assert!(
             toasts.iter().any(|line| line.contains("3 张")),
             "提示条要说清删了几张：{toasts:?}"
+        );
+    }
+
+    /// 清截图需要把 F2 游标一起归零（用户 2026-11-16 真机报"清完再截 F2 不管用"）：
+    /// 盘上的图删了，锚点还停在旧路径上，下一次 F2 会从旧位置接着翻甚至翻不动。
+    /// 清除之后游标必须回 `None`＝从最新重新起翻。
+    #[test]
+    fn clearing_shots_also_resets_the_f2_browse_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let shots = dir.path().join("shots");
+        std::fs::create_dir_all(&shots).unwrap();
+        std::fs::File::create(shots.join("1.png")).unwrap();
+
+        let mut app = app(dir.path(), plain_state());
+        app.state.browse_older(shots.join("1.png"));
+        assert!(app.state.browse_anchor.is_some(), "先真的把游标停在一张上");
+
+        let effects = Effects {
+            clear_shots: true,
+            ..Default::default()
+        };
+        app.run_effects(&ctx(), effects);
+
+        assert_eq!(
+            std::fs::read_dir(&shots).unwrap().count(),
+            0,
+            "本地文件要真删掉"
+        );
+        assert_eq!(
+            app.state.browse_anchor, None,
+            "清完游标不归零，下一次 F2 还会卡在旧位置"
         );
     }
 

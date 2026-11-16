@@ -10,6 +10,7 @@ pub mod cover;
 pub mod dblclick;
 pub mod dock;
 pub mod global_hotkeys;
+pub mod hint;
 pub mod hotkeys;
 pub mod mouse;
 pub mod panel;
