@@ -258,8 +258,8 @@ impl IceApp {
             // 全局热键那三把（CHG-009 REQ-006）。截图那一把与图片页那颗「框选贴图」
             // **落同一个意图**，派发只在帧末一处做；「固定」在没有"框选但没钉住"的那张时
             // 什么都不做（不弹一句"没有可固定的"，也不拿历史里更早那张顶上去——那会把
-            // 两把键混成一把）；「打开上一次」沿历史从新到旧**依次往回翻**（CHG-012 改口
-            // CHG-009 REQ-006"取最近那张"：每按一次新钉一张更早的、累积，翻到头说一句）
+            // 两把键混成一把）；「打开上一次」按队列口径补历史（2026-11-16 用户改判
+            // CHG-012：先补关掉的、再从新到旧补不在屏上的，每张一份，全在屏才说没有）
             Action::Capture => effects.capture = true,
             Action::PinLast => {
                 // 「固定」与「对勾」同义（本文件那条注释 + 用户原话）。遮罩还开着时，F3 就
@@ -273,9 +273,11 @@ impl IceApp {
                 }
             }
             Action::ReopenLast => {
-                // 读盘在帧末这一层，状态层不碰 fs（CHG-009 REQ-005 分层纪律）。两档分流照
-                // CHG-012 REQ-002：空→"还没有截图记录"；翻到头（next_older=None）→"没有更早的
-                // 截图了"且不推进锚点。钉上才由 browse_older 记锚点、打来源标记。
+                // 读盘在帧末这一层，状态层不碰 fs（CHG-009 REQ-005 分层纪律）。队列口径
+                // （2026-11-16 用户改判 CHG-012 REQ-001/002/003：游标作废）：空历史→
+                // "还没有截图记录"；先补关掉的（最晚关的先补），再按从新到旧补不在屏上的，
+                // 每张只有一份实例；历史全在屏上→"没有更多截图了"。选图与销账在
+                // `next_browse` 一处，钉图仍走 pin_from_history 那一条路。
                 let shots = self
                     .shots_dir
                     .clone()
@@ -284,10 +286,10 @@ impl IceApp {
                 if shots.is_empty() {
                     self.f2_notice("还没有截图记录");
                 } else {
-                    match capture::next_older(&shots, self.state.browse_anchor.as_deref()) {
-                        None => self.f2_notice("没有更早的截图了"),
-                        Some(shot) => {
-                            self.state.browse_older(shot.path.clone());
+                    match self.state.next_browse(&shots) {
+                        None => self.f2_notice("没有更多截图了"),
+                        Some(path) => {
+                            self.state.pin_from_history(path, None);
                         }
                     }
                 }
@@ -1859,9 +1861,9 @@ impl IceApp {
             match self.shots_dir.clone() {
                 Some(dir) => {
                     let removed = capture::clear_all(&dir);
-                    // 盘上的图没了，F2 游标也得归零：不然锚点还停在旧图上，清完再截、
-                    // 按 F2 会从旧位置接着翻甚至翻不动（用户 2026-11-16 真机报的那一次）
-                    self.state.browse_anchor = None;
+                    // 盘上的图没了，F2 回队簿记也得清空：不然里面还记着旧路径，清完再截、
+                    // 按 F2 会先去补那些已经不存在的图（用户 2026-11-16 真机报的那一次）
+                    self.state.browse_requeue.clear();
                     let line = if removed == 0 {
                         "截图历史已经是空的".to_string()
                     } else {
@@ -2636,11 +2638,11 @@ mod tests {
         assert!(app.state.float_hint.is_none());
 
         app.state.hidden = true;
-        app.f2_notice("没有更早的截图了");
+        app.f2_notice("没有更多截图了");
         assert_eq!(app.state.toasts.len(), 1, "收着时不再往主窗 toasts 里塞");
         assert_eq!(
             app.state.float_hint.as_ref().unwrap().text,
-            "没有更早的截图了"
+            "没有更多截图了"
         );
 
         app.reveal(&c);
@@ -5058,19 +5060,22 @@ mod tests {
         );
     }
 
-    /// 清截图需要把 F2 游标一起归零（用户 2026-11-16 真机报"清完再截 F2 不管用"）：
-    /// 盘上的图删了，锚点还停在旧路径上，下一次 F2 会从旧位置接着翻甚至翻不动。
-    /// 清除之后游标必须回 `None`＝从最新重新起翻。
+    /// 清截图需要把 F2 回队簿记一起清空（用户 2026-11-16 真机报"清完再截 F2 不管用"）：
+    /// 盘上的图删了，簿记里还记着旧路径，下一次 F2 会先去补那些已经不存在的图。
     #[test]
-    fn clearing_shots_also_resets_the_f2_browse_cursor() {
+    fn clearing_shots_also_empties_the_f2_requeue() {
         let dir = tempfile::tempdir().unwrap();
         let shots = dir.path().join("shots");
         std::fs::create_dir_all(&shots).unwrap();
         std::fs::File::create(shots.join("1.png")).unwrap();
 
         let mut app = app(dir.path(), plain_state());
-        app.state.browse_older(shots.join("1.png"));
-        assert!(app.state.browse_anchor.is_some(), "先真的把游标停在一张上");
+        let pin = app.state.pin_from_history(shots.join("1.png"), None);
+        app.state.close_pin(pin);
+        assert!(
+            !app.state.browse_requeue.is_empty(),
+            "先真的让簿记里记着一张关掉的图"
+        );
 
         let effects = Effects {
             clear_shots: true,
@@ -5083,10 +5088,72 @@ mod tests {
             0,
             "本地文件要真删掉"
         );
-        assert_eq!(
-            app.state.browse_anchor, None,
-            "清完游标不归零，下一次 F2 还会卡在旧位置"
+        assert!(
+            app.state.browse_requeue.is_empty(),
+            "清完簿记不清空，下一次 F2 还会去补已经不存在的图"
         );
+    }
+
+    /// F2 队列口径端到端（用户 2026-11-16 真机报的那一次，改判 CHG-012）：两张历史都钉在
+    /// 屏上后再按＝"没有更多截图了"；**关掉一张再按，补回的是关掉的那张**，而不是继续说
+    /// 没有；每张图始终只有一份实例。走的是真 `Action::ReopenLast` 分派 + 真读盘。
+    #[test]
+    fn f2_restores_the_closed_pin_instead_of_saying_no_more() {
+        let dir = tempfile::tempdir().unwrap();
+        let shots = dir.path().join("shots");
+        std::fs::create_dir_all(&shots).unwrap();
+        // 同一秒落两张会走路径平局序，这里把 mtime 拨开，"从新到旧"才是确定的
+        for (name, secs) in [("1.png", 10u64), ("2.png", 20)] {
+            let file = std::fs::File::create(shots.join(name)).unwrap();
+            file.set_modified(
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs),
+            )
+            .unwrap();
+        }
+        let mut app = app(dir.path(), plain_state());
+        let c = ctx();
+
+        app.run(Action::ReopenLast, &c, &mut Effects::default());
+        assert_eq!(app.state.pins.len(), 1);
+        assert_eq!(app.state.pins[0].path, shots.join("2.png"), "先补最新");
+        app.run(Action::ReopenLast, &c, &mut Effects::default());
+        assert_eq!(app.state.pins.len(), 2);
+        assert_eq!(app.state.pins[1].path, shots.join("1.png"), "再补次新");
+
+        app.run(Action::ReopenLast, &c, &mut Effects::default());
+        assert_eq!(app.state.pins.len(), 2, "全在屏上不许钉出第二份");
+        assert!(
+            app.state
+                .toasts
+                .iter()
+                .any(|toast| toast.text == "没有更多截图了"),
+            "全在屏上才说没有更多：{:?}",
+            app.state.toasts.iter().map(|t| &t.text).collect::<Vec<_>>()
+        );
+
+        // 关掉 1.png 那张再按：补回的就是它（用户报的缺陷档）
+        let closed = app
+            .state
+            .pins
+            .iter()
+            .find(|pin| pin.path == shots.join("1.png"))
+            .unwrap()
+            .id;
+        app.state.close_pin(closed);
+        app.run(Action::ReopenLast, &c, &mut Effects::default());
+        assert_eq!(app.state.pins.len(), 2, "关掉的要补回来");
+        assert_eq!(
+            app.state
+                .pins
+                .iter()
+                .filter(|pin| pin.path == shots.join("1.png"))
+                .count(),
+            1,
+            "每张历史图只能有一个实例"
+        );
+
+        app.run(Action::ReopenLast, &c, &mut Effects::default());
+        assert_eq!(app.state.pins.len(), 2, "补回后又全在屏上＝没有更多");
     }
 
     /// 空历史也要有话说（"已经是空的"），而不是静悄悄——静悄悄会被当成"清除没生效"。

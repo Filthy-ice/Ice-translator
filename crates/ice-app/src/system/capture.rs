@@ -342,31 +342,15 @@ pub fn sorted(shots: &[Shot]) -> Vec<&Shot> {
     order
 }
 
-/// F2「打开上一次截图」的那一张：最近的一张。空历史就是 `None`，界面给"还没有截图记录"。
-pub fn recent(shots: &[Shot]) -> Option<&Shot> {
-    sorted(shots).into_iter().next()
-}
-
-/// F2「依次往回翻」的下一张：比锚点那张**更早一张**（CHG-012 REQ-001）。纯函数，不碰盘——
-/// 读盘留在 `app.rs` 帧末那一层（CHG-009 REQ-005 分层纪律）。排序与老化共用 [`sorted`]（事实 1），
-/// 所以"往回翻"和"最老先删"读的是同一个序，不会各排一次漂移。
-///
-/// 锚点记的是上一次钉出去那张的**路径**，不是下标：新截图进历史不会把回翻序整体平移（事实 6）。
-/// 三种落点：
-/// - 空锚点 → 最新那张（第一次按，或游标刚被重置）；
-/// - 锚点就是最早那张 → `None`（翻到头了，REQ-002 那一档由调用方提示"没有更早的截图了"）；
-/// - 锚点已经不在表里（被老化或"清除所有历史"抹掉）→ 回退到最新重新起翻，不报错、不卡死（REQ-003 边界）。
-pub fn next_older<'a>(shots: &'a [Shot], anchor: Option<&Path>) -> Option<&'a Shot> {
-    match anchor {
-        None => recent(shots),
-        Some(path) => {
-            let order = sorted(shots);
-            match order.iter().position(|s| s.path.as_path() == path) {
-                Some(i) => order.get(i + 1).copied(), // i 已是最早那张时 get(i+1)=None
-                None => recent(shots),                // 锚点被抹掉：回退最新重新起翻
-            }
-        }
-    }
+/// F2 队列口径（2026-11-16 用户改判 CHG-012 REQ-001/002/003：游标作废）的兜底选图：
+/// 历史里**不在屏幕上**的最新一张。纯函数，不碰盘——读盘留在 `app.rs` 帧末那一层
+/// （CHG-009 REQ-005 分层纪律）。排序与老化共用 [`sorted`]（事实 1），"从新到旧补"和
+/// "最老先删"读的是同一个序。全都在屏幕上（或空历史）＝`None`，调用方提示"没有更多截图了"。
+/// 关掉的图不走这里：它们由状态层的回队簿记优先补（见 `AppState::next_browse`）。
+pub fn next_unpinned<'a>(shots: &'a [Shot], pinned: &[PathBuf]) -> Option<&'a Shot> {
+    sorted(shots)
+        .into_iter()
+        .find(|shot| !pinned.contains(&shot.path))
 }
 
 /// 双上限老化，纯函数：**返回该删的那些路径**，删的动作在调用方。
@@ -824,62 +808,69 @@ mod tests {
         assert_eq!(dead, vec![PathBuf::from("b")], "同分里路径靠后的那张算最老");
     }
 
-    /// 「最近」与老化 SHALL 读同一个序：F2 打开的那张，与"最老先删"里最年轻的那一端，
-    /// 必须来自同一次排序。这条锁的是"两个定义各排一次"这种错法。
+    /// 「F2 补的那张」与老化 SHALL 读同一个序：不在屏上时补的最新一张，与"最老先删"里
+    /// 最年轻的那一端，必须来自同一次排序。这条锁的是"两个定义各排一次"这种错法。
     #[test]
-    fn the_recent_shot_and_the_aging_order_read_the_same_sort() {
+    fn the_f2_pick_and_the_aging_order_read_the_same_sort() {
         let shots = vec![shot("mid", 50), shot("newest", 80), shot("oldest", 10)];
         let order = sorted(&shots);
         assert_eq!(order[0].path, PathBuf::from("newest"));
         assert_eq!(order.last().unwrap().path, PathBuf::from("oldest"));
-        assert_eq!(recent(&shots).unwrap().path, PathBuf::from("newest"));
-        // 上限取 2 ⇒ 该删的正是排序尾部那一条，与 recent 指向的不是同一张
+        assert_eq!(
+            next_unpinned(&shots, &[]).unwrap().path,
+            PathBuf::from("newest")
+        );
+        // 上限取 2 ⇒ 该删的正是排序尾部那一条，与 F2 先补的不是同一张
         let dead = retain(&shots, 80, 7, 2);
         assert_eq!(
             dead,
             vec![PathBuf::from("oldest")],
             "超出上限时最老的那一张先走"
         );
-        assert_eq!(recent(&shots).unwrap().path, PathBuf::from("newest"));
+        assert_eq!(
+            next_unpinned(&shots, &[]).unwrap().path,
+            PathBuf::from("newest")
+        );
     }
 
-    /// CHG-012 REQ-001/002：F2「依次往回翻」走的是与老化同一个序（新→旧）。空锚点＝最新；
-    /// 给锚点＝那张后面**更早一张**；锚点已是最早＝翻到头 `None`（调用方据此提示"没有更早的
-    /// 截图了"、不推进）；锚点被老化/清除（不在表里）＝回退最新重新起翻；空历史＝`None`。
+    /// F2 队列口径（2026-11-16 用户改判 CHG-012）：兜底选图只补**不在屏幕上**的，
+    /// 从新到旧；全都在屏上＝`None`（调用方据此提示"没有更多截图了"）；空历史＝`None`。
+    /// 每张历史图在屏幕上只能有一个实例——已钉的路径一律跳过，不会钉出第二份。
     #[test]
-    fn f2_walks_one_older_each_press_and_stops_at_the_oldest() {
+    fn f2_fills_newest_unpinned_and_stops_when_all_are_on_screen() {
         let shots = vec![shot("newest", 30), shot("mid", 20), shot("oldest", 10)];
         let newest = PathBuf::from("newest");
         let mid = PathBuf::from("mid");
         let oldest = PathBuf::from("oldest");
 
         assert_eq!(
-            next_older(&shots, None).unwrap().path,
+            next_unpinned(&shots, &[]).unwrap().path,
             newest,
-            "第一次按（空锚点）＝最新"
+            "一张都没钉＝补最新"
         );
         assert_eq!(
-            next_older(&shots, Some(&newest)).unwrap().path,
-            mid,
-            "钉了最新再按＝更早一张"
-        );
-        assert_eq!(
-            next_older(&shots, Some(&mid)).unwrap().path,
-            oldest,
-            "再按＝更早一张"
-        );
-        assert!(
-            next_older(&shots, Some(&oldest)).is_none(),
-            "最早那张再按＝翻到头（REQ-002 停住档）"
-        );
-        assert_eq!(
-            next_older(&shots, Some(&PathBuf::from("gone")))
+            next_unpinned(&shots, std::slice::from_ref(&newest))
                 .unwrap()
                 .path,
-            newest,
-            "锚点被老化/清除＝回退最新重新起翻，不报错"
+            mid,
+            "最新已在屏上＝补次新，不钉第二份"
         );
-        assert!(next_older(&[], None).is_none(), "空历史＝None");
+        assert_eq!(
+            next_unpinned(&shots, &[newest.clone(), mid.clone()])
+                .unwrap()
+                .path,
+            oldest,
+            "再按＝补最老"
+        );
+        assert!(
+            next_unpinned(&shots, &[newest, mid, oldest]).is_none(),
+            "历史全在屏上＝没有更多截图了"
+        );
+        assert!(
+            next_unpinned(&shots, &[PathBuf::from("gone")]).is_some(),
+            "在屏名单里的陌生路径不影响选图"
+        );
+        assert!(next_unpinned(&[], &[]).is_none(), "空历史＝None");
     }
 
     /// 历史目录不许落在仓库里（REQ-008：路径不可配，可配就等于把这格交出去）。
