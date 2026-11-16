@@ -25,13 +25,13 @@ use ice_providers::error::ProviderError;
 use ice_providers::request::TranslationRequest;
 use ice_vision::composite::Renderer;
 use ice_vision::error::VisionError;
-use ice_vision::import::{Admitted, admit_path, admit_rgba};
+use ice_vision::import::admit_path;
 use ice_vision::typeset::CompositeMode;
 use image::RgbaImage;
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, mpsc};
 
-use crate::state::{AppState, ChainOwner, ImageInput, ImageRecognition, Job, Outcome, RequestId};
+use crate::state::{AppState, Job, Outcome, RequestId};
 use crate::system::capture;
 
 /// 通道容量：界面上同一时刻只允许一个请求在飞，留一点余量给切换语言时的重译
@@ -155,14 +155,13 @@ impl JobRunner {
                 engine,
                 request,
             } => self.submit_translation(runtime, id, engine, request, ctx),
-            Job::ImageOcr { id, input } => self.submit_image(runtime, id, input, ctx),
             Job::ImageTranslate {
                 id,
-                owner,
+                pin,
                 engine,
                 blocks,
                 cancel,
-            } => self.submit_image_translate(runtime, id, owner, engine, blocks, cancel, ctx),
+            } => self.submit_image_translate(runtime, id, pin, engine, blocks, cancel, ctx),
             Job::ScreenCapture { id, seq } => self.submit_screen_capture(runtime, id, seq, ctx),
             Job::Freeze { id, seq, displays } => {
                 self.submit_freeze(runtime, id, seq, displays, ctx)
@@ -174,11 +173,11 @@ impl JobRunner {
             } => self.submit_pin_recognize(runtime, pin, generation, path, ctx),
             Job::ImageCompose {
                 id,
-                owner,
+                pin,
                 source,
                 document,
                 mode,
-            } => self.submit_image_compose(runtime, id, owner, source, document, mode, ctx),
+            } => self.submit_image_compose(runtime, id, pin, source, document, mode, ctx),
         }
     }
 
@@ -220,31 +219,6 @@ impl JobRunner {
         });
     }
 
-    /// 识别段：入场（读盘/解码/缩放）+ S1 Vision + S2/S3 行合并，整段一条 `spawn_blocking`。
-    ///
-    /// 输入为 `ImageInput::Clipboard` 时像素已由主线程的 arboard 取出，这里只做长度校验后
-    /// 拼成 `RgbaImage`；`Path` 则连读盘都在这条线程上（几百 MB 的截图也不能卡界面）。
-    fn submit_image(&mut self, runtime: &Runtime, id: RequestId, input: ImageInput, ctx: &Context) {
-        let tx = self.tx.clone();
-        let ctx = ctx.clone();
-
-        runtime.spawn_blocking(move || {
-            let result = admit_input(input).and_then(|admitted| {
-                let (rows, document, progress) = ice_vision::recognize_with_rows(&admitted.image)?;
-                Ok(ImageRecognition {
-                    admitted,
-                    rows,
-                    document,
-                    elapsed_ms: progress.elapsed_ms,
-                })
-            });
-            let sent = tx.try_send(Outcome::Image { id, result }).is_ok();
-            if sent {
-                ctx.request_repaint();
-            }
-        });
-    }
-
     /// 逐块翻译段：N 块 = N 次请求，**串行**，一块落地才发下一块（docs/03 I-04 原文"行间不并发"，
     /// Q-002 裁定沿用；机翻端点的免费额度按请求数算）。
     ///
@@ -256,14 +230,14 @@ impl JobRunner {
     ///    （D-20 那条：换通道是业务决定，交回用户）。
     /// 3. **停止只在块边界生效**。在飞的那一次请求撤不回，所以点停止最少还要等一块的时间——
     ///    界面因此不许说"已撤回"，只许说"已停止这次处理，译文还在"。
-    // 参数比七多一些：这批要发给谁的引擎、块、停止哨兵，加上 CHG-009 的路由归属
-    // `owner`——把五个入参打包成一个结构体只会让调用点多一层噪音
+    // 参数比七多一些：这批要发给谁的引擎、块、停止哨兵，加上这批译文落在哪张贴图上
+    // （`pin`）——把五个入参打包成一个结构体只会让调用点多一层噪音
     #[allow(clippy::too_many_arguments)]
     fn submit_image_translate(
         &mut self,
         runtime: &Runtime,
         id: RequestId,
-        owner: ChainOwner,
+        pin: RequestId,
         engine: EngineKind,
         blocks: Vec<(u32, TranslationRequest)>,
         cancel: Arc<AtomicBool>,
@@ -300,7 +274,7 @@ impl JobRunner {
                 if tx
                     .try_send(Outcome::ImageTranslateProgress {
                         id,
-                        owner,
+                        pin,
                         done: results.len(),
                         total,
                     })
@@ -316,7 +290,7 @@ impl JobRunner {
             let sent = tx
                 .try_send(Outcome::ImageTranslated {
                     id,
-                    owner,
+                    pin,
                     results,
                     cancelled,
                     elapsed_ms,
@@ -334,12 +308,12 @@ impl JobRunner {
     /// 判据的一部分，不是用户偏好，`config.toml` 里没有它们（docs/04 §3）。
     /// 成品只有一个结局：整张图画完（`Ok`）或者什么都没有（`Err`）。中间态不往外发，
     /// 所以界面上永远不会出现画了一半的那张图（REQ-009 第四条）。
-    #[allow(clippy::too_many_arguments)] // 同上：合成段的入参与路由归属
+    #[allow(clippy::too_many_arguments)] // 同上：合成段的入参与这批成品落在哪张贴图上
     fn submit_image_compose(
         &mut self,
         runtime: &Runtime,
         id: RequestId,
-        owner: ChainOwner,
+        pin: RequestId,
         source: RgbaImage,
         document: OcrDocument,
         mode: CompositeMode,
@@ -355,7 +329,7 @@ impl JobRunner {
             let sent = tx
                 .try_send(Outcome::ImageComposed {
                     id,
-                    owner,
+                    pin,
                     result,
                     elapsed_ms,
                 })
@@ -469,7 +443,7 @@ impl JobRunner {
     }
 
     /// 一张贴图的"只识别"。**这条不派翻译**（REQ-001 主干：那颗「翻译」是人按的），
-    /// 用的入口与图片页那条完全同一个 `recognize_with_rows`——不开第二条识别路。
+    /// 入口是 `ice_vision::recognize_with_rows`——全应用只有这一条识别路。
     ///
     /// `generation` 原样带回来：这张图可能在识别期间被关掉或重派过，晚到的结果对不上代就整条丢弃。
     /// 错误文本不进日志（`VisionError` 的 `Decode` 那一档会带路径）。
@@ -534,29 +508,6 @@ fn outcome_name(outcome: &capture::Outcome) -> &'static str {
     }
 }
 
-/// 把任务原料变成入场后的图。剪贴板那一支的字节长度已由 `system::clipboard::read_image` 校验，
-/// 这里再校验一次不是为了防主线程，而是 `RgbaImage::from_raw` 本身对长度不符就返回 `None`。
-fn admit_input(input: ImageInput) -> Result<Admitted, VisionError> {
-    match input {
-        ImageInput::Path(path) => admit_path(&path),
-        ImageInput::Clipboard {
-            bytes,
-            width,
-            height,
-        } => {
-            let image = RgbaImage::from_raw(width as u32, height as u32, bytes)
-                .ok_or_else(|| VisionError::Decode(CLIPBOARD_SIZE_TEXT.to_string()))?;
-            Ok(admit_rgba(image, CLIPBOARD_LABEL))
-        }
-    }
-}
-
-/// 剪贴板来源在界面上的名字（`Admitted.label` 只给显示用，不进日志、不进历史）
-const CLIPBOARD_LABEL: &str = "剪贴板";
-
-/// 像素数与宽高对不上时给人的那句话——与文件解码失败分开写，否则用户会以为图坏了
-const CLIPBOARD_SIZE_TEXT: &str = "剪贴板里的图片尺寸与像素数不匹配，请重新复制";
-
 /// 把一条结果落到界面上。返回 `false` 表示这是过期结果，已按各自那一侧的序号丢弃（REQ-002、REQ-006）。
 pub fn apply(state: &mut AppState, history: &HistoryStore, outcome: Outcome) -> bool {
     log_outcome(&outcome);
@@ -599,29 +550,11 @@ fn log_outcome(outcome: &Outcome) {
                 "翻译失败"
             ),
         },
-        Outcome::Image { id, result } => match result {
-            // 图片侧的口径与 `ocr.rs` 那条 debug 一致：只有行数、块数、耗时和尺寸
-            Ok(recognition) => tracing::info!(
-                request_id = id,
-                rows = recognition.rows.len(),
-                blocks = recognition.document.blocks.len(),
-                elapsed_ms = recognition.elapsed_ms,
-                width = recognition.admitted.width,
-                height = recognition.admitted.height,
-                scaled = recognition.admitted.scaled,
-                "本地识别完成"
-            ),
-            Err(err) => tracing::warn!(
-                request_id = id,
-                error = vision_variant_name(err),
-                "本地识别失败"
-            ),
-        },
         // 进度不记日志：每块一条会把真正那条结局淹掉，而它能说的只有"还在走"
         Outcome::ImageTranslateProgress { .. } => {}
         Outcome::ImageTranslated {
             id,
-            owner: _,
+            pin: _,
             results,
             cancelled,
             elapsed_ms,
@@ -638,7 +571,7 @@ fn log_outcome(outcome: &Outcome) {
         }
         Outcome::ImageComposed {
             id,
-            owner: _,
+            pin: _,
             result,
             elapsed_ms,
         } => match result {
@@ -760,10 +693,12 @@ mod tests {
     use ice_core::language::EngineKind;
 
     use super::*;
-    use crate::state::{ComposeStage, KeyState, RecognitionStage, TranslateStage};
+    use crate::state::{KeyState, TranslateStage};
     use crate::stub::{StubBehavior, StubEngine, StubError};
     use ice_core::document::{PixelRect, TextBlock};
     use ice_vision::composite::Composed;
+    use ice_vision::import::Admitted;
+    use std::path::PathBuf;
 
     struct Harness {
         runtime: Runtime,
@@ -996,18 +931,22 @@ mod tests {
         assert_eq!(stub.calls(), 1);
     }
 
-    // ---- 逐块翻译那一段（CHG-006 T-007）----
+    // ---- 逐块翻译那一段（CHG-006 T-007；图片页签删除后只走贴图链）----
 
     impl Harness {
-        /// 一份"识别完了"的状态：入场图 + 每块一行原文，逐块翻译的前置条件就此成立。
-        fn with_blocks(&mut self, texts: &[&str]) {
-            self.state.image = Some(Admitted {
+        /// 一张"识别完了"的贴图：钉上去、直接把识别回信落进去，每块一行原文，
+        /// 逐块翻译的前置条件就此成立。返回那张贴图的号。
+        fn with_blocks(&mut self, texts: &[&str]) -> RequestId {
+            let pin = self
+                .state
+                .push_pin(PathBuf::from("/tmp/history/pin.png"), None);
+            let admitted = Admitted {
                 image: RgbaImage::from_pixel(600, 400, image::Rgba([255, 255, 255, 255])),
                 scaled: false,
                 width: 600,
                 height: 400,
                 label: "sample.png".to_string(),
-            });
+            };
             let mut document = OcrDocument::empty(600, 400);
             document.blocks = texts
                 .iter()
@@ -1021,10 +960,12 @@ mod tests {
                     )
                 })
                 .collect();
-            self.state.ocr = Some(document);
-            self.state.image_stage = RecognitionStage::Done {
-                blocks: texts.len(),
-            };
+            // 没派过识别，代序号还是初始的 0
+            assert!(
+                self.state
+                    .apply_pin_recognized(pin, 0, Ok((admitted, document)))
+            );
+            pin
         }
 
         /// 派发一批逐块翻译，把中间每条进度留下、最后那条终结结果单独给出来。
@@ -1051,11 +992,11 @@ mod tests {
         let stub =
             StubEngine::replying_per_text(vec![("第二块".to_string(), Err(StubError::Timeout))]);
         let mut harness = Harness::new(vec![Arc::new(stub.clone())]);
-        harness.with_blocks(&["第一块", "第二块", "第三块"]);
+        let pin = harness.with_blocks(&["第一块", "第二块", "第三块"]);
         let ctx = Context::default();
         let job = harness
             .state
-            .submit_image_translate(&[])
+            .submit_pin_translate(pin)
             .expect("三块该派发得出");
         harness.runner.submit(&harness.runtime, job, &ctx);
         let (progress, outcome) = harness.drain_translate();
@@ -1068,17 +1009,18 @@ mod tests {
             "进度要一块一跳且带上总数"
         );
 
-        let blocks = &harness.state.ocr.as_ref().expect("文档还在").blocks;
+        let target = &harness.state.pins[0];
+        let blocks = &target.document.as_ref().expect("文档还在").blocks;
         assert_eq!(blocks[0].translation.as_deref(), Some("译文·第一块"));
         assert_eq!(blocks[1].translation, None, "失败的那块不该有一条假译文");
         assert_eq!(blocks[2].translation.as_deref(), Some("译文·第三块"));
         assert_eq!(
-            harness.state.failed_blocks,
+            target.failed_blocks,
             vec![1],
             "失败台账只记那一块，重试才只重发它"
         );
         assert!(matches!(
-            harness.state.translate_stage,
+            target.translate_stage,
             TranslateStage::Done { .. }
         ));
     }
@@ -1089,12 +1031,12 @@ mod tests {
     fn a_second_batch_does_not_dispatch_while_the_first_is_in_flight() {
         let stub = StubEngine::replying_per_text(Vec::new()).with_delay(Duration::from_millis(60));
         let mut harness = Harness::new(vec![Arc::new(stub.clone())]);
-        harness.with_blocks(&["第一块", "第二块"]);
+        let pin = harness.with_blocks(&["第一块", "第二块"]);
         let ctx = Context::default();
-        let job = harness.state.submit_image_translate(&[]).unwrap();
+        let job = harness.state.submit_pin_translate(pin).unwrap();
         harness.runner.submit(&harness.runtime, job, &ctx);
         assert!(
-            harness.state.submit_image_translate(&[]).is_none(),
+            harness.state.submit_pin_translate(pin).is_none(),
             "第一批还在飞就派出了第二批"
         );
         // 收尾：把在飞的这批读完，免得状态留在"翻译中"影响下一次派发
@@ -1112,9 +1054,9 @@ mod tests {
     fn a_stop_at_the_block_boundary_keeps_what_was_already_translated() {
         let stub = StubEngine::replying_per_text(Vec::new()).with_delay(Duration::from_millis(200));
         let mut harness = Harness::new(vec![Arc::new(stub.clone())]);
-        harness.with_blocks(&["第一块", "第二块", "第三块"]);
+        let pin = harness.with_blocks(&["第一块", "第二块", "第三块"]);
         let ctx = Context::default();
-        let job = harness.state.submit_image_translate(&[]).unwrap();
+        let job = harness.state.submit_pin_translate(pin).unwrap();
         let cancel = match &job {
             Job::ImageTranslate { cancel, .. } => Arc::clone(cancel),
             other => panic!("这条测试要的是逐块翻译那一支，实际是 {other:?}"),
@@ -1149,12 +1091,13 @@ mod tests {
         };
         assert_eq!(results.len(), 2, "只有真发过请求的那两块有结果");
         assert!(apply(&mut harness.state, &harness.history, outcome));
+        let target = &harness.state.pins[0];
         assert_eq!(
-            harness.state.translate_stage,
+            target.translate_stage,
             TranslateStage::Stopped { ok: 2, failed: 0 },
             "停在块边界要说'已停止'，并带着已经落地的块数"
         );
-        let blocks = &harness.state.ocr.as_ref().unwrap().blocks;
+        let blocks = &target.document.as_ref().unwrap().blocks;
         assert_eq!(
             blocks[0].translation.as_deref(),
             Some("译文·第一块"),
@@ -1168,7 +1111,7 @@ mod tests {
         assert_eq!(blocks[2].translation, None, "没发过请求的块不该有条假译文");
     }
 
-    // ---- 合成那一段（CHG-006 T-008）----
+    // ---- 合成那一段（CHG-006 T-008；派发口是 take_due_pin_composes）----
 
     /// 合成只有一个结局：整张图画完（`Ok`）或者什么都没有。中间态不往外发，
     /// 所以界面上永远不会出现画了一半的那张图（REQ-009 第四条）。
@@ -1178,15 +1121,18 @@ mod tests {
             EngineKind::Machine,
             "你好",
         ))]);
-        harness.with_blocks(&["第一块", "第二块"]);
-        for block in &mut harness.state.ocr.as_mut().unwrap().blocks {
+        let pin = harness.with_blocks(&["第一块", "第二块"]);
+        let target = &mut harness.state.pins[0];
+        for block in &mut target.document.as_mut().unwrap().blocks {
             block.translation = Some("回填文字".to_string());
         }
+        // 译文落好之后的那一格：欠着一次合成
+        target.compose_due = true;
         let ctx = Context::default();
-        let job = harness
-            .state
-            .submit_image_compose()
-            .expect("有译文就该派发得出合成");
+        let mut jobs = harness.state.take_due_pin_composes();
+        assert_eq!(jobs.len(), 1, "一张贴图欠一次合成，就该派出一支");
+        let job = jobs.remove(0);
+        assert!(matches!(job, Job::ImageCompose { pin: owner, .. } if owner == pin));
         harness.runner.submit(&harness.runtime, job, &ctx);
 
         let outcome = harness
@@ -1198,12 +1144,10 @@ mod tests {
         );
         assert!(harness.rx.try_recv().is_err(), "一次合成只给一条结果");
         assert!(apply(&mut harness.state, &harness.history, outcome));
-        assert!(
-            matches!(harness.state.compose_stage, ComposeStage::Done),
-            "成品落地后合成段该说完成，实际是 {:?}",
-            harness.state.compose_stage
-        );
-        let composed = harness.state.composed.expect("成品要落地");
+        let composed = harness.state.pins[0]
+            .product
+            .as_ref()
+            .expect("成品要落在这张贴图身上");
         assert_eq!(
             (composed.image.width(), composed.image.height()),
             (600, 400)
@@ -1216,18 +1160,20 @@ mod tests {
         );
     }
 
-    /// 换图之后，上一张图的成品与在飞的合成都不该再落回界面（三个序号各自过期）。
+    /// 对不上号的合成回信不许落进贴图：贴图被关掉、或这一支已经不是它在飞的那次，
+    /// 晚到的成品一律丢弃，屏上那张一个字都不动。
     #[test]
     fn a_stale_compose_result_does_not_replace_the_new_picture() {
         let mut harness = Harness::new(vec![Arc::new(StubEngine::replying(
             EngineKind::Machine,
             "你好",
         ))]);
-        harness.with_blocks(&["第一块"]);
-        harness.state.ocr.as_mut().unwrap().blocks[0].translation = Some("你好".to_string());
+        let pin = harness.with_blocks(&["第一块"]);
+        harness.state.pins[0].document.as_mut().unwrap().blocks[0].translation =
+            Some("你好".to_string());
         let stale = Outcome::ImageComposed {
-            owner: ChainOwner::Page,
-            id: harness.state.compose_request_id + 99,
+            pin,
+            id: 99,
             result: Ok(Composed {
                 image: RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 0, 255])),
                 per_block: Vec::new(),
@@ -1243,10 +1189,6 @@ mod tests {
             !apply(&mut harness.state, &harness.history, stale),
             "对不上号的成品落进了界面"
         );
-        assert!(harness.state.composed.is_none());
-        assert!(matches!(
-            harness.state.compose_stage,
-            ComposeStage::Idle | ComposeStage::Done
-        ));
+        assert!(harness.state.pins[0].product.is_none());
     }
 }

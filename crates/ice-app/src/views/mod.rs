@@ -15,7 +15,6 @@ use crate::theme;
 pub mod compact;
 pub mod full;
 pub mod history;
-pub mod image;
 pub mod settings;
 
 /// 工具条的上下内边距（横向沿用 egui 面板自己的 8px）。
@@ -134,22 +133,7 @@ pub struct Effects {
     pub quit: bool,
     /// 把两个尺寸槽恢复成默认值（REQ-011 落点②：尺寸被历史版本写坏了，程序不自动改，用户显式恢复）
     pub reset_geometry: bool,
-    /// 「打开图片」：交出原生面板（CHG-005 REQ-001）。
-    /// 记的是**意图**而不是路径——面板还没回来，帧末只负责把面板叫出来，
-    /// 选中的路径由 `app.rs` 在后续帧里从回信通道读，视图永远碰不到 AppKit。
-    pub open_panel: bool,
-    /// 「粘贴」：帧末去剪贴板取一次图（CHG-005 REQ-001 第四条入口）。
-    /// 与 `copy` 不同向：那条是写剪贴板，这条是读，而且只在用户按这颗钮时读一次，
-    /// 不参与 `clipboard_watch` 的轮询（那是文本即翻，读到图片只会白读）。
-    pub paste_image: bool,
-    /// 「停止」：按当前在飞的那一段决定含义（CHG-006 REQ-009，一颗入口三种含义）。
-    /// 帧末交给 `AppState::stop_image_stage` 判定并落状态，视图自己不看也不改那三个在飞标记；
-    /// 只有翻译段是真停（块边界收手），识别段与合成段是丢弃这一次的结果（Q-008）。
-    pub stop_image: bool,
-    /// 「保存」：帧末交出原生保存面板（CHG-006 REQ-008）。与 `open_panel` 同一条形状——
-    /// 记的是**意图**，路径要等面板回调回来才有，视图碰不到 AppKit 也碰不到磁盘。
     /// 要复制/保存的是**哪张贴图**（CHG-009 REQ-003/004 的「复制」「保存」）。
-    /// 与上面两条的区别只在像素来源：那两条拿 `state.composed`，这两条拿贴图自己那张文件。
     /// `Some(id)` 表示"这一帧要点"，落点在 `run_effects` 里做——视图不碰剪贴板也不碰面板。
     pub copy_pin: Option<u64>,
     /// 遮罩里「复制」那一下：刚确认、已在历史目录里的那一张，把它的文件交回剪贴板
@@ -166,11 +150,6 @@ pub struct Effects {
     /// 三条录入都落这一格——**改一次注册一次**，而不是每帧重注册
     pub rebind_hotkeys: bool,
     pub capture: bool,
-    pub save_image: bool,
-    /// 「复制图片」：帧末把成品那张 RGBA 写进剪贴板（REQ-008 的第二条出路）。
-    /// 与 `copy`（写文本）分开两个字段，是因为写图会**抹掉剪贴板里的文本**（Q-004），
-    /// 那一句提示只该在图片这一路上出现。
-    pub copy_image: bool,
 }
 
 impl Effects {
@@ -201,13 +180,11 @@ pub fn show(
     // 不再为它单开一条栏；设置页不画滑块，那一页自己有「主题」那一行。
     match state.tab {
         Tab::Text => full::bottom_bar(ui, state, effects),
-        Tab::Image => image::status_bar(ui, state, effects),
         Tab::History | Tab::Settings => {}
     }
 
     egui::CentralPanel::default().show(ui, |ui| match state.tab {
         Tab::Text => full::show(ui, state),
-        Tab::Image => image::show(ui, state, effects, ice_vision::native_ocr_supported()),
         Tab::History => history::show(ui, state, history),
         Tab::Settings => settings::show(ui, state, effects, ai_available),
     });
@@ -893,7 +870,7 @@ mod tests {
 
     /// 用户 2026-11-03："主题颜色切换图标除设置页都应该有" + 次日"还是放在最下方吧，和状态栏一行"。
     ///
-    /// 两句合起来才是现在这条判据：三页都要有，而且都在**同一行**（状态栏），所以 salt 也只有一个
+    /// 两句合起来才是现在这条判据：两页都要有，而且都在**同一行**（状态栏），所以 salt 也只有一个
     /// `status`——原来三条宿主栏各一个 salt（`full`/`image`/`history`）是为了证明"每页自己那条栏里
     /// 画了一颗"，现在那条证明不再存在，改判据读同一格、逐页跑一帧。
     /// 设置页是反向的：那一页自己有「主题」那一行，再画一颗就是两个入口并排打架。
@@ -901,7 +878,7 @@ mod tests {
     fn the_theme_switch_is_drawn_on_every_tab_but_settings() {
         let (_dir, store) = temp_history();
         let screen = egui::vec2(900.0, 620.0);
-        for tab in [Tab::Text, Tab::Image, Tab::History] {
+        for tab in [Tab::Text, Tab::History] {
             let mut state = state();
             state.tab = tab;
             let ctx = run_frame(&mut state, &mut Effects::default(), &store, screen, 2);

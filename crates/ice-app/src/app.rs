@@ -22,7 +22,7 @@ use tokio::sync::mpsc;
 
 use crate::jobs::{self, JobRunner, OutcomeReceiver};
 use crate::mode;
-use crate::state::{self, AppState, ImageInput, KeyState, PRODUCT_GONE_TEXT, Tab, Tone, TrayState};
+use crate::state::{self, AppState, KeyState, Tab, Tone, TrayState};
 use crate::system::alpha;
 use crate::system::background;
 use crate::system::capture::{self, HISTORY_DAYS, HISTORY_MAX};
@@ -92,14 +92,7 @@ pub struct IceApp {
     /// 单实例锁。`on_exit` 里显式释放，进程被杀时靠 `Drop`（REQ-009）
     lock: Option<InstanceLock>,
     key_probe: KeyProbeReceiver,
-    /// 「打开图片」面板那头的发信端（CHG-005 REQ-001）。每帧只把它交给 `panel::request_open`，
-    /// 真正的收件在下面这一对里的 `panel_rx`
-    panel_tx: panel::ReplySender,
-    /// 面板回信的接收端。回调跑在 AppKit 的调用栈上，只能往这里塞一条消息
-    panel_rx: panel::ReplyReceiver,
-    /// 「保存」面板那头的发信端（CHG-006 REQ-008）。**与打开面板各一条通道**：回信里只有路径，
-    /// 共用一条就分不清"用户选了一张要识别的图"与"用户选了一个要写出去的位置"，
-    /// 于是会把成品写进用户刚选来识别的那张图里。协议本身（`Reply`/`classify`/容量）仍是一套。
+    /// 「保存」面板那头的发信端（CHG-006 REQ-008）。回信里只有路径，收件在 `save_rx`
     save_tx: panel::ReplySender,
     /// 保存面板回信的接收端，由 `poll_save` 每帧读空
     save_rx: panel::ReplyReceiver,
@@ -191,8 +184,6 @@ impl IceApp {
         shots_dir: Option<PathBuf>,
     ) -> Self {
         let (mut runner, outcomes) = JobRunner::new(translator);
-        let (panel_tx, panel_rx) = panel::channel();
-        // 保存面板另开一条：同一种回信，两条互不相干的出路（见 `save_tx` 那条注释）
         let (save_tx, save_rx) = panel::channel();
         // config.toml 里的术语必须在第一次派发前就进引擎，否则要等用户改一次术语才生效（FR-4.5）
         runner.set_glossary(state.glossary.clone());
@@ -220,8 +211,6 @@ impl IceApp {
             shots_dir,
             lock,
             key_probe,
-            panel_tx,
-            panel_rx,
             save_tx,
             save_rx,
             last_save: Instant::now(),
@@ -1261,45 +1250,24 @@ impl IceApp {
         self.state.toast(Tone::Info, "已用剪贴板新内容自动翻译");
     }
 
-    /// 「打开图片」面板的回信（CHG-005 REQ-001）。
-    ///
-    /// 一次读空而不是只取一条：入口被连着按两次时通道里可能压着两条，留一条在里头就等于
-    /// 下一帧、下下帧才处理，而帧循环并不保证还在跑（窗口一收进后台 `ui` 就停了）。
-    fn poll_panel(&mut self, ctx: &egui::Context) {
-        while let Ok(reply) = self.panel_rx.try_recv() {
-            match reply {
-                panel::Reply::Picked(path) => {
-                    self.dispatch_image(ctx, ImageInput::Path(PathBuf::from(path)));
-                }
-                // 取消是用户自己的选择，不需要一句"你取消了"来打扰
-                panel::Reply::Cancelled => {}
-                panel::Reply::Failed => self.state.toast(
-                    Tone::Error,
-                    "图片面板没有回应；请在图片页的「路径」那一格里手输",
-                ),
-            }
-        }
-    }
-
     /// 「保存」面板的回信（CHG-006 REQ-008）。
     ///
     /// 落盘就在这一帧做完，不另开一支任务：编码一张图是一次性的几十到几百毫秒，由用户显式点
-    /// 出来，换不来"第四条 Job + 与成品换代赛跑"那套机制。与 `poll_panel` 同一条纪律——
-    /// 一次读空，不留到下一帧（窗口一收进后台 `ui` 就停了，留着可能永远没人读）。
+    /// 出来，换不来"第四条 Job + 与成品换代赛跑"那套机制。一次读空，不留到下一帧
+    /// （窗口一收进后台 `ui` 就停了，留着可能永远没人读）。
     fn poll_save(&mut self) {
         while let Ok(reply) = self.save_rx.try_recv() {
             match reply {
                 panel::Reply::Picked(path) => {
                     // 面板开着的那几秒里可能又点了一颗别的保存、也可能把那张贴图关了：
                     // 按**当初那一份**去存，来源没了就照"没了"说，不拿最后一张顶缸
-                    let (tone, text) =
-                        match std::mem::replace(&mut self.pending_save, PendingSave::None) {
-                            PendingSave::Pin(id) => save_pin_image(&self.state, id, &path),
-                            PendingSave::Shot(source) => save_shot_copy(&source, &path),
-                            PendingSave::Page | PendingSave::None => {
-                                save_product(&self.state, &path)
-                            }
-                        };
+                    let pending = std::mem::replace(&mut self.pending_save, PendingSave::None);
+                    let (tone, text) = match pending {
+                        PendingSave::Pin(id) => save_pin_image(&self.state, id, &path),
+                        PendingSave::Shot(source) => save_shot_copy(&source, &path),
+                        // 没有来源的回信无处可存：不碰盘，也不拿提示打扰用户
+                        PendingSave::None => continue,
+                    };
                     self.state.toast(tone, text);
                 }
                 // 取消是用户自己的选择，不需要一句"你取消了"来打扰——但**来源要清掉**：
@@ -1312,39 +1280,6 @@ impl IceApp {
                 }
             }
         }
-    }
-
-    /// 拖进窗口的文件（CHG-005 REQ-001 的第四条入口）：整个窗口都是拖放区。
-    ///
-    /// `dropped_files` 由 eframe 每帧现填，不跨帧残留，所以这里不需要去重记忆。
-    /// 只认第一个带路径的文件——从只给字节的那类应用拖过来，在这里落不了地，
-    /// 那条路交给「打开图片」。
-    fn poll_drops(&mut self, ctx: &egui::Context) {
-        let Some(path) = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .first()
-                .map(|file| file.path().to_path_buf())
-        }) else {
-            return;
-        };
-        self.dispatch_image(ctx, ImageInput::Path(path));
-    }
-
-    /// 三条"入场即识别"的入口（面板、拖拽、粘贴）汇到这一句派发。
-    ///
-    /// 切到图片页不是可选项：识别结果只有那一页画，在文本页派发一次识别而画面不动，
-    /// 用户看到的只是状态条上闪过的一句"识别中"。
-    fn dispatch_image(&mut self, ctx: &egui::Context, input: ImageInput) {
-        let Some(job) = self.state.submit_image(input) else {
-            self.state.toast(
-                Tone::Warn,
-                "上一次识别还在跑：等它结束，或点「忽略这次识别」",
-            );
-            return;
-        };
-        self.state.tab = Tab::Image;
-        self.runner.submit(&self.runtime, job, ctx);
     }
 
     /// 隐藏期间的看护（缺陷 D-2）——**只服务降级档**（`TrayState::Unavailable`，收起来 = 最小化）。
@@ -1784,71 +1719,6 @@ impl IceApp {
                 self.runner.submit(&self.runtime, job, ctx);
             }
         }
-        // 图片页的三条入口：面板给的是"意图"，路径要等回调回来才有（REQ-001 的"不阻塞"）
-        if effects.open_panel && !panel::request_open(&self.panel_tx, ctx) {
-            self.state.toast(
-                Tone::Error,
-                "这台机器弹不出系统文件面板；请在图片页的「路径」那一格里手输",
-            );
-        }
-        if effects.paste_image {
-            match clipboard::read_image() {
-                Some((bytes, width, height)) => {
-                    self.dispatch_image(
-                        ctx,
-                        ImageInput::Clipboard {
-                            bytes,
-                            width,
-                            height,
-                        },
-                    );
-                }
-                None => self
-                    .state
-                    .toast(Tone::Warn, "剪贴板里没有图片；请先 Cmd+C 复制一张"),
-            }
-        }
-        if effects.stop_image {
-            // 那一句由状态层给（REQ-009）：只有翻译段说"已停止"，识别段与合成段说的是
-            // "已忽略这次结果"——那两次计算还在跑，说撤回了是撒谎。三段都不在飞时什么都不说。
-            if let Some(text) = self.state.stop_image_stage().label() {
-                self.state.toast(Tone::Info, text);
-            }
-        }
-        // 图片页的两条出路（REQ-008）：面板给的是"意图"，位置要等回调回来才有；
-        // 剪贴板那一条是当场写，所以它的结果当场就有话说
-        if effects.save_image {
-            let label = self
-                .state
-                .image
-                .as_ref()
-                .map(|admitted| admitted.label.clone())
-                .unwrap_or_default();
-            let default_name = panel::default_save_name(&label);
-            if !panel::request_save(&self.save_tx, ctx, &default_name, &panel::SAVE_TYPES) {
-                // 那台机器上没有原生面板：说清还有一条路能走，别让用户以为成品出不去（NFR-7）
-                self.state.toast(
-                    Tone::Error,
-                    "这台机器弹不出系统保存面板；可以用「复制图片」再粘到别处",
-                );
-            } else {
-                self.pending_save = PendingSave::Page;
-            }
-        }
-        if effects.copy_image {
-            let written = self
-                .state
-                .composed
-                .as_ref()
-                .map(|composed| clipboard::write_image(&composed.image));
-            match written {
-                // Q-004 那一句在点之前是 hover，点完再确认一次：用户下一步多半是 Cmd+V
-                Some(Ok(())) => self.state.toast(Tone::Info, clipboard::COPY_IMAGE_DONE),
-                Some(Err(reason)) => self.state.toast(Tone::Error, reason),
-                // 那颗按钮在没有成品时是灰的，这一支只在"点下去到帧末之间成品被换掉"时走到
-                None => self.state.toast(Tone::Warn, PRODUCT_GONE_TEXT),
-            }
-        }
         // 「框选贴图」那颗与全局截图热键**落同一格**（形状核查也锁这一条：派发只这一处）。
         // CHG-013 改口 CHG-009 REQ-010：发起框选**不再收起自家窗**（用户 2026-11-13
         // "不用将我们的软件收起/透明"）。自家窗全程保持原样、遮罩盖在其上；可见则按当前
@@ -1872,7 +1742,7 @@ impl IceApp {
                 self.runner.submit(&self.runtime, job, ctx);
             }
         }
-        // 一条派发口：图片页那一支的 Job 与贴图们"译文落好了、欠一张成品"的合成都走这里。
+        // 一条派发口：贴图们"译文落好了、欠一张成品"的合成都走这里。
         // 成品的派发不写在回信落地里，是为了让 `apply_outcome` 只做状态（REQ-005 分层）
         for job in effects
             .job
@@ -1880,71 +1750,6 @@ impl IceApp {
             .chain(self.state.take_due_pin_composes())
         {
             self.runner.submit(&self.runtime, job, ctx);
-        }
-        // 图片页的三条入口：面板给的是"意图"，路径要等回调回来才有（REQ-001 的"不阻塞"）
-        if effects.open_panel && !panel::request_open(&self.panel_tx, ctx) {
-            self.state.toast(
-                Tone::Error,
-                "这台机器弹不出系统文件面板；请在图片页的「路径」那一格里手输",
-            );
-        }
-        if effects.paste_image {
-            match clipboard::read_image() {
-                Some((bytes, width, height)) => {
-                    self.dispatch_image(
-                        ctx,
-                        ImageInput::Clipboard {
-                            bytes,
-                            width,
-                            height,
-                        },
-                    );
-                }
-                None => self
-                    .state
-                    .toast(Tone::Warn, "剪贴板里没有图片；请先 Cmd+C 复制一张"),
-            }
-        }
-        if effects.stop_image {
-            // 那一句由状态层给（REQ-009）：只有翻译段说"已停止"，识别段与合成段说的是
-            // "已忽略这次结果"——那两次计算还在跑，说撤回了是撒谎。三段都不在飞时什么都不说。
-            if let Some(text) = self.state.stop_image_stage().label() {
-                self.state.toast(Tone::Info, text);
-            }
-        }
-        // 图片页的两条出路（REQ-008）：面板给的是"意图"，位置要等回调回来才有；
-        // 剪贴板那一条是当场写，所以它的结果当场就有话说
-        if effects.save_image {
-            let label = self
-                .state
-                .image
-                .as_ref()
-                .map(|admitted| admitted.label.clone())
-                .unwrap_or_default();
-            let default_name = panel::default_save_name(&label);
-            if !panel::request_save(&self.save_tx, ctx, &default_name, &panel::SAVE_TYPES) {
-                // 那台机器上没有原生面板：说清还有一条路能走，别让用户以为成品出不去（NFR-7）
-                self.state.toast(
-                    Tone::Error,
-                    "这台机器弹不出系统保存面板；可以用「复制图片」再粘到别处",
-                );
-            } else {
-                self.pending_save = PendingSave::Page;
-            }
-        }
-        if effects.copy_image {
-            let written = self
-                .state
-                .composed
-                .as_ref()
-                .map(|composed| clipboard::write_image(&composed.image));
-            match written {
-                // Q-004 那一句在点之前是 hover，点完再确认一次：用户下一步多半是 Cmd+V
-                Some(Ok(())) => self.state.toast(Tone::Info, clipboard::COPY_IMAGE_DONE),
-                Some(Err(reason)) => self.state.toast(Tone::Error, reason),
-                // 那颗按钮在没有成品时是灰的，这一支只在"点下去到帧末之间成品被换掉"时走到
-                None => self.state.toast(Tone::Warn, PRODUCT_GONE_TEXT),
-            }
         }
         // 「框选贴图」那颗与全局截图热键**落这一格**（同一个 `Effects::capture`）：
         // 派发只在这一处，两条入口不可能走偏成两套行为。
@@ -2219,15 +2024,12 @@ impl IceApp {
 /// 「保存」面板回信时，该存哪一份像素。
 ///
 /// 面板是异步的：从"点了保存"到"选了位置"之间可能隔几秒，这期间用户可能又点了别张贴图的
-/// 保存，也可能把那张关掉了。所以**来源要在按下那一刻定下来**，回信时按那一份去存；
-/// 只有 `Page`（图片页那条）沿用 `state.composed`。
+/// 保存，也可能把那张关掉了。所以**来源要在按下那一刻定下来**，回信时按那一份去存。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 enum PendingSave {
     /// 没有面板在等回信
     #[default]
     None,
-    /// 图片页的成品
-    Page,
     /// 某张贴图（此刻屏上显示的那一张）
     Pin(u64),
     /// 遮罩里刚确认的那一张：已经在历史目录里了，这里只是**再复制一份**到用户挑的位置。
@@ -2235,8 +2037,8 @@ enum PendingSave {
     Shot(std::path::PathBuf),
 }
 
-/// 贴图没了的时候要说的那一句。与 `PRODUCT_GONE_TEXT` 分开的理由一样：这时候盘上那个文件
-/// 不是屏幕上他刚看到的东西，说"已保存"是骗人。
+/// 贴图没了的时候要说的那一句：这时候盘上那个文件不是屏幕上他刚看到的东西，
+/// 说"已保存"是骗人。
 const PIN_GONE_TEXT: &str = "那张贴图已经不在了，这张没保存";
 
 /// 存一张贴图：**同一把 `export::save`、同一套格式判定**，只有像素来源不同。
@@ -2379,26 +2181,6 @@ fn save_pin_image(state: &AppState, id: u64, picked: &str) -> (Tone, String) {
     }
 }
 
-fn save_product(state: &AppState, picked: &str) -> (Tone, String) {
-    let Some(composed) = state.composed.as_ref() else {
-        // 面板开着的那几秒里换了图或换了一批译文：G 区那张已经不是它了，
-        // 这时候说"已保存"等于让用户以为盘上那个文件就是屏幕上的图
-        return (Tone::Warn, PRODUCT_GONE_TEXT.to_string());
-    };
-    let path = panel::resolved_save_path(picked);
-    let format = export::format_of(&path);
-    match export::save(&composed.image, &path, format) {
-        // JPEG 那一句只在真有透明时才说（Q-005）：整张不透明时提它是吓人
-        Ok(()) if format == export::Format::Jpeg && export::has_transparency(&composed.image) => (
-            Tone::Warn,
-            "已保存成 JPEG；透明的地方按白色合成了（JPEG 没有透明通道）".to_string(),
-        ),
-        Ok(()) => (Tone::Info, "已保存成品图".to_string()),
-        // 那句话来自 `export`：三样原因共用一句，不带路径也不带字节
-        Err(error) => (Tone::Error, error.to_string()),
-    }
-}
-
 /// 恢复默认尺寸时位置怎么定（`reset_window_sizes` 的一条规则，抽出来才能两头都断言）：
 /// 拿得到可用区就在其中居中，拿不到就留在原处——无头测试与探针失败的那些帧里，
 /// 宁可不挪位置，也不能把窗口甩到屏幕外。
@@ -2519,9 +2301,7 @@ impl eframe::App for IceApp {
         if let Ok(probe) = self.key_probe.try_recv() {
             self.apply_key_probe(probe);
         }
-        self.poll_panel(&ctx);
         self.poll_save();
-        self.poll_drops(&ctx);
 
         let focus_in_source = self.state.focus_in_source;
         let actions = ctx.input(|i| hotkeys::action_of(i, focus_in_source));
@@ -4943,36 +4723,30 @@ mod tests {
         assert_eq!((headless.w, headless.h), (460.0, 160.0));
     }
 
-    /// 一张成品（REQ-008 两条出路的共同前置）。像素是纯色，够编码成 PNG/JPEG 就行；
-    /// `alpha` 用来造"带透明"与"整张不透明"两种图，那句 JPEG 提示只该在前一种上出现。
-    fn with_product(alpha: u8) -> AppState {
+    /// 一张带真实像素文件的贴图（保存两条出路的共同前置）。`alpha` 用来造"带透明"与
+    /// "整张不透明"两种图，那句 JPEG 提示只该在前一种上出现。临时目录要跟着状态一起活着。
+    fn with_pin_picture(alpha: u8) -> (AppState, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pin.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([255, 255, 255, alpha]))
+            .save(&file)
+            .unwrap();
         let mut state = plain_state();
-        state.composed = Some(ice_vision::composite::Composed {
-            image: image::RgbaImage::from_pixel(8, 8, image::Rgba([255, 255, 255, alpha])),
-            per_block: vec![(0, ice_vision::typeset::PlanKind::InPlace)],
-            replaced: 1,
-            overlaid: 0,
-            skipped: 0,
-            degraded_blocks: Vec::new(),
-            missing_glyphs: Vec::new(),
-        });
-        state
+        state.push_pin(file, None);
+        (state, dir)
     }
 
-    /// REQ-008 的失败那一档：给一句说明原因的话、**成品仍在内存**、重试入口就是那颗按钮。
-    ///
-    /// "成品仍在"这件事在这里是断言，在 `save_product` 的签名上是**形状**——它只借看
-    /// `&AppState`，拿不到清空它的能力。断言留着，是因为下一个改这个函数的人可能把它改成 `&mut`。
+    /// REQ-008 的失败那一档：给一句说明原因的话、**来源仍在**、重试入口就是那颗按钮。
+    /// 写失败只回一句话，不碰状态——贴图还在屏上，才有的重试。
     #[test]
     fn a_failed_save_names_the_problem_and_keeps_everything() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = with_product(255);
+        let (state, dir) = with_pin_picture(255);
 
         // 父目录不存在（磁盘/权限那一档）。**不能拿临时目录本身当靶子**：它没有扩展名，
         // 按 Q-005 会被补成 `<临时目录>.png`——那是它旁边的一个新文件，写得成。
         let missing = dir.path().join("没有这一层").join("成品.png");
         let picked = missing.to_string_lossy().to_string();
-        let (tone, text) = save_product(&state, &picked);
+        let (tone, text) = save_pin_image(&state, 1, &picked);
         assert_eq!(tone, Tone::Error, "写不出去却说成了别的档");
         assert!(
             text.contains(export::SAVE_IO_TEXT),
@@ -4980,68 +4754,46 @@ mod tests {
         );
         assert!(!text.contains(&picked), "文案里带出了路径：{text}");
         assert!(!missing.exists(), "失败了却不许留下半个文件");
-        assert!(state.composed.is_some(), "写失败却把成品清了，那就没得重试");
+        assert_eq!(state.pins.len(), 1, "写失败却把贴图清了，那就没得重试");
     }
 
-    /// 面板回来那条路径原样落盘；没写扩展名的补 `.png`（Q-005），补完还得真能被解回来。
+    /// 面板回来那条路径落盘的就是屏上那张的编码字节（补扩展名那一档在
+    /// `panel::resolved_save_path` 自己的测试里钉着，这里不重复）。
     #[test]
-    fn a_save_lands_on_the_picked_path_and_gains_png_when_nameless() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = with_product(255);
+    fn a_save_lands_on_the_picked_path_as_the_encoded_displayed_picture() {
+        let (state, dir) = with_pin_picture(255);
 
         let named = dir.path().join("成品.png");
-        let (tone, text) = save_product(&state, &named.to_string_lossy());
+        let (tone, text) = save_pin_image(&state, 1, &named.to_string_lossy());
         assert_eq!(tone, Tone::Info);
-        assert_eq!(text, "已保存成品图", "{text}");
+        assert_eq!(text, "已保存这张贴图", "{text}");
+        let displayed = crate::system::pin::displayed(&state.pins[0]).expect("屏上得有图");
         assert_eq!(
             std::fs::read(&named).unwrap(),
-            export::encode(&state.composed.as_ref().unwrap().image, export::Format::Png).unwrap(),
+            export::encode(displayed.image(), export::Format::Png).unwrap(),
             "落盘的不是编码出来的那一份字节"
         );
-
-        let nameless = dir.path().join("没写扩展名");
-        let (tone, _) = save_product(&state, &nameless.to_string_lossy());
-        assert_eq!(tone, Tone::Info);
-        let gained = dir.path().join("没写扩展名.png");
-        assert!(gained.exists(), "没写扩展名却没补 .png");
-        assert!(
-            image::load_from_memory(&std::fs::read(&gained).unwrap()).is_ok(),
-            "补出来的那个名字解不开，等于存了个打不开的文件"
-        );
-    }
-
-    /// 成品已经不在了（面板开着的那几秒里换了图或换了一批译文）：不许说"已保存"，
-    /// 也不许在盘上留下任何东西——用户会以为那个文件就是屏幕上那张图。
-    #[test]
-    fn saving_without_a_product_says_so_and_writes_nothing() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = plain_state();
-        let picked = dir.path().join("成品.png");
-
-        let (tone, text) = save_product(&state, &picked.to_string_lossy());
-        assert_eq!(tone, Tone::Warn);
-        assert_eq!(text, PRODUCT_GONE_TEXT);
-        assert!(!picked.exists(), "没有成品却写出了文件");
     }
 
     /// JPEG 那句提示只在**真有透明**时出现（Q-005）：整张不透明时提它是吓人，
     /// 而真带透明时不提，用户拿到的就是一张白底图却不知道为什么。
     #[test]
     fn the_jpeg_hint_appears_only_when_the_picture_has_transparency() {
-        let dir = tempfile::tempdir().unwrap();
+        let (state, dir) = with_pin_picture(128);
         let picked = dir.path().join("成品.jpg").to_string_lossy().to_string();
 
-        let (tone, text) = save_product(&with_product(128), &picked);
+        let (tone, text) = save_pin_image(&state, 1, &picked);
         assert_eq!(tone, Tone::Warn, "带透明存成 JPEG 该提一句");
         assert!(
             text.contains("白色") && text.contains("JPEG"),
             "那句话没说清透明的地方去了哪儿：{text}"
         );
 
-        let opaque = dir.path().join("不透明.jpg").to_string_lossy().to_string();
-        let (tone, text) = save_product(&with_product(255), &opaque);
+        let (opaque, dir) = with_pin_picture(255);
+        let picked = dir.path().join("不透明.jpg").to_string_lossy().to_string();
+        let (tone, text) = save_pin_image(&opaque, 1, &picked);
         assert_eq!(tone, Tone::Info);
-        assert_eq!(text, "已保存成品图", "整张不透明却提了透明：{text}");
+        assert_eq!(text, "已保存这张贴图", "整张不透明却提了透明：{text}");
     }
 
     /// 存一张贴图：走的是**同一把** `export::save`，只是像素来自这张自己的文件。
