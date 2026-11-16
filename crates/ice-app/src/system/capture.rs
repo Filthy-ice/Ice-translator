@@ -347,6 +347,28 @@ pub fn recent(shots: &[Shot]) -> Option<&Shot> {
     sorted(shots).into_iter().next()
 }
 
+/// F2「依次往回翻」的下一张：比锚点那张**更早一张**（CHG-012 REQ-001）。纯函数，不碰盘——
+/// 读盘留在 `app.rs` 帧末那一层（CHG-009 REQ-005 分层纪律）。排序与老化共用 [`sorted`]（事实 1），
+/// 所以"往回翻"和"最老先删"读的是同一个序，不会各排一次漂移。
+///
+/// 锚点记的是上一次钉出去那张的**路径**，不是下标：新截图进历史不会把回翻序整体平移（事实 6）。
+/// 三种落点：
+/// - 空锚点 → 最新那张（第一次按，或游标刚被重置）；
+/// - 锚点就是最早那张 → `None`（翻到头了，REQ-002 那一档由调用方提示"没有更早的截图了"）；
+/// - 锚点已经不在表里（被老化或"清除所有历史"抹掉）→ 回退到最新重新起翻，不报错、不卡死（REQ-003 边界）。
+pub fn next_older<'a>(shots: &'a [Shot], anchor: Option<&Path>) -> Option<&'a Shot> {
+    match anchor {
+        None => recent(shots),
+        Some(path) => {
+            let order = sorted(shots);
+            match order.iter().position(|s| s.path.as_path() == path) {
+                Some(i) => order.get(i + 1).copied(), // i 已是最早那张时 get(i+1)=None
+                None => recent(shots),                // 锚点被抹掉：回退最新重新起翻
+            }
+        }
+    }
+}
+
 /// 双上限老化，纯函数：**返回该删的那些路径**，删的动作在调用方。
 ///
 /// 两个边界各钉一条（REQ-008）：`mtime` 恰好落在第 7 天那一刻的那条**不删**（"7 天内"的
@@ -819,6 +841,45 @@ mod tests {
             "超出上限时最老的那一张先走"
         );
         assert_eq!(recent(&shots).unwrap().path, PathBuf::from("newest"));
+    }
+
+    /// CHG-012 REQ-001/002：F2「依次往回翻」走的是与老化同一个序（新→旧）。空锚点＝最新；
+    /// 给锚点＝那张后面**更早一张**；锚点已是最早＝翻到头 `None`（调用方据此提示"没有更早的
+    /// 截图了"、不推进）；锚点被老化/清除（不在表里）＝回退最新重新起翻；空历史＝`None`。
+    #[test]
+    fn f2_walks_one_older_each_press_and_stops_at_the_oldest() {
+        let shots = vec![shot("newest", 30), shot("mid", 20), shot("oldest", 10)];
+        let newest = PathBuf::from("newest");
+        let mid = PathBuf::from("mid");
+        let oldest = PathBuf::from("oldest");
+
+        assert_eq!(
+            next_older(&shots, None).unwrap().path,
+            newest,
+            "第一次按（空锚点）＝最新"
+        );
+        assert_eq!(
+            next_older(&shots, Some(&newest)).unwrap().path,
+            mid,
+            "钉了最新再按＝更早一张"
+        );
+        assert_eq!(
+            next_older(&shots, Some(&mid)).unwrap().path,
+            oldest,
+            "再按＝更早一张"
+        );
+        assert!(
+            next_older(&shots, Some(&oldest)).is_none(),
+            "最早那张再按＝翻到头（REQ-002 停住档）"
+        );
+        assert_eq!(
+            next_older(&shots, Some(&PathBuf::from("gone")))
+                .unwrap()
+                .path,
+            newest,
+            "锚点被老化/清除＝回退最新重新起翻，不报错"
+        );
+        assert!(next_older(&[], None).is_none(), "空历史＝None");
     }
 
     /// 历史目录不许落在仓库里（REQ-008：路径不可配，可配就等于把这格交出去）。

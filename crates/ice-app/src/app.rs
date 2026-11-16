@@ -269,7 +269,8 @@ impl IceApp {
             // 全局热键那三把（CHG-009 REQ-006）。截图那一把与图片页那颗「框选贴图」
             // **落同一个意图**，派发只在帧末一处做；「固定」在没有"框选但没钉住"的那张时
             // 什么都不做（不弹一句"没有可固定的"，也不拿历史里更早那张顶上去——那会把
-            // 两把键混成一把）；「打开上一次」从历史里取最新那张钉出来，没有才说一句
+            // 两把键混成一把）；「打开上一次」沿历史从新到旧**依次往回翻**（CHG-012 改口
+            // CHG-009 REQ-006"取最近那张"：每按一次新钉一张更早的、累积，翻到头说一句）
             Action::Capture => effects.capture = true,
             Action::PinLast => {
                 // 「固定」与「对勾」同义（本文件那条注释 + 用户原话）。遮罩还开着时，F3 就
@@ -283,13 +284,30 @@ impl IceApp {
                     self.state.pin_last_capture();
                 }
             }
-            Action::ReopenLast => match self.newest_shot() {
-                Some(path) => {
-                    // 从历史里取的那一张没有"原地"可给：那块矩形早随着上一次遮罩过去了
-                    self.state.pin_from_history(path, None);
+            Action::ReopenLast => {
+                // 读盘在帧末这一层，状态层不碰 fs（CHG-009 REQ-005 分层纪律）。三档分流照
+                // CHG-012 REQ-002：空→"还没有截图记录"；翻到头（next_older=None）→"没有更早的
+                // 截图了"且不推进锚点；钉满（browse_older=None）→沿用既有那句且不推进、下次对
+                // 同一张重试。先钉成功才由 browse_older 记锚点、打来源标记。
+                let shots = self
+                    .shots_dir
+                    .clone()
+                    .map(|dir| capture::list(&dir))
+                    .unwrap_or_default();
+                if shots.is_empty() {
+                    self.state.toast(Tone::Info, "还没有截图记录");
+                } else {
+                    match capture::next_older(&shots, self.state.browse_anchor.as_deref()) {
+                        None => self.state.toast(Tone::Info, "没有更早的截图了"),
+                        Some(shot) => {
+                            if self.state.browse_older(shot.path.clone()).is_none() {
+                                self.state
+                                    .toast(Tone::Info, "屏幕上已经钉满 6 张，先 esc 关掉一张");
+                            }
+                        }
+                    }
                 }
-                None => self.state.toast(Tone::Info, "还没有截图记录"),
-            },
+            }
             Action::HideWindow => self.hide(ctx),
             Action::RevealWindow => self.reveal(ctx),
             // 托盘菜单「设置」：收着就先唤回，再开设置页。兑现复用 `open_settings`
@@ -1359,16 +1377,6 @@ impl IceApp {
             // 提示条一消失就停——不常驻重绘，空闲时 CPU 才能压到 1% 以下（NFR-2）
             ctx.request_repaint_after(state::TOAST_FADE_STEP);
         }
-    }
-
-    /// 历史里最新那一张（「打开上一次截图」那一格要的那张）。
-    ///
-    /// 与老化**共用同一个排序**（`capture::recent`）："最近"在这条链上只有一个定义。
-    /// 读盘发生在帧末这一层，状态层不碰文件系统（REQ-005 那条分层纪律）
-    fn newest_shot(&self) -> Option<std::path::PathBuf> {
-        let dir = self.shots_dir.clone()?;
-        let shots = capture::list(&dir);
-        capture::recent(&shots).map(|shot| shot.path.clone())
     }
 
     /// 历史老化：一次截图之后顺带跑一遍，**不开定时器**（REQ-008：没人看的时候不需要老化，

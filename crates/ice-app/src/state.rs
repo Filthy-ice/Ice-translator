@@ -531,6 +531,11 @@ pub struct Pin {
     /// 这一张此刻在文字层上拖选了哪些块（REQ-005）。**每张一条**：选中集合跟着贴图走，
     /// 共用一条就会出"在第一张上选的字，按 C 从第三张复制出去"。
     pub selected: Vec<u32>,
+    /// 这张是不是 F2「依次往回翻」翻出来的历史贴图（CHG-012 REQ-003）。**只有 `browse_older`
+    /// 成功那一支置真**；F1 截图钉的（遮罩确认 `pin_confirmed_capture`）、F3 补钉的都走 `new`
+    /// 默认 `false`。重置游标靠它：屏幕上再没有一张带这个标记的图，才把游标退回"从最新开始"——
+    /// F1/F3 的图不带标记，所以它们开着不算、关掉也不触发重置。
+    pub history_browse: bool,
 }
 
 impl Pin {
@@ -573,6 +578,7 @@ impl Pin {
             product: None,
             compose_due: false,
             selected: Vec::new(),
+            history_browse: false,
         }
     }
 
@@ -1055,6 +1061,11 @@ pub struct AppState {
     pub pins: Vec<Pin>,
     /// 下一个贴图号。关掉的不回收——号只往前走，晚到的回信因此不可能落在一张新图上
     pub next_pin_id: RequestId,
+    /// F2「依次往回翻」的游标锚点：上一次由 F2 钉出去那张的**路径**（CHG-012 REQ-001/003）。
+    /// **运行态**：不进 `config.toml`、不持久化（与 [`Self::hotkey_capture`] 同族），重启后 `None`
+    /// ＝从最新开始。`None` 也代表"还没翻过"或"刚被 `close_pin` 退回"；只有再没有一张带
+    /// `history_browse` 的贴图时 `close_pin` 才把它清回 `None`。
+    pub browse_anchor: Option<PathBuf>,
     /// 最近一次截图回信的**落点**，由帧循环取走（`take`）后清空：开窗与派"只识别"
     /// 都是碰系统的事，不能发生在状态层里（REQ-005 那条分层纪律）
     pub capture_applied: Option<CaptureApplied>,
@@ -1141,6 +1152,7 @@ impl AppState {
             capture_seq: 0,
             pins: Vec::new(),
             next_pin_id: 0,
+            browse_anchor: None,
             capture_applied: None,
             pins_new: Vec::new(),
             unpinned_capture: None,
@@ -1834,6 +1846,21 @@ impl AppState {
         Some(id)
     }
 
+    /// **只给 F2**「依次往回翻」用的薄包装：把某张历史图钉出来，并给它打上来源标记、
+    /// 记住游标锚点（CHG-012 REQ-001）。钉图仍复用 [`Self::pin_from_history`] 那一条路，
+    /// 不开第二条。
+    ///
+    /// 顺序很要紧：**先钉成功再记游标**。满 6 时 `pin_from_history` 返回 `None`，`?` 直接退出，
+    /// 于是既不置标记、也不推进锚点——下一次按 F2 会对**同一张**重试，而不是跳过它（REQ-002）。
+    pub fn browse_older(&mut self, path: PathBuf) -> Option<RequestId> {
+        let id = self.pin_from_history(path.clone(), None)?;
+        if let Some(pin) = self.pins.iter_mut().find(|p| p.id == id) {
+            pin.history_browse = true;
+        }
+        self.browse_anchor = Some(path);
+        Some(id)
+    }
+
     /// 关掉一张：从状态里摘掉，返回是否真摘掉了（`false` = 那个号本来就不在，
     /// 调用方不该为它说"已关闭"）。窗口的关闭命令由帧循环发，这里不碰 egui。
     pub fn close_pin(&mut self, id: RequestId) -> bool {
@@ -1844,6 +1871,12 @@ impl AppState {
         // 本进程仍算弹过 ⇒ DoneThisRun，下一张不再弹。只在真摘掉了一张时才算。
         if removed && matches!(self.pin_hint, PinHint::Showing { .. }) {
             self.pin_hint = PinHint::DoneThisRun;
+        }
+        // REQ-003：屏幕上再没有一张 F2 翻出来的历史贴图，才把游标退回"从最新开始"。
+        // 锚点那张关了但别的 history_browse 还开 → any 为真 → 不重置（下一次接着往更早翻）；
+        // F1/F3 的图不带这个标记，它们开着不算、关掉也不触发重置。
+        if !self.pins.iter().any(|pin| pin.history_browse) {
+            self.browse_anchor = None;
         }
         removed
     }
@@ -2784,6 +2817,62 @@ mod tests {
     fn recognized_pin(st: &mut AppState) -> u64 {
         st.push_pin(PathBuf::from("/tmp/history/pin.png"), None)
             .expect("能钉一张")
+    }
+
+    /// CHG-012 REQ-001/002/003：F2 翻历史的游标与来源标记，纯状态层（不碰盘、不读 fs）。
+    /// - `browse_older` 钉一张、给它打 `history_browse` 标记、把游标锚点记成那张的路径；
+    /// - `push_pin`（F1 遮罩确认 / F3 补钉那条路）钉的图**不带标记**，因此不算"历史贴图"；
+    /// - 只有"屏幕上再没有一张带标记的图"时 `close_pin` 才把游标退回 `None`；锚点那张关了
+    ///   但别的带标记的还开 → 不重置；关掉不带标记的图 → 不触发重置；
+    /// - 新建 `AppState` 游标 `None`（从最新开始，即重启档）。
+    #[test]
+    fn f2_browse_marks_pins_and_resets_only_when_all_history_pins_close() {
+        let mut st = capture_state();
+        assert_eq!(st.browse_anchor, None, "新建状态游标为空＝从最新开始");
+
+        // F2 翻一张：钉上、打标记、游标记路径
+        let a = st
+            .browse_older(PathBuf::from("/shots/a.png"))
+            .expect("空闲时钉得上");
+        assert_eq!(st.browse_anchor, Some(PathBuf::from("/shots/a.png")));
+        assert!(st.pins.iter().find(|p| p.id == a).unwrap().history_browse);
+
+        // 再 F2 翻更早一张：两张都带标记，游标挪到第二张，累积不替换
+        let b = st
+            .browse_older(PathBuf::from("/shots/b.png"))
+            .expect("还没钉满，钉得上");
+        assert_eq!(st.browse_anchor, Some(PathBuf::from("/shots/b.png")));
+        assert!(b != a, "第二次是另一张号，不是顶替");
+        assert_eq!(st.pins.len(), 2, "累积在屏上");
+
+        // F1/F3 那条路钉的图不带标记（走 push_pin，不是 browse_older）
+        let c = st
+            .push_pin(PathBuf::from("/shots/c.png"), None)
+            .expect("还没钉满，钉得上");
+        assert!(
+            !st.pins.iter().find(|p| p.id == c).unwrap().history_browse,
+            "F1/F3 的图不该带翻历史标记"
+        );
+
+        // 关掉锚点那张 b：还有另一张带标记的 a 开着 → 不重置（下一次接着往更早翻）
+        st.close_pin(b);
+        assert_eq!(
+            st.browse_anchor,
+            Some(PathBuf::from("/shots/b.png")),
+            "锚点关了但别的 F2 历史图还开，不该重置"
+        );
+
+        // 关掉不带标记的 c：仍不该触发重置（a 还带着标记开着）
+        st.close_pin(c);
+        assert_eq!(
+            st.browse_anchor,
+            Some(PathBuf::from("/shots/b.png")),
+            "关 F1/F3 的图不该重置游标"
+        );
+
+        // 关掉最后一张带标记的 a：再没有 F2 历史图 → 游标退回 None
+        st.close_pin(a);
+        assert_eq!(st.browse_anchor, None, "最后一张 F2 历史贴图关掉才重置");
     }
 
     /// 贴图与图片页各有一套链上状态：**贴图在翻，图片页的按钮不许因此变灰**；
