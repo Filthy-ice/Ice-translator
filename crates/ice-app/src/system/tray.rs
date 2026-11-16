@@ -47,6 +47,10 @@ pub const SUPPORTED: bool = cfg!(target_os = "macos");
 pub const SHOW: &str = "显示窗口";
 /// 菜单第三项。与设置页、「去设置」那一条共指 `Action::OpenSettings`，**不新增第二条实现**。
 pub const SETTINGS: &str = "设置";
+/// 菜单第四项。唤回并开到设置页，再弹**同一个** `Confirm::ClearShots` 二次确认，
+/// 确认后走设置页那颗「清除所有截图」已有的 `clear_shots` 删除链——不新增第二条删除实现、
+/// 不新增第二种弹框（用户 2026-11-13 原话：托盘加一项清除历史截图，清除时要弹确认框）。
+pub const CLEAR_SHOTS: &str = "清除历史截图";
 /// 菜单最后一项。它与设置页那颗、`Cmd+Q` 共指 `Action::Quit`，**不新增第二条退出实现**。
 pub const QUIT: &str = "退出程序";
 
@@ -57,6 +61,7 @@ const CODE_REVEAL: u8 = 1;
 const CODE_TOGGLE_MODE: u8 = 2;
 const CODE_QUIT: u8 = 3;
 const CODE_SETTINGS: u8 = 4;
+const CODE_CLEAR_SHOTS: u8 = 5;
 
 /// 托盘被点出来的那件事。一个槽而不是四个布尔：一次回调只可能立一个意图，
 /// 四个标记会允许"同时既要退出又要唤回"这种根本不该存在的组合。
@@ -75,6 +80,8 @@ pub enum Outcome {
     ToggleMode,
     /// 菜单第三项：打开设置页（窗口收着时先唤回）
     Settings,
+    /// 菜单第四项：清除截图历史（弹同一个 `Confirm::ClearShots` 二次确认，确认后才删）
+    ClearShots,
     /// 菜单最后一项：退出（与设置页那颗、`Cmd+Q` 同一条）
     Quit,
 }
@@ -85,6 +92,7 @@ impl Outcome {
             Outcome::Reveal => CODE_REVEAL,
             Outcome::ToggleMode => CODE_TOGGLE_MODE,
             Outcome::Settings => CODE_SETTINGS,
+            Outcome::ClearShots => CODE_CLEAR_SHOTS,
             Outcome::Quit => CODE_QUIT,
         }
     }
@@ -94,6 +102,7 @@ impl Outcome {
             CODE_REVEAL => Some(Outcome::Reveal),
             CODE_TOGGLE_MODE => Some(Outcome::ToggleMode),
             CODE_SETTINGS => Some(Outcome::Settings),
+            CODE_CLEAR_SHOTS => Some(Outcome::ClearShots),
             CODE_QUIT => Some(Outcome::Quit),
             _ => None,
         }
@@ -120,15 +129,16 @@ pub const fn action_of(outcome: Outcome) -> Action {
         Outcome::Reveal => Action::RevealWindow,
         Outcome::ToggleMode => Action::ToggleMode,
         Outcome::Settings => Action::OpenSettings,
+        Outcome::ClearShots => Action::ClearShots,
         Outcome::Quit => Action::Quit,
     }
 }
 
-/// 菜单四项的文案（TC-5.4-b 的无头判据挂在这上面）。
+/// 菜单五项的文案（TC-5.4-b 的无头判据挂在这上面）。
 ///
 /// 第二项说的是"切到**另一侧**"的名字：当前在全量窗就写「精简」，在简洁窗就写「全量」。
 /// 写「悬浮窗」是 2026-10-29 已被用户改口的旧词（任务 #44）。
-pub fn menu_titles(mode: UiMode) -> [&'static str; 4] {
+pub fn menu_titles(mode: UiMode) -> [&'static str; 5] {
     [
         SHOW,
         if mode == UiMode::Full {
@@ -137,6 +147,7 @@ pub fn menu_titles(mode: UiMode) -> [&'static str; 4] {
             "全量"
         },
         SETTINGS,
+        CLEAR_SHOTS,
         QUIT,
     ]
 }
@@ -451,12 +462,13 @@ mod mac {
         sel!(iceTrayClicked:)
     }
 
-    /// 菜单四项的选择器，与 `menu_titles` 一一对应。第一项与左键立**同一个**意图。
-    fn menu_sels() -> [Sel; 4] {
+    /// 菜单五项的选择器，与 `menu_titles` 一一对应。第一项与左键立**同一个**意图。
+    fn menu_sels() -> [Sel; 5] {
         [
             sel!(iceTrayShowWindow:),
             sel!(iceTrayToggleMode:),
             sel!(iceTraySettings:),
+            sel!(iceTrayClearShots:),
             sel!(iceTrayQuit:),
         ]
     }
@@ -497,6 +509,11 @@ mod mac {
                 mark(Outcome::Settings);
             }
 
+            #[unsafe(method(iceTrayClearShots:))]
+            fn clear_shots(&self, _sender: &AnyObject) {
+                mark(Outcome::ClearShots);
+            }
+
             #[unsafe(method(iceTrayQuit:))]
             fn quit(&self, _sender: &AnyObject) {
                 mark(Outcome::Quit);
@@ -534,8 +551,8 @@ mod mac {
         image: Retained<NSImage>,
         target: Retained<TrayTarget>,
         menu: Retained<NSMenu>,
-        items: [Retained<NSMenuItem>; 4],
-        titles: [Retained<NSString>; 4],
+        items: [Retained<NSMenuItem>; 5],
+        titles: [Retained<NSString>; 5],
         tier: Tier,
     }
 
@@ -746,7 +763,7 @@ mod mac {
         // 关掉自动使能：它的判定要求条目有 `validateMenuItem:` 一类的宿主，而我们那个 target
         // 只有一个写意图的方法——开着它，四项可能整排被置灰。
         menu.setAutoenablesItems(false);
-        let mut items: Vec<Retained<NSMenuItem>> = Vec::with_capacity(4);
+        let mut items: Vec<Retained<NSMenuItem>> = Vec::with_capacity(5);
         for (index, action) in menu_sels().into_iter().enumerate() {
             // SAFETY: `initWithTitle:action:keyEquivalent:` 是 `NSMenuItem` 的指定初始化器，
             // 首参要求刚 alloc、尚未初始化的内存（与上面 `make_image` 同一条纪律）。
@@ -885,11 +902,11 @@ mod tests {
     fn the_second_menu_item_names_the_other_mode() {
         assert_eq!(
             menu_titles(UiMode::Full),
-            ["显示窗口", "精简", "设置", "退出程序"]
+            ["显示窗口", "精简", "设置", "清除历史截图", "退出程序"]
         );
         assert_eq!(
             menu_titles(UiMode::Compact),
-            ["显示窗口", "全量", "设置", "退出程序"]
+            ["显示窗口", "全量", "设置", "清除历史截图", "退出程序"]
         );
         for title in menu_titles(UiMode::Full)
             .iter()
@@ -899,8 +916,9 @@ mod tests {
         }
     }
 
-    /// 四个意图走同一个槽：取走即清零、连点只兑现一次；且 `Quit` 必须映射到**既有**的
-    /// `Action::Quit`——托盘不许是第二条退出实现（TC-5.4-b）。
+    /// 五个意图走同一个槽：取走即清零、连点只兑现一次；且 `Quit` 必须映射到**既有**的
+    /// `Action::Quit`——托盘不许是第二条退出实现（TC-5.4-b）。`ClearShots` 同理映射到
+    /// `Action::ClearShots`，兑现的是设置页那颗**已有**的清除链，不是第二条删除。
     ///
     /// 几件事写在一个测试里是刻意的：槽是进程级的，拆成多个 `#[test]` 会被并行跑到，
     /// 彼此踩对方的残留。
@@ -915,6 +933,7 @@ mod tests {
             Outcome::Reveal,
             Outcome::ToggleMode,
             Outcome::Settings,
+            Outcome::ClearShots,
             Outcome::Quit,
         ] {
             mark(outcome);
@@ -925,6 +944,7 @@ mod tests {
         assert_eq!(action_of(Outcome::Reveal), Action::RevealWindow);
         assert_eq!(action_of(Outcome::ToggleMode), Action::ToggleMode);
         assert_eq!(action_of(Outcome::Settings), Action::OpenSettings);
+        assert_eq!(action_of(Outcome::ClearShots), Action::ClearShots);
         assert_eq!(action_of(Outcome::Quit), Action::Quit);
     }
 

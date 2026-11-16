@@ -30,6 +30,10 @@ pub enum Action {
     /// 托盘菜单「设置」：打开设置页（窗口收着时先唤回）。
     /// 同样没有键盘入口，兑现复用 `app.rs::open_settings`，不新增第二条开设置的路。
     OpenSettings,
+    /// 托盘菜单「清除历史截图」：没有键盘入口，只由 `system::tray` 转交。
+    /// 兑现**复用**设置页那颗「清除所有截图」已有的 `Confirm::ClearShots` 二次确认与
+    /// `clear_shots` 删除链——不新增第二条删除实现、不新增第二种弹框。
+    ClearShots,
     Quit,
     /// Shift+Enter：不提交，换行由 `TextEdit` 自己插入
     Newline,

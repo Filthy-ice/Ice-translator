@@ -316,6 +316,15 @@ impl IceApp {
                 self.reveal(ctx);
                 effects.open_settings = true;
             }
+            // 托盘菜单「清除历史截图」（用户 2026-11-13 原话）。这条确认框只有全量窗会画
+            // （`confirm` 挂在 `views::show`，精简窗只画 toasts），所以借"打开设置页"把窗落到
+            // 能画它的宿主，再把设置页那颗「清除所有截图」**已有**的 `Confirm::ClearShots` 二次
+            // 确认原样弹上来——不新增第二条删除实现、不新增第二种弹框。确认→ `clear_shots` 效果。
+            Action::ClearShots => {
+                self.reveal(ctx);
+                effects.open_settings = true;
+                self.state.confirm = Some(state::Confirm::ClearShots);
+            }
             Action::Quit => self.quit(ctx),
             // 换行由 `TextEdit` 自己插入（它的 `return_key` 就是 Shift+Enter），应用不参与
             Action::Newline => {}
@@ -5190,6 +5199,32 @@ mod tests {
         app.apply_pin_intent(2, crate::system::pin::PinIntent::ToggleBand, &mut effects);
         assert!(!app.state.pins[1].band_open, "第二张的带子没收起来");
         assert!(app.state.pins[0].band_open, "第一张被牵连了");
+    }
+
+    /// 托盘「清除历史截图」那一项落到的动作：当帧**不自己删、不自己弹新框**，而是唤回 +
+    /// 借"打开设置页"把确认框落到能画它的全量窗宿主上 + 把设置页那颗**已有**的
+    /// `Confirm::ClearShots` 二次确认弹上来。真删要等用户点确认走 `clear_shots`，没点之前一张都不许动。
+    #[test]
+    fn tray_clear_shots_arms_the_existing_confirm_instead_of_deleting_directly() {
+        let dir = tempfile::tempdir().unwrap();
+        let shots = dir.path().join("shots");
+        std::fs::create_dir_all(&shots).unwrap();
+        std::fs::File::create(shots.join("a.png")).unwrap();
+
+        let mut app = app(dir.path(), plain_state());
+        let mut effects = Effects::default();
+        app.run(Action::ClearShots, &ctx(), &mut effects);
+
+        assert_eq!(
+            app.state.confirm,
+            Some(state::Confirm::ClearShots),
+            "托盘清除要先弹那个已有的二次确认"
+        );
+        assert!(
+            effects.open_settings,
+            "确认框只在全量窗画，得借开设置页把它落到宿主上"
+        );
+        assert!(shots.join("a.png").exists(), "没点确认之前一张都不许删");
     }
 
     /// 「清除所有截图」删的是真的文件，报的是**真删掉的张数**，而且**不动文本历史**
