@@ -1619,19 +1619,21 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
             painter.rect_stroke(cell(0.0, 1.0), 0.0, stroke, egui::StrokeKind::Inside);
         }
         BarIcon::Eraser => {
-            // 橡皮线稿：斜置的四边形 + 一道分隔（擦头与握身）
+            // 橡皮线稿：45° 斜放的长方块（与铅笔同朝向），靠尖一端一道分隔，
+            // 擦头那格填实——和马赛克的实心格同一种读法。菱形+斜线读不出橡皮。
             let p = |fx: f32, fy: f32| {
                 egui::pos2(
                     rect.min.x + rect.width() * fx,
                     rect.min.y + rect.height() * fy,
                 )
             };
-            let (a, b, c, d) = (p(0.20, 0.60), p(0.50, 0.30), p(0.80, 0.50), p(0.50, 0.80));
-            painter.line_segment([a, b], stroke);
+            let (a, b, c, d) = (p(0.14, 0.62), p(0.38, 0.86), p(0.86, 0.38), p(0.62, 0.14));
+            let (e, f) = (p(0.31, 0.45), p(0.55, 0.69));
+            painter.add(egui::Shape::convex_polygon(vec![a, b, f, e], ink, stroke));
             painter.line_segment([b, c], stroke);
             painter.line_segment([c, d], stroke);
             painter.line_segment([d, a], stroke);
-            painter.line_segment([p(0.35, 0.70), p(0.65, 0.40)], stroke);
+            painter.line_segment([e, f], stroke);
         }
         BarIcon::Check => {
             // 两段线，短的那段从左边起头——和 某截图工具 那颗对勾同一个读法
