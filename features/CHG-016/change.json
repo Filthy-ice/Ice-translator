@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "id": "CHG-016",
+  "title": "标注对象模型：可选中二次编辑、全控制点、跨重启持久化（对齐 某截图工具，取代 CHG-014/015 像素层）",
+  "version": "v0.1",
+  "status": "SPEC_REVIEW",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-001",
+      "blocking": true,
+      "question": "橡皮语义：对象模型整对象删（某截图工具 eraserReEditing 对齐）vs 用户 2026-11-17 旧裁定的部分像素擦（擦半条框另半条还在）？两者对单个对象互斥。",
+      "resolution": null,
+      "source": "本包 spec.md Q-001 表行＋事实 14（annotate.rs:3-5 头注引用户原话『这样橡皮不就能部分擦除了？』、发现-标注行为.md:100『用户已裁定按像素擦』）＋事实 3（某截图工具 对象模型）。推荐整对象删（对象模型物理边界），但部分擦是用户点名能力，须用户明确裁定，不静默改判（『我说了没问题的不要动』）。待用户批准时定。"
+    },
+    {
+      "id": "Q-002",
+      "blocking": true,
+      "question": "侧车新落盘面：跨重启可编辑要落『未烧录底图 PNG＋对象列表 JSON』（shots/ 子目录），接受这个新落盘文件类型吗？",
+      "resolution": null,
+      "source": "本包 spec.md Q-002 表行＋REQ-006＋事实 4（某截图工具 SQLite markText/PinImageItem 持久化、restore SQL、addItemByData）＋事实 10/11（list 不过滤、清理须同步）。用户问『某截图工具 可以吗』已查证 某截图工具 确实持久化⇒对齐即落盘。推荐做，但是新落盘面须用户按隐私口径批；否决则退回对象只活内存、重启后烧录图新建（REQ-009 边界）。待用户批准时定。"
+    },
+    {
+      "id": "Q-003",
+      "blocking": false,
+      "question": "要不要重做（Cmd+Shift+Z / Ctrl+Y）？",
+      "resolution": "默认做。对象快照让重做几乎免费（再维护一份 redo 栈），某截图工具 有 EditItemUnredo。CHG-015 Q-001 当时不做是因像素前像栈贵，对象模型下这理由消失。",
+      "source": "本包 spec.md Q-003 表行＋REQ-003＋事实 3（EditItemUnredo）；技术选型在授权范围内自行处理，用户要否可在批准时改。"
+    },
+    {
+      "id": "Q-004",
+      "blocking": false,
+      "question": "控制点显示档位？",
+      "resolution": "默认『选中即常显』一档（最简，对齐用户『全控制点』）。不做 某截图工具 controlPointDisplay 三档（不显示/常显/悬停）配置开关。",
+      "source": "本包 spec.md Q-004 表行＋REQ-004＋事实 3（controlPointDisplay 三档）；用户 2026-11-17 裁定『全控制点（对齐 某截图工具）』。"
+    },
+    {
+      "id": "Q-005",
+      "blocking": false,
+      "question": "序号删除后自动重排（某截图工具 autoUpdateSerialItemWhenDelteSerialItem）？",
+      "resolution": "默认本包不做。对象模型下做得了，但属 CHG-014 scope 外小步，保持八件工具行为与 CHG-014 一致，要了另立小步。",
+      "source": "本包 spec.md Q-005 表行＋非目标＋发现-标注行为.md:114（序号删除重排列为 scope 外小步）。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-17T11:22:35+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-11-17T11:32:21+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-11-17T11:32:21+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    }
+  ],
+  "approval": null,
+  "plan_hash": null
+}
