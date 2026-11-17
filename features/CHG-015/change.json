@@ -89,6 +89,16 @@
       "at": "2026-11-17T07:52:56+00:00",
       "action": "transition",
       "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-11-17T08:53:00+00:00",
+      "action": "task-done",
+      "detail": "T-001"
+    },
+    {
+      "at": "2026-11-17T08:53:00+00:00",
+      "action": "task-done",
+      "detail": "T-002"
     }
   ],
   "approval": {

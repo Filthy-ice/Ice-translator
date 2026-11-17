@@ -1057,6 +1057,32 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             }
             wake_root(&root);
         }
+        // 撤销（CHG-015 REQ-001）：command+z / ctrl+z 撤最近一笔标注。只动层 + 叫醒自己，
+        // **不推意图**——撤销不是遮罩的收/发，主窗不该被打扰。文字输入开着时让给输入框
+        // （TextEdit 自己吃 cmd+z）；repeat 滤掉长按连发，一下只撤一笔。
+        let undo_pressed = child.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        key: egui::Key::Z,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } if (modifiers.command || modifiers.ctrl)
+                        && !modifiers.alt
+                        && !modifiers.shift
+                )
+            })
+        });
+        if undo_pressed && ts.text_input.is_none() {
+            if let Ok(mut l) = layer.lock() {
+                if l.undo() {
+                    child.request_repaint();
+                }
+            }
+        }
 
         // 文字输入框：**先画再派发手势**——「按下落在框外 = 确认这条输入」要先知道框在哪。
         // 键盘三键在上面已经先处理过（回车落字、esc 收输入），这里 TextEdit 只吃字符。
@@ -1170,6 +1196,12 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                             ts.anchor = clamp_pt(here);
                             ts.last = ts.anchor;
                             ts.dragging = true;
+                            // 铅笔/橡皮按下 = 起一段拖拽：此后各段前像累积，松手整段算一条撤销
+                            if matches!(ts.tool, Some(Tool::Pencil | Tool::Eraser)) {
+                                if let Ok(mut l) = layer.lock() {
+                                    l.begin_stroke();
+                                }
+                            }
                         }
                     }
                 }
@@ -1241,6 +1273,14 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             }
             if ts.dragging {
                 child.request_repaint();
+            }
+        }
+        // 拖拽收口（CHG-015 REQ-001）：不在拖拽态就把铅笔/橡皮累积的各段前像合成一条入栈。
+        // 放在手势派发**之后**——松手那一帧的最后一笔已经落完，收口才罩得住整段；
+        // esc 退工具那一路把 dragging 置回 false 也从这里收口。pending 为空时是空操作。
+        if !ts.dragging {
+            if let Ok(mut l) = layer.lock() {
+                l.end_stroke();
             }
         }
         if changed {
@@ -1383,9 +1423,13 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                                     egui::Color32::from_rgba_premultiplied(66, 66, 72, 245);
                                 dark.widgets.hovered.weak_bg_fill =
                                     egui::Color32::from_rgba_premultiplied(66, 66, 72, 245);
-                                // 暗色只套在这两颗下拉上（scope 隔离），不波及后面的尺寸读数。
+                                // 暗色只套在这两颗下拉上：**必须走 `visuals_mut`**（clone-on-write，
+                                // 只改这一个 Ui 及其子）。`ui.set_visuals` 看着像 Ui 的方法，实则
+                                // Ui Deref 到 Context，调的是全局 `Context::set_visuals`——scope 拦不住，
+                                // 会把整扇上下文的文字墨色改成浅灰，亮色主界面随后整排按钮字发白
+                                // （D-46，真机像素量到 238 对 247 的底）。
                                 ui.scope(|ui| {
-                                    ui.set_visuals(dark);
+                                    *ui.visuals_mut() = dark;
                                     egui::ComboBox::from_id_salt("ice-selection.thickness")
                                         .selected_text(THICKNESS_NAMES[ts.thickness_idx])
                                         .width(OPT_W)
@@ -2386,6 +2430,53 @@ mod tests {
         assert_eq!(load_tool_state(&map, 1, 10).tool, Some(Tool::Rect));
         assert_eq!(load_tool_state(&map, 1, 11).tool, None, "换轮读空白");
         assert_eq!(load_tool_state(&map, 2, 10).tool, None, "换屏不借");
+    }
+
+    /// **D-46 锁死：下拉那层暗色 visuals 只许套在 scope 里，不许漏到全局。**
+    /// `ui.set_visuals` 看着是 Ui 的方法，实则 Ui Deref 到 Context，调的是全局
+    /// `Context::set_visuals`——scope 拦不住，亮色主界面随后整排按钮字发白（真机像素
+    /// 量到字 238 对底 247）。这里走 `visuals_mut`（clone-on-write）真隔离：scope 内读到
+    /// 暗墨、scope 外与全局样式都保持原墨。
+    #[test]
+    fn the_dropdown_dark_visuals_stay_inside_their_scope() {
+        let ctx = egui::Context::default();
+        ctx.set_theme(egui::Theme::Light);
+        let before = ctx
+            .style_of(egui::Theme::Light)
+            .visuals
+            .widgets
+            .inactive
+            .fg_stroke
+            .color;
+        let mut inside = None;
+        let mut after = None;
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.scope(|ui| {
+                let mut dark = ui.visuals().clone();
+                dark.widgets.inactive.fg_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_gray(235));
+                *ui.visuals_mut() = dark;
+                inside = Some(ui.visuals().widgets.inactive.fg_stroke.color);
+            });
+            after = Some(ui.visuals().widgets.inactive.fg_stroke.color);
+        });
+        output.drop_without_applying_deltas();
+        assert_eq!(
+            inside,
+            Some(egui::Color32::from_gray(235)),
+            "scope 内那两颗下拉要读到暗底浅字"
+        );
+        assert_eq!(after, Some(before), "scope 外不许被带偏");
+        assert_eq!(
+            ctx.style_of(egui::Theme::Light)
+                .visuals
+                .widgets
+                .inactive
+                .fg_stroke
+                .color,
+            before,
+            "全局亮色样式的文字墨色不许被 scope 改写（D-46 的真病因）"
+        );
     }
 
     /// **形状核查：粗细 / 色板落层与预览同源读运行态档位**（REQ-003）。

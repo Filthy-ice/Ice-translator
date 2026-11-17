@@ -41,10 +41,48 @@ pub const PALETTE: [[u8; 4]; 6] = [
 /// 色板六色的下拉文案，与 [`PALETTE`] 同序、红在最前（REQ-003）。
 pub const PALETTE_NAMES: [&str; 6] = ["红", "黄", "蓝", "绿", "白", "黑"];
 
+/// 撤销前像的一块**整数像素**矩形（层内坐标：左上角 + 宽高）。annotate 不碰 egui，
+/// 不用 egui::Rect；落层包围盒夹到层内、按整像素抄前像，撤销时逐像素贴回。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PxRect {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
+
+impl PxRect {
+    fn bytes(self) -> usize {
+        self.w as usize * self.h as usize * 4
+    }
+}
+
+/// 一笔撤销的前像集合（REQ-001）。单击类工具一个 part；铅笔/橡皮一次拖拽累积多个 part
+/// （每段落像素前先抄该段包围盒的前像），松手时整段算一条入栈。
+pub struct UndoEntry {
+    pub parts: Vec<(PxRect, RgbaImage)>,
+}
+
+impl UndoEntry {
+    fn bytes(&self) -> usize {
+        self.parts.iter().map(|(r, _)| r.bytes()).sum()
+    }
+}
+
+/// 撤销栈双上限（REQ-001 / Q-003）：条数封 30、总字节封 64MB，超限从栈首丢最旧。
+/// 一块 4K 整层约 33MB，整层快照 30 步就是 1GB 扛不住——所以只抄脏矩形前像，不快照整层。
+pub const MAX_UNDO_ENTRIES: usize = 30;
+pub const MAX_UNDO_BYTES: usize = 64 * 1024 * 1024;
+
 /// 一层标注。`revision` 每落一笔加一：显示侧拿它判"要不要重传纹理"（照定格纹理那套缓存读法）。
 pub struct Layer {
     pub image: RgbaImage,
     pub revision: u64,
+    /// 已入栈的撤销条（栈顶 = 最近一笔）。
+    undo_stack: Vec<UndoEntry>,
+    /// 正在拖的那一段（铅笔/橡皮）：松手前累积各段前像，松手整段算一条。`None` = 不在拖拽态，
+    /// 此时每个落层入口自成一条入栈。
+    pending: Option<Vec<(PxRect, RgbaImage)>>,
 }
 
 impl Layer {
@@ -52,6 +90,8 @@ impl Layer {
         Self {
             image: RgbaImage::new(width, height),
             revision: 0,
+            undo_stack: Vec::new(),
+            pending: None,
         }
     }
 
@@ -59,55 +99,162 @@ impl Layer {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// 开始一段拖拽（铅笔/橡皮按下时调）：此后各段落层的前像累积进 pending，不各自入栈。
+    pub fn begin_stroke(&mut self) {
+        self.pending = Some(Vec::new());
+    }
+
+    /// 结束一段拖拽（松手时调）：把累积的各段前像合成一条入栈。空段不入栈、不动 revision。
+    pub fn end_stroke(&mut self) {
+        if let Some(parts) = self.pending.take() {
+            if !parts.is_empty() {
+                self.push_entry(UndoEntry { parts });
+            }
+        }
+    }
+
+    /// 撤销最近一笔：弹栈顶，把各 part 前像逐像素贴回，bump revision。空栈返回 false 不动层。
+    /// **倒序贴回**：各段前像抄的是"落这一段之前"的层，后段的前像里带着前段的墨；
+    /// 正序贴会把前段的墨在重叠区贴回来，倒序让最早那段的空白前像最后盖上去才是真还原。
+    pub fn undo(&mut self) -> bool {
+        let Some(entry) = self.undo_stack.pop() else {
+            return false;
+        };
+        for (rect, before) in entry.parts.iter().rev() {
+            for y in 0..rect.h {
+                for x in 0..rect.w {
+                    self.image
+                        .put_pixel(rect.x + x, rect.y + y, *before.get_pixel(x, y));
+                }
+            }
+        }
+        self.touch();
+        true
+    }
+
+    /// 抄一块包围盒的前像（f32 边界 → 夹到层内的整像素矩形）。落像素**之前**调。
+    /// 零宽/零高（包围盒完全在层外）返回一个空 part，撤销时贴回零像素、无副作用。
+    fn before_image(&self, bounds: (f32, f32, f32, f32)) -> (PxRect, RgbaImage) {
+        let (w, h) = (self.image.width(), self.image.height());
+        let x0 = (bounds.0.floor().max(0.0) as u32).min(w);
+        let y0 = (bounds.1.floor().max(0.0) as u32).min(h);
+        let x1 = (bounds.2.ceil().max(0.0) as u32).min(w);
+        let y1 = (bounds.3.ceil().max(0.0) as u32).min(h);
+        let (pw, ph) = (x1.saturating_sub(x0), y1.saturating_sub(y0));
+        let rect = PxRect {
+            x: x0,
+            y: y0,
+            w: pw,
+            h: ph,
+        };
+        let img = if pw == 0 || ph == 0 {
+            RgbaImage::new(0, 0)
+        } else {
+            image::imageops::crop_imm(&self.image, x0, y0, pw, ph).to_image()
+        };
+        (rect, img)
+    }
+
+    /// 落一笔的前像入栈：拖拽态累积进 pending，否则自成一条。
+    fn record(&mut self, part: (PxRect, RgbaImage)) {
+        if part.0.w == 0 || part.0.h == 0 {
+            return;
+        }
+        match self.pending.as_mut() {
+            Some(parts) => parts.push(part),
+            None => self.push_entry(UndoEntry { parts: vec![part] }),
+        }
+    }
+
+    /// 入栈一条，双上限从栈首丢最旧直到放得下（单条本身就超限时仍入栈——那是唯一能撤的那笔）。
+    fn push_entry(&mut self, entry: UndoEntry) {
+        let new_bytes = entry.bytes();
+        let mut total: usize = self.undo_stack.iter().map(UndoEntry::bytes).sum();
+        while !self.undo_stack.is_empty()
+            && (self.undo_stack.len() >= MAX_UNDO_ENTRIES || total + new_bytes > MAX_UNDO_BYTES)
+        {
+            let old = self.undo_stack.remove(0);
+            total -= old.bytes();
+        }
+        self.undo_stack.push(entry);
+    }
+
+    /// 落层统一包装：先抄包围盒前像，再落像素，再入栈、bump revision。
+    /// 八件工具里"无早退、无返回值"的那几件走它，快照逻辑只此一份（REQ-001）。
+    fn stroke(&mut self, bounds: (f32, f32, f32, f32), paint: impl FnOnce(&mut RgbaImage)) {
+        let part = self.before_image(bounds);
+        paint(&mut self.image);
+        self.record(part);
+        self.touch();
+    }
+
     /// 矩形框：a、b 是对角两点，四条边各落一条线。
     pub fn rect_stroke(&mut self, a: (f32, f32), b: (f32, f32), width: f32, color: [u8; 4]) {
         let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
         let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
-        for (p, q) in [
-            ((x0, y0), (x1, y0)),
-            ((x1, y0), (x1, y1)),
-            ((x1, y1), (x0, y1)),
-            ((x0, y1), (x0, y0)),
-        ] {
-            paint_segment(&mut self.image, p, q, width / 2.0, color);
-        }
-        self.touch();
+        let half = width / 2.0;
+        self.stroke(segment_bounds(a, b, half), move |img| {
+            for (p, q) in [
+                ((x0, y0), (x1, y0)),
+                ((x1, y0), (x1, y1)),
+                ((x1, y1), (x0, y1)),
+                ((x0, y1), (x0, y0)),
+            ] {
+                paint_segment(img, p, q, half, color);
+            }
+        });
     }
 
     pub fn line(&mut self, a: (f32, f32), b: (f32, f32), width: f32, color: [u8; 4]) {
-        paint_segment(&mut self.image, a, b, width / 2.0, color);
-        self.touch();
+        let half = width / 2.0;
+        self.stroke(segment_bounds(a, b, half), move |img| {
+            paint_segment(img, a, b, half, color);
+        });
     }
 
     /// 带箭头的线：杆 + 两条头斜线。头的几何单独公开（[`arrow_head`]），
     /// 预览矢量与落层读同一份，拖的时候看到的箭头就是松手落下去的那个。
     pub fn arrow(&mut self, from: (f32, f32), to: (f32, f32), width: f32, color: [u8; 4]) {
-        paint_segment(&mut self.image, from, to, width / 2.0, color);
+        let half = width / 2.0;
         let [h1, h2] = arrow_head(from, to, width);
-        paint_segment(&mut self.image, to, h1, width / 2.0, color);
-        paint_segment(&mut self.image, to, h2, width / 2.0, color);
-        self.touch();
+        // 包围盒要罩住杆与两条头斜线：取 from/to/h1/h2 四点的极值再外扩半宽。
+        let bounds = (
+            from.0.min(to.0).min(h1.0).min(h2.0) - half - 1.0,
+            from.1.min(to.1).min(h1.1).min(h2.1) - half - 1.0,
+            from.0.max(to.0).max(h1.0).max(h2.0) + half + 1.0,
+            from.1.max(to.1).max(h1.1).max(h2.1) + half + 1.0,
+        );
+        self.stroke(bounds, move |img| {
+            paint_segment(img, from, to, half, color);
+            paint_segment(img, to, h1, half, color);
+            paint_segment(img, to, h2, half, color);
+        });
     }
 
     /// 铅笔：把拖过的点串成折线逐段落像素。
     pub fn pencil(&mut self, points: &[(f32, f32)], width: f32, color: [u8; 4]) {
-        for pair in points.windows(2) {
-            paint_segment(&mut self.image, pair[0], pair[1], width / 2.0, color);
-        }
-        if points.len() == 1 {
-            paint_segment(&mut self.image, points[0], points[0], width / 2.0, color);
-        }
-        self.touch();
+        let half = width / 2.0;
+        let bounds = points_bounds(points, half);
+        let pts = points.to_vec();
+        self.stroke(bounds, move |img| {
+            for pair in pts.windows(2) {
+                paint_segment(img, pair[0], pair[1], half, color);
+            }
+            if pts.len() == 1 {
+                paint_segment(img, pts[0], pts[0], half, color);
+            }
+        });
     }
 
     /// 橡皮：destination-out 笔刷——只把已有的 alpha 往下减，不往上盖任何颜色。
     /// 擦过的地方变回透明，底下的冻结帧原样露出来；没擦到的笔画一个像素都不动。
     pub fn erase(&mut self, a: (f32, f32), b: (f32, f32), radius: f32) {
-        for_each_covered_pixel(&mut self.image, a, b, radius, |img, x, y, cov| {
-            let px = img.get_pixel_mut(x as u32, y as u32);
-            px[3] = ((px[3] as f32) * (1.0 - cov)).round() as u8;
+        self.stroke(segment_bounds(a, b, radius), move |img| {
+            for_each_covered_pixel(img, a, b, radius, |img, x, y, cov| {
+                let px = img.get_pixel_mut(x as u32, y as u32);
+                px[3] = ((px[3] as f32) * (1.0 - cov)).round() as u8;
+            });
         });
-        self.touch();
     }
 
     /// 序号标：实心圆 + 居中白数字（REQ-002）。数字走本机黑体光栅——与译文回填
@@ -120,7 +267,6 @@ impl Layer {
         color: [u8; 4],
         metrics: &FileMetrics,
     ) {
-        paint_segment(&mut self.image, center, center, radius, color);
         let font_size = radius * 1.2;
         let line_h = metrics.line_height(font_size);
         let area = PixelRect::new(
@@ -129,16 +275,26 @@ impl Layer {
             radius * 2.0,
             line_h,
         );
-        stamp_line(
-            &mut self.image,
-            area,
-            &number.to_string(),
-            font_size,
-            Align::Center,
-            [255, 255, 255, 255],
-            metrics,
+        // 包围盒罩住实心圆与居中数字两块：圆 center±radius、数字 area，取并集再外扩一格。
+        let bounds = (
+            (center.0 - radius - 1.0).min(area.x),
+            (center.1 - radius - 1.0).min(area.y),
+            (center.0 + radius + 1.0).max(area.right()),
+            (center.1 + radius + 1.0).max(area.bottom()),
         );
-        self.touch();
+        let label = number.to_string();
+        self.stroke(bounds, move |img| {
+            paint_segment(img, center, center, radius, color);
+            stamp_line(
+                img,
+                area,
+                &label,
+                font_size,
+                Align::Center,
+                [255, 255, 255, 255],
+                metrics,
+            );
+        });
     }
 
     /// 文字：落点起笔写一行（REQ-002）。空白不落、不 touch；返回缺字形数——
@@ -158,6 +314,12 @@ impl Layer {
         let line_h = metrics.line_height(font_size);
         let width = metrics.text_width(text, font_size);
         let area = PixelRect::new(at.0, at.1, width.max(1.0), line_h);
+        let part = self.before_image((
+            area.x - 1.0,
+            area.y - 1.0,
+            area.right() + 1.0,
+            area.bottom() + 1.0,
+        ));
         let missing = stamp_line(
             &mut self.image,
             area,
@@ -167,6 +329,7 @@ impl Layer {
             color,
             metrics,
         );
+        self.record(part);
         self.touch();
         missing
     }
@@ -181,6 +344,7 @@ impl Layer {
         if x1 <= x0 || y1 <= y0 {
             return;
         }
+        let part = self.before_image((x0 as f32, y0 as f32, x1 as f32, y1 as f32));
         let (bw, bh) = (background.width() as i64, background.height() as i64);
         let (lw, lh) = (self.image.width() as i64, self.image.height() as i64);
         let mut cy = y0;
@@ -219,6 +383,7 @@ impl Layer {
             }
             cy += block;
         }
+        self.record(part);
         self.touch();
     }
 }
@@ -354,6 +519,37 @@ fn dist_to_segment(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
     let dx = p.0 - (a.0 + ab.0 * t);
     let dy = p.1 - (a.1 + ab.1 * t);
     (dx * dx + dy * dy).sqrt()
+}
+
+/// 一条线段（半径 radius 的圆头笔刷）落像素的包围盒，与 [`for_each_covered_pixel`] 的
+/// 遍历范围同式（min−radius−1 .. max+radius+1），撤销前像照这块抄，一个像素不漏。
+fn segment_bounds(a: (f32, f32), b: (f32, f32), radius: f32) -> (f32, f32, f32, f32) {
+    (
+        a.0.min(b.0) - radius - 1.0,
+        a.1.min(b.1) - radius - 1.0,
+        a.0.max(b.0) + radius + 1.0,
+        a.1.max(b.1) + radius + 1.0,
+    )
+}
+
+/// 一串点（铅笔折线）的包围盒：各点极值外扩半宽 + 一格。空串给一个零盒（不落像素）。
+fn points_bounds(points: &[(f32, f32)], half: f32) -> (f32, f32, f32, f32) {
+    let Some(first) = points.first() else {
+        return (0.0, 0.0, 0.0, 0.0);
+    };
+    let (mut x0, mut y0, mut x1, mut y1) = (first.0, first.1, first.0, first.1);
+    for &(x, y) in points {
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x);
+        y1 = y1.max(y);
+    }
+    (
+        x0 - half - 1.0,
+        y0 - half - 1.0,
+        x1 + half + 1.0,
+        y1 + half + 1.0,
+    )
 }
 
 #[cfg(test)]
@@ -556,5 +752,93 @@ mod tests {
         assert_eq!(PALETTE_NAMES.len(), PALETTE.len());
         assert_eq!(THICKNESS_NAMES[1], "中", "默认中档");
         assert_eq!(PALETTE_NAMES[0], "红", "默认红");
+    }
+
+    /// REQ-001：撤销把整层恢复到落笔前**逐像素一致**（含 alpha=0 的还原），
+    /// revision 加一让显示侧重传纹理；再撤一次空栈返回 false、层一个像素不动。
+    #[test]
+    fn undo_restores_the_layer_pixel_exact() {
+        let mut l = Layer::new(64, 64);
+        let before = l.image.clone();
+        l.line((10.0, 32.0), (54.0, 32.0), 4.0, RED);
+        assert_ne!(l.image, before);
+        let rev = l.revision;
+        assert!(l.undo());
+        assert_eq!(l.image, before, "撤销必须逐像素回到落笔前");
+        assert_eq!(l.revision, rev + 1);
+        let after_undo = l.image.clone();
+        assert!(!l.undo(), "空栈撤销返回 false");
+        assert_eq!(l.image, after_undo);
+        assert_eq!(l.revision, rev + 1, "空栈撤销不许动 revision");
+    }
+
+    /// REQ-001：铅笔一次拖拽各段累积前像，松手整段算**一条**——一次撤销全段消失。
+    #[test]
+    fn one_drag_is_one_undo_entry() {
+        let mut l = Layer::new(64, 64);
+        let before = l.image.clone();
+        l.begin_stroke();
+        l.pencil(&[(5.0, 5.0), (20.0, 30.0)], 3.0, RED);
+        l.pencil(&[(20.0, 30.0), (40.0, 10.0)], 3.0, RED);
+        l.pencil(&[(40.0, 10.0), (55.0, 45.0)], 3.0, RED);
+        l.end_stroke();
+        assert!(l.undo(), "三段拖拽只入一条，一次就该撤掉");
+        assert_eq!(l.image, before, "整段拖拽一次撤销全回到空白");
+        assert!(!l.undo(), "不许剩第二条");
+    }
+
+    /// REQ-001：橡皮擦掉的 alpha 也能撤回来（前像抄的是擦之前的墨）。
+    #[test]
+    fn undo_restores_erased_ink() {
+        let mut l = Layer::new(64, 64);
+        l.line((10.0, 32.0), (54.0, 32.0), 4.0, RED);
+        let after_line = l.image.clone();
+        l.erase((10.0, 32.0), (30.0, 32.0), 6.0);
+        assert_eq!(alpha(&l, 20, 32), 0);
+        assert!(l.undo());
+        assert_eq!(l.image, after_line, "撤销把擦掉的那半墨原样还回来");
+        assert!(alpha(&l, 20, 32) > 200);
+    }
+
+    /// REQ-001 / Q-003：条数封 30——第 31 笔入栈时最旧那条被丢，只能撤 30 次。
+    #[test]
+    fn entry_cap_keeps_only_thirty() {
+        let mut l = Layer::new(64, 64);
+        for i in 0..31 {
+            let y = 2.0 + i as f32 * 2.0;
+            l.line((2.0, y), (60.0, y), 1.0, RED);
+        }
+        let mut n = 0;
+        while l.undo() {
+            n += 1;
+            assert!(n <= MAX_UNDO_ENTRIES, "撤销次数不许超过条数上限");
+        }
+        assert_eq!(n, MAX_UNDO_ENTRIES);
+        assert!(alpha(&l, 30, 2) > 0, "最旧那笔已被丢出栈，撤不掉、墨还在");
+    }
+
+    /// REQ-001 / Q-003：字节封 64MB——整层大快照入栈超限时从栈首丢最旧。
+    /// 2048² 一层 16MB，五条整层前像 80MB > 64MB，入第五条时丢最旧，栈里剩四条。
+    #[test]
+    fn byte_cap_drops_the_oldest_snapshots() {
+        let mut l = Layer::new(2048, 2048);
+        for _ in 0..5 {
+            l.rect_stroke((0.0, 0.0), (2047.0, 2047.0), 2.0, RED);
+        }
+        let mut n = 0;
+        while l.undo() {
+            n += 1;
+        }
+        assert_eq!(n, 4, "64MB 装得下四条 16MB，第五条挤掉最旧");
+    }
+
+    /// REQ-001：空拖拽（按下没画就松手）不入栈、不动 revision。
+    #[test]
+    fn an_empty_drag_pushes_nothing() {
+        let mut l = Layer::new(32, 32);
+        l.begin_stroke();
+        l.end_stroke();
+        assert_eq!(l.revision, 0);
+        assert!(!l.undo());
     }
 }
