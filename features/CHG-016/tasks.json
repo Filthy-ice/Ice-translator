@@ -3,10 +3,88 @@
   "tasks": [
     {
       "id": "T-001",
-      "title": "待填写：可独立完成和验证的任务",
-      "requirements": [
-        "REQ-001"
-      ],
+      "title": "annotate.rs 对象引擎骨架：AnnoObject 枚举（Rect/Arrow/Line/Pencil/Serial/Text/Mosaic，derive Clone/Debug/Serialize/Deserialize/PartialEq）+ ObjectList{objects,revision,undo,redo,next_serial} 唯一事实源 + render(objects,background,w,h) 按列表序复用既有光栅基元落像素；Layer 降级为 render 派生缓存（image+revision），删旧脏矩形前像那套（undo_stack/pending/before_image/stroke）；composite_into 不动；无头断言空列表全透明、单件 render==旧落像素、合成单一定义、坐标物理像素",
+      "requirements": ["REQ-001"],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-002",
+      "title": "八件工具落对象（selection.rs 遮罩工具态 + annotate.rs 建对象入口）：框/箭头/直线/马赛克松手建一件、铅笔整段一个 Pencil、序号单击 next_serial++（1 起）、文字回车/失焦落 Text（空白不落）、预览矢量不入栈；H1 硬断言七件落墨工具 render==旧引擎逐笔落像素逐像素相等（橡皮语义改判另测）；无头断言序号自增/文字空白不落/铅笔整段一件/无标注空列表逐像素不变",
+      "requirements": ["REQ-002"],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-003",
+      "title": "对象快照撤销/重做（annotate.rs + selection.rs/pin.rs 键接线）：突变前 objects.clone() 压 undo、undo/redo 弹栈恢复重渲染 bump revision、30 条上限（删 64MB 字节上限）、新突变清空 redo、一笔=一次突变（铅笔/橡皮整段松手压一次）、Cmd/Ctrl+Z 与 Shift+Z/Ctrl+Y、文字输入开着让位 TextEdit、栈跟 ObjectList 走遮罩→编辑器；无头断言一笔撤逐像素等于落笔前/铅笔三段一笔撤/undo-redo 往返/31 笔栈长 30/新突变清 redo/空栈不动/橡皮删多件一笔撤全回",
+      "requirements": ["REQ-003"],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-004",
+      "title": "命中＋选中＋全控制点几何（annotate.rs 纯函数）：hit(objects,pt) 顶优先按类型几何距离（线段半宽+容差/框边框带或内部/马赛克区内/序号圆内/文字包围盒）、control_points(obj)（Rect/Mosaic 四角、Arrow/Line 两端点、Pencil/Serial/Text 无改形点）、drag_control 改对应几何点、move_obj 整体平移；无头断言各类型命中/不命中/顶优先、控制点点数位置、拖角几何正确、平移同偏移",
+      "requirements": ["REQ-004"],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-005",
+      "title": "编辑器选中手势（pin.rs，与遮罩同一互斥 H2）：无工具时点对象选中出控制点（选中即常显一档 Q-004）、拖控制点改形、拖本体移动、点空白取消选中、空白拖→拖窗（既有 movable）、选中改粗细/色板即改该对象样式重渲染、Delete/Backspace 删选中压一条撤销、文字双击/回车再编辑改 text、序号改 number；无头断言删选中列表少一件/改样式 color-width 变/手势分派；真机 W-16.1 验手感（H2 打架即停止条件 5）",
+      "requirements": ["REQ-004"],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-006",
+      "title": "橡皮整对象删（annotate.rs，Q-001 用户已裁改判旧部分像素擦）：erase_objects(objects,a,b,radius) 笔刷段覆盖到的对象整件标记删（hit 几何距离判，半径=粗细档换值）、一次拖删多件松手合成一条撤销快照、删=从 objects 移除整件重渲染消失、不做部分像素擦；烧录图新建空层上只删新对象底图旧烧录像素不动；无头断言碰框整框删不碰不动/碰铅笔整条删/多件一笔撤全回/烧录旧像素逐像素不变",
+      "requirements": ["REQ-005"],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-007",
+      "title": "侧车持久化（anno_store.rs 新增 + capture.rs 清理同步 + ice-app Cargo.toml 加 serde_json.workspace）：shots/anno/<stem>.json（ObjectList+schema_version）+ <stem>.base.png（未烧录底图）原子替换、load 损坏/缺失/版本不符返回 None 优雅退回、list 补 is_file 过滤跳子目录（硬前置）、age_shots 删 PNG 补删侧车对、clear_all 补清 anno 子目录不留孤儿、确认/提交 save_sidecar、pin_from_history/F2 load_sidecar 有则建 Pin.anno 无则 REQ-009；无头断言 save-load 往返逐像素逐字段相等/损坏 json 不崩/list 只返回 PNG/老化删侧车/clear_all 清空/侧车不被 next_unpinned 选中",
+      "requirements": ["REQ-006"],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-008",
+      "title": "药丸「标注」按钮表（pin.rs + pill.rs）：PinAction::Annotate（label 标注/menu_label 标注这张图）、BAND_ACTIONS 3→4 末位追加既有三颗顺序不动、ACTIONS 4→5 插 Close 前、exactly_four_actions 改 exactly_five_actions 锁新长度注释写明改判来源（CHG-011 Q-006→CHG-015 REQ-003→CHG-016 REQ-007）、PinIntent::Annotate、pill_buttons 读表自动多一颗 width_for(4) 同源、编辑态药丸不 show、翻译禁用走 ui.add_enabled_ui；无头断言表长 4/5 顺序 Annotate 在 Close 前文案映射",
+      "requirements": ["REQ-007"],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-009",
+      "title": "编辑态抽公共＋提交（pin.rs Pin.editor + state.rs + selection.rs 抽共享工具条/手势）：点 Annotate editor=true 药丸收、窗尺寸不变工具条 Area 浮图片下缘内侧放不下翻上缘复用遮罩判据、八工具条+粗细色板+复制保存对勾+手势分派抽共享函数（遮罩逐项不变 V-002 兜底）、ToolState 按 pin id 存根 ctx data（D-46 各窗自持）、编辑器多 REQ-004 选中分支、esc 输入→工具/取消选中→提交关闭、提交烧录 base+render 重写 pin.path 那一个 PNG（composite_into 原子替换不新增历史文件）+同步 save_sidecar+editor=false、在飞识别/翻译 bump recognize_gen 作废 stage 回 Idle、编辑期翻译禁用、复制保存走 displayed；无头断言提交==烧录/不新增历史 PNG/作废丢旧回信/esc 三层/遮罩形状保持",
+      "requirements": ["REQ-008"],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-010",
+      "title": "显示优先级＋折叠＋烧录新建（pin.rs displayed/visual_of + state.rs）：displayed 优先级 anno(base+render 合成)>product>source>file 返回 Owned、visual_of 缓存键带 objects.revision（kind3）对象变即重建、合成走 composite_into 一份份出（revision 变才算一次）、成品回信落 product 时 anno 置 None（识别 source 不折叠）、点 Annotate 时 anno 为 None（F2 无侧车/成品折叠后/侧车损坏）取 displayed 像素 clone 为 base 建空 ObjectList 此后同 REQ-008、橡皮删除只作用新对象删不掉烧录旧标注文档写明边界；无头断言空列表不建 Anno/带对象 displayed==base+render==盘上烧录 PNG/revision 变缓存变/成品折叠/烧录图新建空层 displayed==烧录图+新笔/橡皮旧像素不变/copy_pin 与显示一致",
+      "requirements": ["REQ-009"],
+      "repo": "ice-translator",
+      "status": "todo",
+      "code_refs": []
+    },
+    {
+      "id": "T-011",
+      "title": "文档收口＋静态扫描＋全量回归：docs/06 加 W-16.1 真机走查与无头 TC、docs/07 登记对象模型改判（CHG-014 像素引擎/CHG-015 脏矩形撤销取代）+橡皮部分擦→整对象删（用户 2026-11-17 Q-001）+按钮数 3→4/4→5（CHG-011 Q-006 合并走查 revise）+侧车新增落盘面（Q-002）；cargo test --workspace 全绿（无标注贴图逐手势不变）、clippy -D warnings、cargo tree -p ice-app -e normal 零新增 crate 名（serde_json 既有 workspace）、./sdd scan 过、不新增 config 键（对象列表/编辑态/撤销栈运行态、侧车落盘文件非 config 键）、工具条抽公共后遮罩形状断言全保持、翻译链只动取图优先级+提交重写盘+generation 三处接缝；旧证据并入合并走查一次重录",
+      "requirements": ["REQ-010"],
       "repo": "ice-translator",
       "status": "todo",
       "code_refs": []
