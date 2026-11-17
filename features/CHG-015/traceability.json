@@ -135,7 +135,7 @@
       ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
-      "environment": "static",
+      "environment": "local",
       "required": true,
       "command": [
         "bash",

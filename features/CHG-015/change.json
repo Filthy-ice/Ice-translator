@@ -3,7 +3,7 @@
   "id": "CHG-015",
   "title": "标注撤销与钉住后再编辑",
   "version": "v0.1",
-  "status": "SPEC_REVIEW",
+  "status": "IMPLEMENTING",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -53,8 +53,56 @@
       "at": "2026-11-17T07:31:26+00:00",
       "action": "transition",
       "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-17T07:50:54+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "5ce8c5732953664427d6777d8ca283636af4cabbc6ead11fa9cc713826a26a8b",
+        "version": "v0.1",
+        "by": "你",
+        "reference": "你这一句的出处",
+        "at": "2026-11-17T07:50:54+00:00",
+        "snapshot": "approvals/v0.1-5ce8c5732953664427d6777d8ca283636af4cabbc6ead11fa9cc713826a26a8b.md",
+        "scope": "local-delivery",
+        "context_hash": "ecb3f62cdab25b032914b5c294e0ee2b671177ae6add2309090f2c7a6ef47cd6",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-17T07:52:13+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-015",
+        "version": "v0.1",
+        "spec_hash": "5ce8c5732953664427d6777d8ca283636af4cabbc6ead11fa9cc713826a26a8b"
+      }
+    },
+    {
+      "at": "2026-11-17T07:52:56+00:00",
+      "action": "seal-plan",
+      "detail": "7e40121b798d250fe7029c6f9d0a9d6e99c39a9964cccc9e94f82a8e194b7172"
+    },
+    {
+      "at": "2026-11-17T07:52:56+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
     }
   ],
-  "approval": null,
-  "plan_hash": null
+  "approval": {
+    "hash": "5ce8c5732953664427d6777d8ca283636af4cabbc6ead11fa9cc713826a26a8b",
+    "version": "v0.1",
+    "by": "你",
+    "reference": "你这一句的出处",
+    "at": "2026-11-17T07:50:54+00:00",
+    "snapshot": "approvals/v0.1-5ce8c5732953664427d6777d8ca283636af4cabbc6ead11fa9cc713826a26a8b.md",
+    "scope": "local-delivery",
+    "context_hash": "ecb3f62cdab25b032914b5c294e0ee2b671177ae6add2309090f2c7a6ef47cd6",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "7e40121b798d250fe7029c6f9d0a9d6e99c39a9964cccc9e94f82a8e194b7172"
 }
