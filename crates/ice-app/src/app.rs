@@ -1424,6 +1424,7 @@ impl IceApp {
                     windows: windows.clone(),
                     texture: freeze_texture(ctx, frame, capture.frozen_id),
                     frozen_id: capture.frozen_id,
+                    frame: frame.image.clone(),
                     cursor_here: match lit {
                         Some(d) => d == frame.display,
                         None => true,

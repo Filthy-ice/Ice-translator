@@ -7,11 +7,23 @@
 //! 本模块**不碰 egui**：全是纯像素函数，无头测试直接断言落层形状。坐标一律是物理像素
 //! （与冻结帧 `frame.image` 同尺寸），手势的点坐标由调用方拿真实 scale 换进来。
 
+use ice_core::document::PixelRect;
+use ice_vision::paint::{FileMetrics, draw_text};
+use ice_vision::typeset::{Align, BlockPlan, Metrics, PlanKind, PlannedLine};
 use image::RgbaImage;
 
 /// 粗细三档（点）：细 / 中 / 粗。落层时乘那块屏的真实 scale 换成物理像素。
 /// 默认中档；档位选择是运行态，不进 config（REQ-003）。
 pub const THICKNESS: [f32; 3] = [2.0, 4.0, 7.0];
+
+/// 序号标半径三档（点）：与粗细同一个档位读法（REQ-003）。默认中档。
+pub const BADGE_RADIUS: [f32; 3] = [10.0, 14.0, 18.0];
+
+/// 文字字号三档（点）。默认中档；与序号标共用粗细档位的运行态（REQ-003）。
+pub const TEXT_SIZE: [f32; 3] = [14.0, 20.0, 28.0];
+
+/// 马赛克块度（点）：默认一档（REQ-002）。落层乘 scale 换成物理像素块。
+pub const MOSAIC_BLOCK_PT: f32 = 12.0;
 
 /// 色板六色，**默认红在最前**（用户 2026-11-17 裁定"默认红+少量可选色"）。
 pub const PALETTE: [[u8; 4]; 6] = [
@@ -91,6 +103,146 @@ impl Layer {
         });
         self.touch();
     }
+
+    /// 序号标：实心圆 + 居中白数字（REQ-002）。数字走本机黑体光栅——与译文回填
+    /// 同一支字体、同一条缺字形纪律，不联网、不引新字体依赖（停止条件 6）。
+    pub fn number_badge(
+        &mut self,
+        center: (f32, f32),
+        radius: f32,
+        number: u32,
+        color: [u8; 4],
+        metrics: &FileMetrics,
+    ) {
+        paint_segment(&mut self.image, center, center, radius, color);
+        let font_size = radius * 1.2;
+        let line_h = metrics.line_height(font_size);
+        let area = PixelRect::new(
+            center.0 - radius,
+            center.1 - line_h / 2.0,
+            radius * 2.0,
+            line_h,
+        );
+        stamp_line(
+            &mut self.image,
+            area,
+            &number.to_string(),
+            font_size,
+            Align::Center,
+            [255, 255, 255, 255],
+            metrics,
+        );
+        self.touch();
+    }
+
+    /// 文字：落点起笔写一行（REQ-002）。空白不落、不 touch；返回缺字形数——
+    /// 只交数不交内容（NFR-3）。
+    pub fn text(
+        &mut self,
+        at: (f32, f32),
+        text: &str,
+        font_size: f32,
+        color: [u8; 4],
+        metrics: &FileMetrics,
+    ) -> usize {
+        let text = text.trim();
+        if text.is_empty() {
+            return 0;
+        }
+        let line_h = metrics.line_height(font_size);
+        let width = metrics.text_width(text, font_size);
+        let area = PixelRect::new(at.0, at.1, width.max(1.0), line_h);
+        let missing = stamp_line(
+            &mut self.image,
+            area,
+            text,
+            font_size,
+            Align::Left,
+            color,
+            metrics,
+        );
+        self.touch();
+        missing
+    }
+
+    /// 马赛克：拖区按块度盒式平均，从冻结背景取色、**不透明**写层（REQ-002）。
+    /// 块格对齐区域左上角，一块一色——出来是像素化不是模糊（某截图工具「马赛克」档同读法）。
+    /// 零宽/零高的区不落、不 touch。
+    pub fn mosaic(&mut self, background: &RgbaImage, a: (f32, f32), b: (f32, f32), block: u32) {
+        let block = block.max(1) as i64;
+        let (x0, x1) = (a.0.min(b.0).floor() as i64, a.0.max(b.0).ceil() as i64);
+        let (y0, y1) = (a.1.min(b.1).floor() as i64, a.1.max(b.1).ceil() as i64);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let (bw, bh) = (background.width() as i64, background.height() as i64);
+        let (lw, lh) = (self.image.width() as i64, self.image.height() as i64);
+        let mut cy = y0;
+        while cy < y1 {
+            let mut cx = x0;
+            while cx < x1 {
+                // 采样范围 = 块格 ∩ 拖区 ∩ 背景；边缘块按实际覆盖取平均
+                let (sx0, sy0) = (cx.max(0), cy.max(0));
+                let (sx1, sy1) = ((cx + block).min(x1).min(bw), (cy + block).min(y1).min(bh));
+                if sx1 > sx0 && sy1 > sy0 {
+                    let mut sum = [0u64; 3];
+                    let mut n = 0u64;
+                    for y in sy0..sy1 {
+                        for x in sx0..sx1 {
+                            let p = background.get_pixel(x as u32, y as u32);
+                            for c in 0..3 {
+                                sum[c] += p[c] as u64;
+                            }
+                            n += 1;
+                        }
+                    }
+                    let avg = image::Rgba([
+                        (sum[0] / n) as u8,
+                        (sum[1] / n) as u8,
+                        (sum[2] / n) as u8,
+                        255,
+                    ]);
+                    let (dx1, dy1) = ((cx + block).min(x1).min(lw), (cy + block).min(y1).min(lh));
+                    for y in sy0..dy1 {
+                        for x in sx0..dx1 {
+                            self.image.put_pixel(x as u32, y as u32, avg);
+                        }
+                    }
+                }
+                cx += block;
+            }
+            cy += block;
+        }
+        self.touch();
+    }
+}
+
+/// 单行文字落层：序号标的数字与文字工具共用这一条（同一支字体、同一条缺字形纪律）。
+/// 计划只有一行，对齐与字色由调用方定；绘制走 ice-vision 现成的光栅，本模块不另起一套。
+fn stamp_line(
+    img: &mut RgbaImage,
+    area: PixelRect,
+    text: &str,
+    font_size: f32,
+    align: Align,
+    color: [u8; 4],
+    metrics: &FileMetrics,
+) -> usize {
+    let width = metrics.text_width(text, font_size);
+    let plan = BlockPlan {
+        kind: PlanKind::InPlace,
+        font_size,
+        lines: vec![PlannedLine {
+            text: text.to_string(),
+            width,
+        }],
+        align,
+        degraded: false,
+        text_color: image::Rgba(color),
+        plate: None,
+        area,
+    };
+    draw_text(img, &plan, metrics)
 }
 
 /// 箭头两条头斜线的落点（相对尖端 to）。杆方向的反向偏转 ±30°，头长随线宽走、
@@ -282,6 +434,82 @@ mod tests {
     fn erase_on_empty_layer_changes_nothing_visible() {
         let mut l = Layer::new(32, 32);
         l.erase((0.0, 0.0), (31.0, 31.0), 8.0);
+        assert!(l.image.pixels().all(|p| p[3] == 0));
+    }
+
+    /// 序号标：圆内是色底、中心有白字墨迹、圆外全透明。字体读不出的机器上
+    /// 这一条自动跳过（与 ice-vision 的字体用例同一个门槛）。
+    #[test]
+    fn number_badge_paints_a_disk_with_a_white_digit() {
+        let Ok(m) = FileMetrics::open() else { return };
+        let mut l = Layer::new(64, 64);
+        l.number_badge((32.0, 32.0), 14.0, 1, RED, &m);
+        let rim = l.image.get_pixel(32, 20);
+        assert!(
+            rim[3] > 200 && rim[0] > 150 && rim[1] < 100,
+            "圆内上缘应是红底，读到的 {rim:?}"
+        );
+        let white_ink = l
+            .image
+            .enumerate_pixels()
+            .filter(|(x, y, _)| (24..40).contains(x) && (24..40).contains(y))
+            .filter(|(_, _, p)| p[3] > 200 && p[0] > 200 && p[1] > 200 && p[2] > 200)
+            .count();
+        assert!(white_ink > 0, "圆心一带必须有白数字的墨迹");
+        assert_eq!(alpha(&l, 32, 5), 0, "圆外必须透明");
+        assert_eq!(l.revision, 1);
+    }
+
+    #[test]
+    fn text_stamps_ink_and_blank_text_touches_nothing() {
+        let Ok(m) = FileMetrics::open() else { return };
+        let mut l = Layer::new(200, 64);
+        assert_eq!(l.text((10.0, 10.0), "   ", 20.0, RED, &m), 0);
+        assert_eq!(l.revision, 0, "空白输入不许 touch");
+        let missing = l.text((10.0, 10.0), "标注", 20.0, RED, &m);
+        assert_eq!(missing, 0, "黑体画得出这两个字");
+        assert_eq!(l.revision, 1);
+        assert!(
+            l.image.pixels().any(|p| p[3] > 200 && p[0] > 150),
+            "得有红墨落下去"
+        );
+    }
+
+    /// 马赛克：块内一色（盒式平均）、不透明、区外一个像素不动。
+    #[test]
+    fn mosaic_averages_blocks_and_stays_opaque() {
+        let mut bg = RgbaImage::new(64, 64);
+        for y in 0..64 {
+            for x in 0..64 {
+                let v = if x < 32 { 0 } else { 255 };
+                bg.put_pixel(x, y, image::Rgba([v, v, v, 255]));
+            }
+        }
+        let mut l = Layer::new(64, 64);
+        l.mosaic(&bg, (16.0, 16.0), (48.0, 48.0), 8);
+        assert_eq!(*l.image.get_pixel(20, 20), image::Rgba([0, 0, 0, 255]));
+        assert_eq!(
+            *l.image.get_pixel(36, 20),
+            image::Rgba([255, 255, 255, 255])
+        );
+        assert_eq!(alpha(&l, 8, 8), 0, "区外必须透明");
+        assert_eq!(l.revision, 1);
+        // 块格横跨黑白交界时，块内是平均灰而不是条纹
+        let mut l2 = Layer::new(64, 64);
+        l2.mosaic(&bg, (24.0, 24.0), (40.0, 40.0), 16);
+        let p = l2.image.get_pixel(28, 28);
+        assert!(
+            p[0] > 60 && p[0] < 200,
+            "跨交界的块应是平均灰，读到的 {p:?}"
+        );
+    }
+
+    #[test]
+    fn mosaic_on_a_zero_width_rect_touches_nothing() {
+        let bg = RgbaImage::from_pixel(32, 32, image::Rgba([10, 10, 10, 255]));
+        let mut l = Layer::new(32, 32);
+        l.mosaic(&bg, (8.0, 8.0), (8.0, 20.0), 4);
+        assert_eq!(l.revision, 0);
         assert!(l.image.pixels().all(|p| p[3] == 0));
     }
 }
