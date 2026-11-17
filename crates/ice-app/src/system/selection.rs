@@ -846,9 +846,9 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                         egui::vec2(bar.width() - 2.0 * bar::SIDE_PAD, bar.height()),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
-                            // 三颗：**对勾 / 复制 / 保存**。对勾就是"完成并钉住"（他原话
-                            // "点对勾和固定到屏幕上是一样的"）；栏里不放「取消」——esc 与右键
-                            // 承担。图标全是**线稿**，不用字符（本仓出过字符显示成方块的缺陷）。
+                            // 三颗：**复制 / 保存 / 对勾**（对勾在最后，用户 2026-11-17）。对勾就是
+                            // "完成并钉住"（他原话"点对勾和固定到屏幕上是一样的"）；栏里不放「取消」——
+                            // esc 与右键承担。图标全是**线稿**，不用字符（本仓出过字符显示成方块的缺陷）。
                             for icon in BAR_ICONS {
                                 if icon_button(ui, icon).clicked() {
                                     // 确认必须带上**这扇窗自己的框**：主窗不用再猜是哪块屏
@@ -883,8 +883,8 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
     });
 }
 
-/// 栏里那三颗，顺序就是显示顺序（用户 2026-11-09 晚逐条定下：对勾取代「钉住」、
-/// 栏里不放「取消」）。加一颗要改这张表，`the_bar_has_three_icons_in_this_order` 会先响。
+/// 栏里那几颗，顺序就是显示顺序。**对勾排在最后**（用户 2026-11-17 原话"把对号往最后放"）；
+/// 栏里不放「取消」（esc 与右键承担）。加一颗要改这张表，宽度测试与形状核查会先响。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BarIcon {
     /// 完成 = 钉到屏幕上
@@ -893,7 +893,7 @@ pub enum BarIcon {
     Save,
 }
 
-pub const BAR_ICONS: [BarIcon; 3] = [BarIcon::Check, BarIcon::Copy, BarIcon::Save];
+pub const BAR_ICONS: [BarIcon; 3] = [BarIcon::Copy, BarIcon::Save, BarIcon::Check];
 
 /// 一颗线稿图标按钮：自己画（两段线/两块圆角框/一个盘子加一支箭头），返回是否被点。
 ///
@@ -922,57 +922,53 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon) -> egui::Response {
             painter.line_segment([knee, end], stroke);
         }
         BarIcon::Copy => {
+            // 两框：后框偏右上、前框偏左下压住它一多半（>50%）；前框先实心填药丸底色再描边，
+            // 后框被压部分的线条不透过前框（用户 2026-11-17 v0.2 裁定）。偏移取 0.20、框取 0.72：
+            // 重叠率 (1-0.20/0.72)^2 ≈ 0.52 > 0.5，恰好"压住一多半"。
+            let bw = rect.width() * 0.72;
+            let bh = rect.height() * 0.72;
             let back = egui::Rect::from_min_size(
-                egui::pos2(rect.min.x, rect.min.y),
-                egui::vec2(rect.width() * 0.62, rect.height() * 0.74),
+                egui::pos2(rect.min.x + rect.width() * 0.20, rect.min.y),
+                egui::vec2(bw, bh),
             );
-            let front = back.translate(egui::vec2(rect.width() * 0.3, rect.height() * 0.26));
-            painter.rect_stroke(front, 3.0, stroke, egui::StrokeKind::Inside);
+            let front = egui::Rect::from_min_size(
+                egui::pos2(rect.min.x, rect.min.y + rect.height() * 0.20),
+                egui::vec2(bw, bh),
+            );
             painter.rect_stroke(back, 3.0, stroke, egui::StrokeKind::Inside);
+            painter.rect_filled(
+                front,
+                3.0,
+                egui::Color32::from_rgba_premultiplied(28, 28, 30, 235),
+            );
+            painter.rect_stroke(front, 3.0, stroke, egui::StrokeKind::Inside);
         }
         BarIcon::Save => {
-            // 一支向下的箭头落进一个盘子（"存到别处"的通行读法）
-            let top = egui::pos2(rect.center().x, rect.min.y);
-            let bottom = egui::pos2(rect.center().x, rect.center().y + rect.height() * 0.12);
-            painter.line_segment([top, bottom], stroke);
+            // 通用"下载/存到别处"：一支向下箭头（竖杆＋两段斜线成头）＋ 下方一条独立横线，
+            // 不再是 U 形盘子（用户 2026-11-17 v0.2 裁定）。横线与箭头不相连。
+            let cx = rect.center().x;
+            let top = egui::pos2(cx, rect.min.y + rect.height() * 0.06);
+            let tip = egui::pos2(cx, rect.min.y + rect.height() * 0.60);
+            painter.line_segment([top, tip], stroke);
             painter.line_segment(
                 [
-                    egui::pos2(
-                        rect.min.x + rect.width() * 0.24,
-                        rect.min.y + rect.height() * 0.3,
-                    ),
-                    bottom,
+                    egui::pos2(cx - rect.width() * 0.22, rect.min.y + rect.height() * 0.38),
+                    tip,
                 ],
                 stroke,
             );
             painter.line_segment(
                 [
-                    egui::pos2(
-                        rect.max.x - rect.width() * 0.24,
-                        rect.min.y + rect.height() * 0.3,
-                    ),
-                    bottom,
+                    egui::pos2(cx + rect.width() * 0.22, rect.min.y + rect.height() * 0.38),
+                    tip,
                 ],
                 stroke,
             );
+            let base_y = rect.min.y + rect.height() * 0.88;
             painter.line_segment(
                 [
-                    egui::pos2(rect.min.x, rect.center().y),
-                    egui::pos2(rect.min.x, rect.max.y),
-                ],
-                stroke,
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(rect.min.x, rect.max.y),
-                    egui::pos2(rect.max.x, rect.max.y),
-                ],
-                stroke,
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(rect.max.x, rect.max.y),
-                    egui::pos2(rect.max.x, rect.center().y),
+                    egui::pos2(rect.min.x + rect.width() * 0.12, base_y),
+                    egui::pos2(rect.max.x - rect.width() * 0.12, base_y),
                 ],
                 stroke,
             );

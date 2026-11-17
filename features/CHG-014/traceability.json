@@ -1,0 +1,169 @@
+{
+  "baseline": {
+    "change": "CHG-014",
+    "version": "v0.2",
+    "spec_hash": "404ac5357b9002b47583674be4b80008bb38b55de0f7f7f0670ca15ca316ef5e"
+  },
+  "design": [
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    },
+    {
+      "requirement": "REQ-007",
+      "section": "## REQ-007 实现与验证"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
+      "note": "标注层与工具无头：空层裁图==现状逐像素、落矩形四边有内部空、箭头有头、序号自增、马赛克块内均值色、换粗细线宽变/换色色变/默认红、擦一笔路径 alpha=0 路径外不变/擦半条框另半条仍在/背景不被改、BAR_ICONS 对勾最后/宽按内容/点工具不产生选区手势、无工具手势==现状/激活后 rect 不变层变/esc 先退工具态"
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "note": "全量无回归：既有 ice-app 与其余 crate（选框/认窗/冻结/换算/ command+c/翻译链/落盘/老化/热键/配置夹取/剪贴板字节校验）一项不许回退；默认无工具态必须与现状逐手势一致（REQ-006 停止条件 3）"
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "note": "clippy 全绿（-D warnings）：新增 annotate.rs 与三处接线不许带警告进仓"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "tree",
+        "-p",
+        "ice-app",
+        "-e",
+        "normal"
+      ],
+      "note": "依赖图零增量：image 已在、字形光栅 ab_glyph_rasterizer/owned_ttf_parser 已在 Cargo.lock（经 ice-vision），不新增 crate 名；比对基线 45c76ba 输出逐行相同才算过，多一个名字即停止条件 1"
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-007"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "scan"
+      ],
+      "note": "敏感信息基线扫描：本包不新增落盘面（标注层运行态随遮罩清），文案/日志不含文件名或 OCR 文本那条沿用既有断言；scan 通过是隐私口径不漂的下限"
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-001",
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "bash",
+        "-c",
+        "grep -n 'Check' crates/ice-app/src/system/selection.rs | grep -n 'BAR_ICONS' ; grep -c 'alpha' crates/ice-app/src/state.rs"
+      ],
+      "note": "形状核查：BAR_ICONS 表里 Check 排最后（对勾挪最后）；crop_selection 是唯一 alpha 合成点（三出口一致靠改一处）。grep 命中才算过"
+    },
+    {
+      "id": "V-007",
+      "requirements": [
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "W-14.1：用户真机把八种工具各画一遍（框/箭头/直线/铅笔/序号/文字/马赛克）、下拉换粗细与颜色、橡皮擦擦半条框看另半条还在、对勾/复制/保存三出口都带标注、对勾在整条最末、工具态与选区态切换顺手、默认无工具时既有框选/认窗/拖拽不回退。观感与手感只有用户眼睛能判，不许拿日志或无头用例冒充。橡皮擦只能整对象删＝停止条件 2；默认态回退＝停止条件 3；三出口不一致＝停止条件 4，都回来报"
+    }
+  ]
+}

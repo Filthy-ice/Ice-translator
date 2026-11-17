@@ -3,7 +3,7 @@
   "id": "CHG-013",
   "title": "截图不再收起自家窗口（改口 CHG-009 REQ-010）",
   "version": "v0.1",
-  "status": "SPEC_REVIEW",
+  "status": "APPROVED",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -24,8 +24,37 @@
       "at": "2026-11-11T08:16:36+00:00",
       "action": "transition",
       "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-17T02:33:17+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "3a7a6837d82c1f37bc4a939a72aeb70b0dc7331682e1096a45db189ecfc80060",
+        "version": "v0.1",
+        "by": "你",
+        "reference": "2026-11-16 真机确认截图不再收起自家窗口",
+        "at": "2026-11-17T02:33:17+00:00",
+        "snapshot": "approvals/v0.1-3a7a6837d82c1f37bc4a939a72aeb70b0dc7331682e1096a45db189ecfc80060.md",
+        "scope": "local-delivery",
+        "context_hash": "1d9b0d12bd527eef058a602f023adec7aa127f51895be6d3a3501ba0155a68e5",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
     }
   ],
-  "approval": null,
+  "approval": {
+    "hash": "3a7a6837d82c1f37bc4a939a72aeb70b0dc7331682e1096a45db189ecfc80060",
+    "version": "v0.1",
+    "by": "你",
+    "reference": "2026-11-16 真机确认截图不再收起自家窗口",
+    "at": "2026-11-17T02:33:17+00:00",
+    "snapshot": "approvals/v0.1-3a7a6837d82c1f37bc4a939a72aeb70b0dc7331682e1096a45db189ecfc80060.md",
+    "scope": "local-delivery",
+    "context_hash": "1d9b0d12bd527eef058a602f023adec7aa127f51895be6d3a3501ba0155a68e5",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
   "plan_hash": null
 }

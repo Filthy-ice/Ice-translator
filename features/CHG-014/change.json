@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "id": "CHG-014",
+  "title": "截图标注层：框/箭头/直线/铅笔/序号/文字/马赛克 + 像素橡皮擦 + 粗细色板 + 对勾挪最后",
+  "version": "v0.2",
+  "status": "IMPLEMENTING",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-001",
+      "blocking": false,
+      "question": "标注颜色是固定单色还是可选色板？",
+      "resolution": "默认红色；另提供黄/蓝/绿/白/黑少量可选色，色板随工具在药丸内切换，不做自定义取色器。",
+      "source": "2026-11-17 AskUserQuestion 用户答“默认红+少量可选色”。"
+    },
+    {
+      "id": "Q-002",
+      "blocking": false,
+      "question": "橡皮擦是整对象删除还是按像素擦痕迹？",
+      "resolution": "橡皮擦按像素擦除（destination-out 笔刷，沿路径把标注层 alpha 抹到 0），可部分擦掉一个框或一条线的一段，绝不整对象删除。",
+      "source": "2026-11-17 AskUserQuestion 用户答“按像素擦痕迹”；并原话“难道不是截图上面加一个图层吗？这样橡皮不就能部分擦除了？”。"
+    },
+    {
+      "id": "Q-003",
+      "blocking": false,
+      "question": "标注用矢量对象还是位图图层承载？",
+      "resolution": "冻结截图上叠一层同尺寸透明 RGBA 标注位图；工具把像素画进该层，拖拽时用 egui 矢量做预览、松手才烧进位图；显示=背景 alpha-over 标注层；确认/复制/保存三出口在 crop_selection 单点合成。",
+      "source": "2026-11-17 用户原话“难道不是截图上面加一个图层吗？这样橡皮不就能部分擦除了？”，确认图层模型。"
+    },
+    {
+      "id": "Q-004",
+      "blocking": false,
+      "question": "是否需要撤销/重做？",
+      "resolution": "本包不做撤销/重做；参照工具栏图中的灰色撤销按钮不纳入范围。",
+      "source": "2026-11-17 用户工具清单原话只列框/箭头/直线/铅笔/序号/文字/马赛克/橡皮擦+对勾挪最后，未提撤销；参照图含灰撤销但非用户指令。"
+    },
+    {
+      "id": "Q-005",
+      "blocking": false,
+      "question": "钉住/确认后还能否再改标注？",
+      "resolution": "标注只在截图未确认的蒙版阶段可编辑；一旦确认（对勾/复制/保存）即烧进像素，钉住后的图不再可编辑标注。",
+      "source": "2026-11-17 图层模型确认：确认时烧进像素（crop_selection 单点合成），与现有“确认后冻结”行为一致。"
+    },
+    {
+      "id": "Q-006",
+      "blocking": false,
+      "question": "保存图标什么形状？",
+      "resolution": "向下箭头（竖杆+两段斜线成头）+ 箭头下方一条独立横线，通用下载读法；去掉原 U 形盘子。",
+      "source": "2026-11-17 用户批准 v0.1 后原话“保存换成通用的向下箭头下面有一横线的图标”。"
+    },
+    {
+      "id": "Q-007",
+      "blocking": false,
+      "question": "复制图标什么形状？",
+      "resolution": "两块圆角框，后框偏右上、前框偏左下压住后框一多半（>50%），前框以药丸底色实心填充再描边，后框被压部分线条不透过前框。",
+      "source": "2026-11-17 用户原话“复制换成两个框一个压住另一个框的一多半，右上方被压住框线条不透过前面的框”。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-17T02:46:10+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-11-17T02:54:45+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-11-17T02:54:45+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-17T02:57:55+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "68d7cdc324869068bb8d8f6bdfcb73aff10bc9eebc0e6f3a8080ee8801ba3e7c",
+        "version": "v0.1",
+        "by": "你",
+        "reference": "2026-11-17 原话：截图上画框/箭头/直线/铅笔/序号/文字/马赛克+橡皮擦，对勾往最后放；图层模型、默认红+像素橡皮擦已确认",
+        "at": "2026-11-17T02:57:55+00:00",
+        "snapshot": "approvals/v0.1-68d7cdc324869068bb8d8f6bdfcb73aff10bc9eebc0e6f3a8080ee8801ba3e7c.md",
+        "scope": "local-delivery",
+        "context_hash": "c3b87c98f11ad799880daac8020a662bcfb7a69bee0554567963789298ae4b68",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-17T03:04:14+00:00",
+      "action": "revise",
+      "detail": "用户批准 v0.1 后追加复制/保存两颗图标形状裁定（保存=向下箭头下一横、复制=前框不透明压住右上后框一多半），折进 REQ-005 与 Q-006/Q-007 升 v0.2 重批"
+    },
+    {
+      "at": "2026-11-17T03:07:27+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "404ac5357b9002b47583674be4b80008bb38b55de0f7f7f0670ca15ca316ef5e",
+        "version": "v0.2",
+        "by": "你",
+        "reference": "2026-11-17 原话：保存换成向下箭头下面一横线；复制两框前框压住右上后框一多半、后框线不透过前框",
+        "at": "2026-11-17T03:07:27+00:00",
+        "snapshot": "approvals/v0.2-404ac5357b9002b47583674be4b80008bb38b55de0f7f7f0670ca15ca316ef5e.md",
+        "scope": "local-delivery",
+        "context_hash": "3fc74df496c82d788c71132fffe5f6b1a95b82a5eaeb90b013b3a06397611da0",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-17T03:41:38+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-014",
+        "version": "v0.2",
+        "spec_hash": "404ac5357b9002b47583674be4b80008bb38b55de0f7f7f0670ca15ca316ef5e"
+      }
+    },
+    {
+      "at": "2026-11-17T03:41:39+00:00",
+      "action": "seal-plan",
+      "detail": "7d49acb580261ff3627f7ecbdc045dec8acfd30cec182842c3db26f4f8e0f2c7"
+    },
+    {
+      "at": "2026-11-17T03:41:39+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    }
+  ],
+  "approval": {
+    "hash": "404ac5357b9002b47583674be4b80008bb38b55de0f7f7f0670ca15ca316ef5e",
+    "version": "v0.2",
+    "by": "你",
+    "reference": "2026-11-17 原话：保存换成向下箭头下面一横线；复制两框前框压住右上后框一多半、后框线不透过前框",
+    "at": "2026-11-17T03:07:27+00:00",
+    "snapshot": "approvals/v0.2-404ac5357b9002b47583674be4b80008bb38b55de0f7f7f0670ca15ca316ef5e.md",
+    "scope": "local-delivery",
+    "context_hash": "3fc74df496c82d788c71132fffe5f6b1a95b82a5eaeb90b013b3a06397611da0",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "7d49acb580261ff3627f7ecbdc045dec8acfd30cec182842c3db26f4f8e0f2c7"
+}

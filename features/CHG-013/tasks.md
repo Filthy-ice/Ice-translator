@@ -1,6 +1,6 @@
 Change: CHG-013
 Version: v0.1
-Spec-Hash: UNAPPROVED
+Spec-Hash: 3a7a6837d82c1f37bc4a939a72aeb70b0dc7331682e1096a45db189ecfc80060
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [ ] T-001 去掉收起—还原整对（一笔原子改动，编译一起过）：app.rs:1798-1801 去 capture::hide 那一支；capture.rs show_again 拆成只唤醒（删 Visible(true) 还原段，保留 wake_commands/Wake/RequestPaintWhileHidden），hide/Hidden 若无调用方则删；jobs.rs:434/470 改只叫醒帧循环、Job::Freeze/ScreenCapture 去 hidden 字段；state.rs:1554 去 capture_hidden_record | ice-translator | REQ-001
