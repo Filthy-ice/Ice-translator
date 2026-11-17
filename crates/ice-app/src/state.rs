@@ -1218,7 +1218,14 @@ impl AppState {
     ///
     /// 换算只走 `Field::to_pixels` 那一处；拿不到选区、或那块屏的换算不可信（零尺寸、
     /// 横纵比例分歧），一律 `None` 由调用方说那句"这张没裁出来"——不许裁一张猜测的图。
-    pub fn crop_selection(&self) -> Option<image::RgbaImage> {
+    ///
+    /// `annotation` 是那一屏的标注层（物理像素、与冻结帧同尺寸）。**这里是三出口
+    /// （钉住/复制/保存）唯一的合成点**：裁完背景把层按 alpha 盖进裁区，层外像素一个不动。
+    /// 传 `None`（没动过工具）裁出来的与先前逐像素同。
+    pub fn crop_selection(
+        &self,
+        annotation: Option<&image::RgbaImage>,
+    ) -> Option<image::RgbaImage> {
         let capture = self.capture.as_ref()?;
         let frame = capture.frames.get(capture.screen)?;
         let field = frame.field();
@@ -1232,7 +1239,7 @@ impl AppState {
         if x >= width || y >= height {
             return None;
         }
-        let cropped = image::imageops::crop_imm(
+        let mut cropped = image::imageops::crop_imm(
             frame.image.as_ref(),
             x,
             y,
@@ -1240,6 +1247,9 @@ impl AppState {
             h.min(height - y),
         )
         .to_image();
+        if let Some(layer) = annotation {
+            crate::system::annotate::composite_into(&mut cropped, layer, x, y);
+        }
         Some(cropped)
     }
 
@@ -2404,7 +2414,7 @@ mod tests {
             CaptureApplied::Frozen { screens: 1 }
         ));
         assert!(st.capturing());
-        assert!(st.crop_selection().is_none(), "还没选就不许裁得出东西");
+        assert!(st.crop_selection(None).is_none(), "还没选就不许裁得出东西");
 
         st.end_capture(CaptureStage::Cancelled);
         assert!(st.capture.is_none());
@@ -2543,9 +2553,54 @@ mod tests {
         sel.release(&field, Pos2::new(300.0, 250.0));
         st.apply_selection(0, sel);
         let label = st.capture.as_ref().unwrap().sel.size_label(&field);
-        let cut = st.crop_selection().expect("该裁得出来");
+        let cut = st.crop_selection(None).expect("该裁得出来");
         assert_eq!(label.as_deref(), Some("400 × 300"), "读数与实际裁剪对不上");
         assert_eq!((cut.width(), cut.height()), (400, 300));
+    }
+
+    /// **标注层跟着裁图走，且只落在选区内**（REQ-001）：带层裁出来的图在笔迹处带色、
+    /// 无笔迹处与不带层逐像素同；选区外的笔迹一个像素都不许进裁图。
+    #[test]
+    fn the_annotation_layer_rides_into_the_crop_and_stays_inside_it() {
+        let mut st = capture_state();
+        st.submit_capture(two_screens()).expect("该发得出");
+        st.apply_frozen(
+            1,
+            vec![Freeze {
+                display: 1,
+                points: Vec2::new(1000.0, 800.0),
+                appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0)),
+                origin: Pos2::ZERO,
+                image: Arc::new(image::RgbaImage::from_pixel(
+                    3840,
+                    2160,
+                    image::Rgba([5, 6, 7, 255]),
+                )),
+            }],
+        );
+        let field = st.capture.as_ref().unwrap().field().unwrap();
+        let mut sel = crate::system::selection::Selection::fresh();
+        sel.press(&field, Pos2::new(100.0, 100.0), 10.0);
+        sel.drag(&field, Pos2::new(300.0, 250.0));
+        sel.release(&field, Pos2::new(300.0, 250.0));
+        st.apply_selection(0, sel);
+        // 选区物理像素 = (200,200)..(600,500)。层里画两道：一道在选区内、一道在选区外
+        let mut layer = crate::system::annotate::Layer::new(3840, 2160);
+        layer.line((250.0, 300.0), (550.0, 300.0), 6.0, [220, 40, 40, 255]);
+        layer.line((10.0, 10.0), (50.0, 10.0), 6.0, [220, 40, 40, 255]);
+        let plain = st.crop_selection(None).expect("不带层也裁得出");
+        let cut = st.crop_selection(Some(&layer.image)).expect("带层也裁得出");
+        assert_eq!((cut.width(), cut.height()), (400, 300));
+        assert!(
+            cut.get_pixel(100, 100)[0] > 150,
+            "选区内笔迹处 (250-200,300-200) 必须带上红"
+        );
+        assert_eq!(
+            cut.get_pixel(0, 0),
+            plain.get_pixel(0, 0),
+            "选区外那道笔迹不许进裁图，无笔迹处与不带层逐像素同"
+        );
+        assert_eq!(cut.get_pixel(399, 299), plain.get_pixel(399, 299));
     }
 
     /// 一块屏都没冻上：那是失败，**不是用户取消**（静默抓屏没有"取消"这一档）。

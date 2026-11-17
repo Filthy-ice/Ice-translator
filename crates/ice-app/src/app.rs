@@ -1419,6 +1419,7 @@ impl IceApp {
                 &crate::system::selection::MaskScreen {
                     display: frame.display,
                     points: frame.points,
+                    px: frame.px(),
                     origin: frame.origin,
                     windows: windows.clone(),
                     texture: freeze_texture(ctx, frame, capture.frozen_id),
@@ -1489,13 +1490,13 @@ impl IceApp {
             MaskOut::Confirm { display, rect } => {
                 tracing::info!("遮罩：对勾确认");
                 if self.focus_capture(display, rect) {
-                    self.confirm_capture();
+                    self.confirm_capture(ctx);
                 }
             }
             MaskOut::ConfirmCopy { display, rect } => {
                 tracing::info!("遮罩：复制");
                 if self.focus_capture(display, rect) {
-                    let path = self.confirm_capture();
+                    let path = self.confirm_capture(ctx);
                     if let Some(path) = path {
                         effects.copy_shot = Some(path);
                     }
@@ -1504,7 +1505,7 @@ impl IceApp {
             MaskOut::ConfirmSave { display, rect } => {
                 tracing::info!("遮罩：保存");
                 if self.focus_capture(display, rect) {
-                    if let Some(path) = self.confirm_capture() {
+                    if let Some(path) = self.confirm_capture(ctx) {
                         let name = path
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
@@ -1555,9 +1556,21 @@ impl IceApp {
 
     /// 确认 = 裁 → **到这里才第一次写盘**（REQ-102：确认之前盘上不许有东西）。
     /// 裁不出来就说那一句并关掉遮罩——留一扇截不出东西的遮罩在屏上比一次失败更糟。
-    fn confirm_capture(&mut self) -> Option<std::path::PathBuf> {
+    fn confirm_capture(&mut self, ctx: &egui::Context) -> Option<std::path::PathBuf> {
         let dir = self.shots_dir.clone()?;
-        let Some(image) = self.state.crop_selection() else {
+        // 标注层从根上下文那格取——与遮罩画的是同一份 Arc，不绕帧回传。
+        // 没动过工具就是空层，合成等于不合成（裁图与先前逐像素同）。
+        let layer = self.state.capture.as_ref().and_then(|capture| {
+            let frame = capture.frames.get(capture.screen)?;
+            Some(crate::system::selection::annotation_layer(
+                ctx,
+                frame.display,
+                capture.frozen_id,
+                (frame.image.width(), frame.image.height()),
+            ))
+        });
+        let locked = layer.as_ref().and_then(|l| l.lock().ok());
+        let Some(image) = self.state.crop_selection(locked.as_ref().map(|g| &g.image)) else {
             tracing::warn!("确认时裁不出图：遮罩没收到选区（拖动没进来的话就是这一格）");
             return None;
         };
@@ -5262,8 +5275,21 @@ mod tests {
             egui::Rect::from_min_max(egui::pos2(2.0, 3.0), egui::pos2(22.0, 18.0))
         ));
 
-        let path = app.confirm_capture().expect("确认该裁得出一张");
+        // 确认前往这一轮的标注层落一笔（选区物理像素 (2,3)..(22,18) 内一条红线）：
+        // 三出口都走 confirm_capture 这一条路，落盘的图必须带上它（REQ-001 接线）。
+        let ctx = egui::Context::default();
+        let layer = crate::system::selection::annotation_layer(&ctx, 1, 1, (40, 30));
+        layer
+            .lock()
+            .unwrap()
+            .line((5.0, 10.0), (20.0, 10.0), 3.0, [220, 40, 40, 255]);
+        let path = app.confirm_capture(&ctx).expect("确认该裁得出一张");
         assert!(path.exists(), "确认之前不许落盘，确认之后必须落盘");
+        let saved = image::open(&path).expect("落盘的该读得回").to_rgba8();
+        assert!(
+            saved.get_pixel(10, 7)[0] > 150,
+            "选区内笔迹处 (5-2,10-3) 必须带上红——标注没跟裁图走就是这一格"
+        );
         assert!(
             app.state.capture.is_none(),
             "确认之后遮罩还留着：用户会以为对勾没生效"

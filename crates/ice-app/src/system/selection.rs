@@ -9,6 +9,7 @@
 //! 3. **点 → 物理像素的换算只许存在一处**（[`Field::to_pixels`]）。CHG-009 事实 22 已经演示过
 //!    两处各除一次或都忘了除的现场：贴图大一倍、文字层整体错位。
 
+use crate::system::annotate::{Layer, PALETTE, THICKNESS};
 use crate::system::bar::{self, GAP};
 use crate::system::wake_root;
 use egui::{Id, Pos2, Rect, Vec2, pos2};
@@ -404,7 +405,7 @@ fn resize(rect: Rect, index: u8, to: Pos2) -> Rect {
 /// 按下落在药丸上被当成"在空白处起新框"，框缩成一个点、药丸那一帧没了位置，
 /// 那颗按钮再也收不到完整的按下—抬起。
 ///
-/// 宽度**按内容定**（[`bar_width`]）：三颗线稿 + 一句尺寸读数 + 两端留白，不再写死一个
+/// 宽度**按内容定**（[`bar_width`]）：全部线稿颗 + 一句尺寸读数 + 两端留白，不再写死一个
 /// 300——内容只占约一半、右边空一大截黑底，正是用户那句"按钮文字排列好丑"（2026-11-11）。
 /// `label_w` 由 [`label_width`] 用绘制同一字体量出，按下判定与绘制各按自己那一刻的选区量，
 /// 读的都是同一个 `next`，不会分岔。
@@ -416,9 +417,9 @@ fn bar_of(sel: &Selection, field: &Field, label_w: f32) -> Option<Rect> {
     Some(bar::rect(rect, size, bar::side(rect, size, field.bounds)))
 }
 
-/// 药丸宽 = 三颗线稿 + 一句尺寸读数 + 颗间 [`bar::BTN_GAP`] + 两端 [`bar::SIDE_PAD`]。
-/// 没有读数（屏比例不可信、量不出像素）时少一颗、也少一条缝。与贴图那条 `width_for`
-/// 同一条"按内容定宽"的纪律，只是这边末颗是变宽的尺寸文字而非定宽文字按钮。
+/// 药丸宽 = 全部线稿颗（[`BAR_ICONS`]）+ 一句尺寸读数 + 颗间 [`bar::BTN_GAP`] + 两端
+/// [`bar::SIDE_PAD`]。没有读数（屏比例不可信、量不出像素）时少一颗、也少一条缝。与贴图那条
+/// `width_for` 同一条"按内容定宽"的纪律，只是这边末颗是变宽的尺寸文字而非定宽文字按钮。
 fn bar_width(label_w: f32) -> f32 {
     let icons = BAR_ICONS.len() as f32;
     let gaps = if label_w > 0.0 { icons } else { icons - 1.0 };
@@ -536,6 +537,127 @@ fn load_selection(d: &egui::util::IdTypeMap, display: u8, frozen_id: u64) -> Sel
         .unwrap_or_default()
 }
 
+// ---- 标注层与工具态（CHG-014） ----
+
+fn ann_key(display: u8) -> Id {
+    Id::NULL.with("ice-selection.mask.ann").with(display)
+}
+
+/// 取这一屏这一轮的标注层；轮号对不上就换一张全新的透明层（照选区那格 D-42 同形）。
+///
+/// **存在根上下文的 data 里**：遮罩子窗画它、主窗确认时裁它，两边读的是同一份 `Arc`。
+/// 不绕帧回传——贴图那条已经验证过，状态绕主窗一圈必闪，多子窗还会串格。
+/// 每屏永远只有一格：新一轮原地顶掉旧的，不随轮数攒（一层就是几十 MB）。
+pub fn annotation_layer(
+    ctx: &egui::Context,
+    display: u8,
+    frozen_id: u64,
+    px: (u32, u32),
+) -> std::sync::Arc<std::sync::Mutex<Layer>> {
+    let key = ann_key(display);
+    ctx.data_mut(|d| {
+        if let Some((old_gen, layer)) =
+            d.get_temp::<(u64, std::sync::Arc<std::sync::Mutex<Layer>>)>(key)
+        {
+            if old_gen == frozen_id {
+                return layer;
+            }
+        }
+        let fresh = std::sync::Arc::new(std::sync::Mutex::new(Layer::new(px.0, px.1)));
+        d.insert_temp(key, (frozen_id, fresh.clone()));
+        fresh
+    })
+}
+
+/// 标注层的显示纹理：**落一笔才重传一次**（缓存认 frozen_id + 层的 revision）。
+/// 一笔没落（revision 0）返回 None——不传纹理也不画，保证没动工具时与现状逐像素同。
+fn annotation_texture(
+    child: &egui::Context,
+    display: u8,
+    frozen_id: u64,
+    layer: &std::sync::Arc<std::sync::Mutex<Layer>>,
+) -> Option<egui::TextureId> {
+    let guard = layer.lock().ok()?;
+    if guard.revision == 0 {
+        return None;
+    }
+    let key = Id::NULL.with("ice-selection.ann-tex").with(display);
+    if let Some((old_gen, old_rev, old)) =
+        child.data(|d| d.get_temp::<(u64, u64, egui::TextureHandle)>(key))
+    {
+        if old_gen == frozen_id && old_rev == guard.revision {
+            return Some(old.id());
+        }
+    }
+    let (w, h) = (guard.image.width(), guard.image.height());
+    let image =
+        egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], guard.image.as_raw());
+    let texture = child.load_texture("ice-selection.ann", image, egui::TextureOptions::LINEAR);
+    let id = texture.id();
+    child.data_mut(|d| d.insert_temp(key, (frozen_id, guard.revision, texture)));
+    Some(id)
+}
+
+/// 药丸上的标注工具。一次只激活一件；再点当前这件或按 esc 回到选区态（REQ-006）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tool {
+    /// 画框
+    Rect,
+    /// 带箭头的线
+    Arrow,
+    /// 直线
+    Line,
+    /// 铅笔（自由绘制）
+    Pencil,
+    /// 橡皮（按像素擦痕迹）
+    Eraser,
+}
+
+/// 药丸颗 → 它激活的工具；确认三颗不是工具，返回 None。
+fn tool_of(icon: BarIcon) -> Option<Tool> {
+    match icon {
+        BarIcon::Rect => Some(Tool::Rect),
+        BarIcon::Arrow => Some(Tool::Arrow),
+        BarIcon::Line => Some(Tool::Line),
+        BarIcon::Pencil => Some(Tool::Pencil),
+        BarIcon::Eraser => Some(Tool::Eraser),
+        _ => None,
+    }
+}
+
+/// 工具态那一扇窗自己的运行态：激活哪件 + 这一次手势的锚点与上一帧落点。
+/// **与选区状态分开存**——工具手势不许碰 `next.rect`（互斥那条的一半就靠这个分离）。
+/// `last` 给铅笔/橡皮用：它俩是拖到哪画到哪，每帧落上一帧到这一帧那一小段。
+#[derive(Clone, Copy, PartialEq)]
+struct ToolState {
+    tool: Option<Tool>,
+    anchor: Pos2,
+    last: Pos2,
+    dragging: bool,
+}
+
+impl Default for ToolState {
+    fn default() -> Self {
+        Self {
+            tool: None,
+            anchor: Pos2::ZERO,
+            last: Pos2::ZERO,
+            dragging: false,
+        }
+    }
+}
+
+fn tool_key(display: u8) -> Id {
+    Id::NULL.with("ice-selection.mask.tool").with(display)
+}
+
+fn load_tool_state(d: &egui::util::IdTypeMap, display: u8, frozen_id: u64) -> ToolState {
+    d.get_temp::<(u64, ToolState)>(tool_key(display))
+        .filter(|(old_gen, _)| *old_gen == frozen_id)
+        .map(|(_, ts)| ts)
+        .unwrap_or_default()
+}
+
 fn viewport_of(display: u8) -> egui::ViewportId {
     egui::ViewportId::from_hash_of(Id::NULL.with("ice-selection.mask").with(display))
 }
@@ -580,6 +702,9 @@ pub struct MaskScreen {
     pub display: u8,
     /// 那块屏的点尺寸
     pub points: Vec2,
+    /// 那块屏的**物理像素**尺寸（= 冻结帧的真实尺寸）。标注层按它建，
+    /// 手势的点坐标经 `Field::to_pixels` 换进来——与裁剪同一条换算，Retina 上不会差一倍。
+    pub px: Vec2,
     /// 那块屏的全局左上角（与系统窗口表同一坐标系）。认窗靠它把全局矩形换回本地。
     pub origin: Pos2,
     /// 认窗那一份快照（整段遮罩期间不变，见 `system::windows::Snapshot`）
@@ -623,6 +748,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
 
     let texture = screen.texture;
     let points = screen.points;
+    let px = screen.px;
     let origin = screen.origin;
     let frozen_id = screen.frozen_id;
     let cursor_here = screen.cursor_here;
@@ -652,13 +778,19 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         // 轮号对不上就是新一轮截图，读空白（D-42：上一轮的框不许跟过来）
         let mut next = ui.ctx().data(|d| load_selection(d, display, frozen_id));
         let mut changed = false;
+        // 标注层与工具态：都按 (屏, 轮号) 存取，与选区那格同形（D-42：新一轮读空白）。
+        // 层从根上下文取——确认时主窗拿的是同一份 Arc，不绕帧回传。
+        let ann_field = Field::new(Rect::from_min_size(Pos2::ZERO, points), px);
+        let layer = annotation_layer(&root, display, frozen_id, (px.x as u32, px.y as u32));
+        let mut ts = ui.ctx().data(|d| load_tool_state(d, display, frozen_id));
+        let tool_before = ts;
         let here = ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO);
         let holding = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
         // 认窗（REQ-108）：**光标真在这块屏、还没框、也没在拖**的时候，鼠标底下那扇应用窗亮出来。
         // 已经有框就不再认——那会儿用户在调自己那个框，亮另一扇窗只会跟他抢注意力。
         // `cursor_here` 把另一块屏挡在外面：那扇遮罩读不到指针，`here` 会是本地 (0,0)，
         // 不挡的话它左上角那扇窗会被点亮（用户那句「两块屏上的窗都亮了、只有周边灰」）。
-        let hover = if cursor_here && next.rect.is_none() && !holding {
+        let hover = if cursor_here && next.rect.is_none() && !holding && ts.tool.is_none() {
             windows.candidate(origin, here, field.bounds)
         } else {
             None
@@ -709,6 +841,17 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             }
         }
 
+        // 标注层盖在压暗与选区之上：笔迹是用户画的内容，不被暗档乘色。
+        // 空层不传纹理也不画——没动工具时这一扇与现状逐像素同（REQ-001）。
+        if let Some(tex) = annotation_texture(&child, display, frozen_id, &layer) {
+            ui.painter().image(
+                tex,
+                full,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
+
         // 键盘：esc 取消、回车确认、command+c／ctrl+c 复制这一张。收不收得到取决于应用是否前台——
         // 那一步在 `cover::focus`，头几帧重下、收敛即收手（实测激活要一两帧才落地，"发一次就当成功"是错的）。
         // **三个键都先过状态机再交意图**：esc 要把这一扇窗自己的框清掉，状态各窗自持，
@@ -722,8 +865,16 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                         pressed: true,
                         ..
                     } => {
-                        next.cancel();
-                        Some(MaskOut::Cancel)
+                        // esc 先退工具、不取消遮罩（REQ-006）：工具态按 esc 回选区态，
+                        // 框还在、还能确认；选区态按 esc 才是取消。
+                        if ts.tool.is_some() {
+                            ts.tool = None;
+                            ts.dragging = false;
+                            None
+                        } else {
+                            next.cancel();
+                            Some(MaskOut::Cancel)
+                        }
                     }
                     egui::Event::Key {
                         key: egui::Key::Enter,
@@ -780,37 +931,109 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         let on_bar = bar_now.is_some_and(|bar| bar.contains(here));
         let pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
-        if pressed && !on_bar {
-            next.press(&field, here, HANDLE_RADIUS);
-            changed = true;
-        } else if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
-            let before = next.rect;
-            next.drag(&field, here);
-            changed = next.rect != before;
-        }
-        // 抬起只在"真的拖过"之后交给状态机：没进 Dragging 的抬起（药丸上那一下）不许去动框，
-        // 它会把 `previous` 那份旧值当结果还回来。
-        if released && next.dragging {
-            next.release(&field, here);
-            // 空白单击 = 要鼠标底下那扇窗（REQ-108，用户原话"单击就相当于对整个应用界面
-            // 一样的大小进行了截图"）。**认不出来就什么都不做**：`release` 已经把押着的旧框
-            // 还回来了，不许顺手清掉它，也不许猜一个全屏框交出去。
-            //
-            // "手上还有没有框"这一条**只能在 release 之后问**：按下与抬起通常落在不同帧，
-            // 按下那一帧已经把旧框押进 `previous`、把 `rect` 换成了一个零尺寸的点，
-            // 在抬起那一帧的开头去看 `rect` 只会看到那个点——真机读数就是"单击认窗从不触发"。
-            // `release` 之后 `rect` 恰好等于 gesture 之前的那份值，问它才是问对了东西。
-            if next.clicked() && next.rect.is_none() {
-                if let Some(rect) = windows.candidate(origin, here, field.bounds) {
-                    next.take_window(&field, rect);
-                    tracing::info!("遮罩：单击认窗，整扇拿下 {rect:?}");
-                    if let Ok(mut queue) = slot.lock() {
-                        queue.push(MaskOut::Confirm { display, rect });
+        if ts.tool.is_none() {
+            // 选区态：既有手势逐字不变（REQ-006 的"默认与现状一致"就靠这一支原样保留）
+            if pressed && !on_bar {
+                next.press(&field, here, HANDLE_RADIUS);
+                changed = true;
+            } else if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
+                let before = next.rect;
+                next.drag(&field, here);
+                changed = next.rect != before;
+            }
+            // 抬起只在"真的拖过"之后交给状态机：没进 Dragging 的抬起（药丸上那一下）不许去动框，
+            // 它会把 `previous` 那份旧值当结果还回来。
+            if released && next.dragging {
+                next.release(&field, here);
+                // 空白单击 = 要鼠标底下那扇窗（REQ-108，用户原话"单击就相当于对整个应用界面
+                // 一样的大小进行了截图"）。**认不出来就什么都不做**：`release` 已经把押着的旧框
+                // 还回来了，不许顺手清掉它，也不许猜一个全屏框交出去。
+                //
+                // "手上还有没有框"这一条**只能在 release 之后问**：按下与抬起通常落在不同帧，
+                // 按下那一帧已经把旧框押进 `previous`、把 `rect` 换成了一个零尺寸的点，
+                // 在抬起那一帧的开头去看 `rect` 只会看到那个点——真机读数就是"单击认窗从不触发"。
+                // `release` 之后 `rect` 恰好等于 gesture 之前的那份值，问它才是问对了东西。
+                if next.clicked() && next.rect.is_none() {
+                    if let Some(rect) = windows.candidate(origin, here, field.bounds) {
+                        next.take_window(&field, rect);
+                        tracing::info!("遮罩：单击认窗，整扇拿下 {rect:?}");
+                        if let Ok(mut queue) = slot.lock() {
+                            queue.push(MaskOut::Confirm { display, rect });
+                        }
+                        wake_root(&root);
                     }
-                    wake_root(&root);
+                }
+                changed = true;
+            }
+        } else {
+            // 工具态：手势只动画笔，**不碰 next.rect**（互斥的另一半）。框/箭头/直线
+            // 拖的时候画矢量预览、松手落层；铅笔/橡皮拖到哪画到哪，每帧落一小段。
+            // 落层只改层 + 叫醒自己，不推意图、不叫主窗。
+            let clamp_pt = |p: Pos2| {
+                pos2(
+                    p.x.clamp(ann_field.bounds.min.x, ann_field.bounds.max.x),
+                    p.y.clamp(ann_field.bounds.min.y, ann_field.bounds.max.y),
+                )
+            };
+            if pressed && !on_bar {
+                ts.anchor = clamp_pt(here);
+                ts.last = ts.anchor;
+                ts.dragging = true;
+            }
+            // 铅笔/橡皮：连续落层。点→物理像素走与裁剪同一个 scale，Retina 上不会差一倍。
+            if ts.dragging && ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
+                let to = clamp_pt(here);
+                if let Some(scale) = ann_field.scale() {
+                    if let Ok(mut l) = layer.lock() {
+                        let (a, b) = ((ts.last.x, ts.last.y), (to.x, to.y));
+                        match ts.tool {
+                            Some(Tool::Pencil) => {
+                                l.pencil(&[a, b], THICKNESS[1] * scale, PALETTE[0]);
+                            }
+                            Some(Tool::Eraser) => {
+                                l.erase(a, b, THICKNESS[1] * scale * 3.0);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                ts.last = to;
+            }
+            if released && ts.dragging {
+                ts.dragging = false;
+                let a = ts.anchor;
+                let b = clamp_pt(here);
+                if let Some(scale) = ann_field.scale() {
+                    if let Ok(mut l) = layer.lock() {
+                        let (pa, pb) = ((a.x, a.y), (b.x, b.y));
+                        let width = THICKNESS[1] * scale;
+                        match ts.tool {
+                            Some(Tool::Rect) => {
+                                let rect = ann_field.clamp(Rect::from_two_pos(a, b));
+                                if rect.width() > 0.0 && rect.height() > 0.0 {
+                                    if let Some(px_rect) = ann_field.to_pixels(rect) {
+                                        l.rect_stroke(
+                                            (px_rect.x, px_rect.y),
+                                            (px_rect.x + px_rect.w, px_rect.y + px_rect.h),
+                                            width,
+                                            PALETTE[0],
+                                        );
+                                    }
+                                }
+                            }
+                            Some(Tool::Line) => l.line(pa, pb, width, PALETTE[0]),
+                            Some(Tool::Arrow) => l.arrow(pa, pb, width, PALETTE[0]),
+                            // 铅笔/橡皮拖的过程中已经落完；单击没拖也要落一个点
+                            Some(Tool::Pencil) => l.pencil(&[pa], width, PALETTE[0]),
+                            Some(Tool::Eraser) => l.erase(pa, pa, width * 3.0),
+                            None => {}
+                        }
+                    }
                 }
             }
-            changed = true;
+            if ts.dragging {
+                child.request_repaint();
+            }
         }
         if changed {
             ui.ctx()
@@ -820,6 +1043,41 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             child.request_repaint();
             // 这里**不**叫主窗：拖动与悬停每帧都在变，主窗那一侧没有要跟着变的东西，
             // 每帧把它叫醒一次正是 D-31~D-35 那一族。要它醒的只有"推进槽里的那一刻"。
+        }
+        // 工具态写回：与选区那格同形（带轮号），变了才写、才叫醒自己。
+        // 落层那一笔也在这里被看见：层 revision 变了，下一帧 annotation_texture 重传。
+        if ts != tool_before {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(tool_key(display), (frozen_id, ts)));
+            child.request_repaint();
+        }
+        // 拖动中的矢量预览：与落层同一份几何、同一个色，松手落下去的就是看到的那个。
+        // 铅笔/橡皮是连续落层，不需要预览（画出来的就是层本身）。
+        if ts.dragging {
+            let c = PALETTE[0];
+            let stroke = egui::Stroke::new(THICKNESS[1], egui::Color32::from_rgb(c[0], c[1], c[2]));
+            let painter = ui.painter();
+            match ts.tool {
+                Some(Tool::Rect) => {
+                    let rect = ann_field.clamp(Rect::from_two_pos(ts.anchor, here));
+                    painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
+                }
+                Some(Tool::Line) => {
+                    painter.line_segment([ts.anchor, here], stroke);
+                }
+                Some(Tool::Arrow) => {
+                    painter.line_segment([ts.anchor, here], stroke);
+                    // 头的几何与落层读同一份（annotate::arrow_head），预览即所得
+                    let [h1, h2] = crate::system::annotate::arrow_head(
+                        (ts.anchor.x, ts.anchor.y),
+                        (here.x, here.y),
+                        THICKNESS[1],
+                    );
+                    painter.line_segment([here, pos2(h1.0, h1.1)], stroke);
+                    painter.line_segment([here, pos2(h2.0, h2.1)], stroke);
+                }
+                _ => {}
+            }
         }
 
         // 动作条：**圆角药丸，浮在选区下方，放不下翻上方**；不许铺满整幅图宽（REQ-103）。
@@ -846,11 +1104,21 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                         egui::vec2(bar.width() - 2.0 * bar::SIDE_PAD, bar.height()),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
-                            // 三颗：**复制 / 保存 / 对勾**（对勾在最后，用户 2026-11-17）。对勾就是
-                            // "完成并钉住"（他原话"点对勾和固定到屏幕上是一样的"）；栏里不放「取消」——
-                            // esc 与右键承担。图标全是**线稿**，不用字符（本仓出过字符显示成方块的缺陷）。
+                            // 工具颗在前、确认三颗在后：**画框 / 箭头 / 直线 / 铅笔 / 橡皮 /
+                            // 复制 / 保存 / 对勾**（对勾最后，用户 2026-11-17）。对勾就是
+                            // "完成并钉住"（他原话"点对勾和固定到屏幕上是一样的"）；栏里不放
+                            // 「取消」——esc 与右键承担。图标全是**线稿**，不用字符
+                            // （本仓出过字符显示成方块的缺陷）。序号/文字/马赛克随后几片补进。
                             for icon in BAR_ICONS {
-                                if icon_button(ui, icon).clicked() {
+                                let active = tool_of(icon).is_some() && ts.tool == tool_of(icon);
+                                if icon_button(ui, icon, active).clicked() {
+                                    if let Some(t) = tool_of(icon) {
+                                        // 工具开关只改这一扇窗自己的运行态：不推意图、不叫主窗
+                                        // （推意图的出口只有确认三颗，形状核查盯死三个）。
+                                        ts.tool = if ts.tool == Some(t) { None } else { Some(t) };
+                                        ts.dragging = false;
+                                        continue;
+                                    }
                                     // 确认必须带上**这扇窗自己的框**：主窗不用再猜是哪块屏
                                     let out = match (icon, next.rect) {
                                         (BarIcon::Check, Some(rect)) => {
@@ -887,30 +1155,114 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
 /// 栏里不放「取消」（esc 与右键承担）。加一颗要改这张表，宽度测试与形状核查会先响。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BarIcon {
+    /// 画框（标注工具；再点一次或 esc 退出）
+    Rect,
+    /// 带箭头的线
+    Arrow,
+    /// 直线
+    Line,
+    /// 铅笔
+    Pencil,
+    /// 橡皮
+    Eraser,
     /// 完成 = 钉到屏幕上
     Check,
     Copy,
     Save,
 }
 
-pub const BAR_ICONS: [BarIcon; 3] = [BarIcon::Copy, BarIcon::Save, BarIcon::Check];
+pub const BAR_ICONS: [BarIcon; 8] = [
+    BarIcon::Rect,
+    BarIcon::Arrow,
+    BarIcon::Line,
+    BarIcon::Pencil,
+    BarIcon::Eraser,
+    BarIcon::Copy,
+    BarIcon::Save,
+    BarIcon::Check,
+];
 
 /// 一颗线稿图标按钮：自己画（两段线/两块圆角框/一个盘子加一支箭头），返回是否被点。
 ///
 /// 为什么不用 `ui.button("✔")`：字符依赖字体，本仓因为字符图标出过显示成方块的缺陷（D-5 那一族）。
-fn icon_button(ui: &mut egui::Ui, icon: BarIcon) -> egui::Response {
+fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response {
     let size = egui::vec2(ICON_W, ICON_W);
     let (id, rect) = ui.allocate_space(size);
     let response = ui.interact(rect, id, egui::Sense::click());
     let rect = rect.shrink(4.0);
-    let ink = if response.hovered() {
+    let ink = if response.hovered() || active {
         egui::Color32::WHITE
     } else {
         egui::Color32::from_rgb(0xC8, 0xCA, 0xCF)
     };
     let stroke = egui::Stroke::new(1.6, ink);
     let painter = ui.painter();
+    if active {
+        // 激活中的工具：一圈淡底把它与"还没点"的颗分开
+        painter.rect_filled(
+            rect.expand(3.0),
+            5.0,
+            egui::Color32::from_rgba_premultiplied(255, 255, 255, 30),
+        );
+    }
     match icon {
+        BarIcon::Rect => {
+            // 方框线稿：与它落下去的形状同一个读法
+            painter.rect_stroke(rect.shrink(1.0), 2.0, stroke, egui::StrokeKind::Inside);
+        }
+        BarIcon::Arrow => {
+            // 斜方向箭头：左下到右上一支杆，尖端两段短线成头
+            let a = egui::pos2(rect.min.x, rect.max.y);
+            let b = egui::pos2(rect.max.x, rect.min.y);
+            painter.line_segment([a, b], stroke);
+            painter.line_segment(
+                [b, egui::pos2(rect.max.x - rect.width() * 0.42, rect.min.y)],
+                stroke,
+            );
+            painter.line_segment(
+                [b, egui::pos2(rect.max.x, rect.min.y + rect.height() * 0.42)],
+                stroke,
+            );
+        }
+        BarIcon::Line => {
+            // 斜方向直线：与箭头同一根杆，没有头
+            painter.line_segment(
+                [
+                    egui::pos2(rect.min.x, rect.max.y),
+                    egui::pos2(rect.max.x, rect.min.y),
+                ],
+                stroke,
+            );
+        }
+        BarIcon::Pencil => {
+            // 铅笔线稿：两条平行边 + 尾端封口 + 尖头两段（笔尖朝左下）
+            let p = |fx: f32, fy: f32| {
+                egui::pos2(
+                    rect.min.x + rect.width() * fx,
+                    rect.min.y + rect.height() * fy,
+                )
+            };
+            painter.line_segment([p(0.25, 0.89), p(0.89, 0.25)], stroke);
+            painter.line_segment([p(0.11, 0.75), p(0.75, 0.11)], stroke);
+            painter.line_segment([p(0.89, 0.25), p(0.75, 0.11)], stroke);
+            painter.line_segment([p(0.25, 0.89), p(0.18, 0.82)], stroke);
+            painter.line_segment([p(0.18, 0.82), p(0.11, 0.75)], stroke);
+        }
+        BarIcon::Eraser => {
+            // 橡皮线稿：斜置的四边形 + 一道分隔（擦头与握身）
+            let p = |fx: f32, fy: f32| {
+                egui::pos2(
+                    rect.min.x + rect.width() * fx,
+                    rect.min.y + rect.height() * fy,
+                )
+            };
+            let (a, b, c, d) = (p(0.20, 0.60), p(0.50, 0.30), p(0.80, 0.50), p(0.50, 0.80));
+            painter.line_segment([a, b], stroke);
+            painter.line_segment([b, c], stroke);
+            painter.line_segment([c, d], stroke);
+            painter.line_segment([d, a], stroke);
+            painter.line_segment([p(0.35, 0.70), p(0.65, 0.40)], stroke);
+        }
         BarIcon::Check => {
             // 两段线，短的那段从左边起头——和 某截图工具 那颗对勾同一个读法
             let start = egui::pos2(rect.min.x, rect.center().y);
@@ -975,6 +1327,11 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon) -> egui::Response {
         }
     }
     let tip = match icon {
+        BarIcon::Rect => "在截图上画框（再点一次或按 esc 退出）",
+        BarIcon::Arrow => "画带箭头的线（再点一次或按 esc 退出）",
+        BarIcon::Line => "画直线（再点一次或按 esc 退出）",
+        BarIcon::Pencil => "自由绘制（再点一次或按 esc 退出）",
+        BarIcon::Eraser => "擦掉画上去的痕迹（再点一次或按 esc 退出）",
         BarIcon::Check => "钉到屏幕上（与按回车相同）",
         BarIcon::Copy => "复制这张图到剪贴板",
         BarIcon::Save => "存成文件",
@@ -982,7 +1339,7 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon) -> egui::Response {
     response.on_hover_text(tip)
 }
 
-/// 动作条的行高（药丸）。**宽度不再写死**——按内容定（[`bar_width`]：三颗线稿、一句尺寸
+/// 动作条的行高（药丸）。**宽度不再写死**——按内容定（[`bar_width`]：全部线稿颗、一句尺寸
 /// 读数、两端留白），它 SHALL NOT 跟着选区宽度变（用户那句"标注按钮怎么有背景"要的就是浮着
 /// 的小条，不是一条 bar）。先前写死 300 而内容只占约一半，右边空一大截黑底，正是"排列好丑"那一条。
 pub const BAR_H: f32 = 34.0;
@@ -1430,20 +1787,27 @@ mod tests {
         assert!(!flipped.intersects(low), "翻上去那一档同样不许压住选区");
     }
 
-    /// **药丸宽按内容定**：三颗线稿 + 尺寸读数 + 颗间缝 + 两端留白；没有读数时少一颗少一条缝。
-    /// 锁住"不再写死 300"——一句常见读数（约 60 点）配出来的药丸远窄于 300，右边不再空一大截。
+    /// **药丸宽按内容定**：颗数读 BAR_ICONS（加颗这里跟着长）+ 尺寸读数 + 颗间缝 + 两端留白；
+    /// 没有读数时少一颗少一条缝。锁住"不再写死 300"——一句常见读数（约 60 点）配出来的
+    /// 药丸远窄于 300，右边不再空一大截。
     #[test]
     fn the_bar_width_hugs_its_content() {
-        let no_label = 2.0 * bar::SIDE_PAD + 3.0 * ICON_W + 2.0 * bar::BTN_GAP;
-        assert_eq!(bar_width(0.0), no_label, "没读数：三颗 + 两条缝 + 两端留白");
+        let n = BAR_ICONS.len() as f32;
+        let no_label = 2.0 * bar::SIDE_PAD + n * ICON_W + (n - 1.0) * bar::BTN_GAP;
+        assert_eq!(
+            bar_width(0.0),
+            no_label,
+            "没读数：全部颗 + 颗间缝 + 两端留白"
+        );
         assert_eq!(
             bar_width(60.0),
             no_label + 60.0 + bar::BTN_GAP,
             "多一句读数：多它本身的宽 + 多一条缝"
         );
-        assert!(
-            bar_width(60.0) < 300.0,
-            "常见读数配出的药丸该贴合内容，不是先前写死的 300"
+        assert_ne!(
+            bar_width(60.0),
+            300.0,
+            "宽是按内容算出来的，不是先前写死的 300（颗数多了它会跟着长）"
         );
     }
 
@@ -1564,7 +1928,7 @@ mod tests {
         assert_eq!(
             body.matches("wake_root(&root)").count(),
             3,
-            "esc/回车、单击认窗、药丸三颗——三个推意图的出口，一个不多一个不少"
+            "esc/回车、单击认窗、药丸确认三颗——三个推意图的出口，一个不多一个不少；工具颗只改本地态，不推意图"
         );
         assert!(
             !body.contains("root.request_repaint()"),
@@ -1631,6 +1995,80 @@ mod tests {
         assert!(
             !body.contains(".with_transparent(false)"),
             "遮罩窗不许回到不透明底——那正是白屏的来源"
+        );
+    }
+
+    /// **标注层按 (屏, 轮号) 存取**：同轮同一份（遮罩画的与主窗裁的是同一张），
+    /// 换轮全新透明层（D-42 同形），换屏不借。拿真存储走一遍，不抄读法。
+    #[test]
+    fn the_annotation_layer_is_per_screen_and_per_round() {
+        let ctx = egui::Context::default();
+        let a = annotation_layer(&ctx, 1, 10, (64, 64));
+        a.lock()
+            .unwrap()
+            .line((0.0, 0.0), (10.0, 10.0), 2.0, PALETTE[0]);
+        let same = annotation_layer(&ctx, 1, 10, (64, 64));
+        assert!(
+            std::sync::Arc::ptr_eq(&a, &same),
+            "同轮必须取到同一份：主窗确认时裁的就是遮罩画的那张"
+        );
+        assert!(same.lock().unwrap().revision > 0);
+        let fresh = annotation_layer(&ctx, 1, 11, (64, 64));
+        assert!(!std::sync::Arc::ptr_eq(&a, &fresh), "换轮换新层");
+        assert_eq!(fresh.lock().unwrap().revision, 0, "新层必须一笔没有");
+        let other = annotation_layer(&ctx, 2, 10, (64, 64));
+        assert_eq!(
+            other.lock().unwrap().revision,
+            0,
+            "另一块屏不许借这一扇的层"
+        );
+    }
+
+    /// 工具态同样按轮号作废：新一轮不许带着上一轮激活的工具。
+    #[test]
+    fn tool_state_reads_blank_on_a_new_round() {
+        let mut map = egui::util::IdTypeMap::default();
+        let ts = ToolState {
+            tool: Some(Tool::Rect),
+            anchor: pos2(5.0, 5.0),
+            last: pos2(5.0, 5.0),
+            dragging: false,
+        };
+        map.insert_temp(tool_key(1), (10_u64, ts));
+        assert_eq!(load_tool_state(&map, 1, 10).tool, Some(Tool::Rect));
+        assert_eq!(load_tool_state(&map, 1, 11).tool, None, "换轮读空白");
+        assert_eq!(load_tool_state(&map, 2, 10).tool, None, "换屏不借");
+    }
+
+    /// **形状核查：esc 先退工具、不取消遮罩**（REQ-006）。工具态那一支不许推 Cancel。
+    #[test]
+    fn escape_exits_the_tool_before_it_cancels_the_mask() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        assert!(
+            body.contains("if ts.tool.is_some() {"),
+            "esc 必须先问工具态：有工具先退工具，框还在"
+        );
+    }
+
+    /// **形状核查：工具态与选区态互斥**——选区手势整支包在 `ts.tool.is_none()` 里，
+    /// 工具手势那一支不碰 `next.rect`（REQ-006 的默认不变就靠这个分离）。
+    #[test]
+    fn tool_gestures_and_selection_gestures_are_mutually_exclusive() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        assert!(
+            body.contains("if ts.tool.is_none() {"),
+            "选区手势只在没有激活工具时走"
+        );
+        let from = body
+            .find("ts.anchor = clamp_pt(here)")
+            .expect("工具态那一支得有出处");
+        let to = body
+            .find("if ts != tool_before")
+            .expect("工具态写回得有出处");
+        let tool_branch = &body[from..to];
+        assert!(
+            !tool_branch.contains("next.press") && !tool_branch.contains("next.drag"),
+            "工具手势不许进选区状态机"
         );
     }
 }
