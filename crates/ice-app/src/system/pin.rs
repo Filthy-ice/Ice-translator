@@ -278,6 +278,20 @@ pub fn selection_gesture(text_ready: bool, shift: bool, primary_pressed: bool) -
     text_ready && shift && primary_pressed
 }
 
+/// 图片本体按下交给原生的那几条命令：**未聚焦先补一条 Focus**。
+/// egui-winit 0.37 在 `window.has_focus()` 为假时把 `StartDrag` 静默丢掉
+/// （lib.rs:1961-1968），与主窗把手当年"拖不动"同一病因（`app.rs` 的 `start_drag`）。
+/// 贴图常驻置顶，用户常在别的应用里干活顺手来按它——那一下恰好没焦点，
+/// 少这条 Focus 就表现为"钉住的图拖不动"（D-47）。
+pub fn drag_commands(focused: Option<bool>) -> Vec<egui::ViewportCommand> {
+    let mut cmds = Vec::new();
+    if focused != Some(true) {
+        cmds.push(egui::ViewportCommand::Focus);
+    }
+    cmds.push(egui::ViewportCommand::StartDrag);
+    cmds
+}
+
 /// 拖选期间这一帧该画的那个矩形：按下点与当前指针点的并。松手之前它只是**读数**，
 /// 选中集合要等 [`hit_blocks`] 在抬起那一刻算一次——每帧都算会让"擦过"的块全进选中。
 pub fn drag_rect(from: Pos2, to: Pos2) -> Rect {
@@ -586,7 +600,9 @@ pub fn show(ctx: &egui::Context, pin: &crate::state::Pin, hint: Option<bool>) {
                 child.data_mut(|d| d.insert_temp(sel_start_key(id), at));
             }
         } else if pressed {
-            child.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            for cmd in drag_commands(child.input(|i| i.viewport().focused)) {
+                child.send_viewport_cmd(cmd);
+            }
         }
 
         // 文字层：选中那几块各涂一层淡高亮，正在拖的那一下画个白框。
@@ -1171,6 +1187,29 @@ mod tests {
             "文字层没长出来，Shift 也不该冒出第二种手势"
         );
         assert!(!selection_gesture(true, true, false));
+    }
+
+    /// D-47：未聚焦先补 Focus 再 StartDrag——egui-winit 0.37 在没焦点时把 StartDrag
+    /// 静默丢掉（lib.rs:1961-1968），与主窗把手当年同一病因。聚焦时只发拖动，不多抢焦点。
+    #[test]
+    fn an_unfocused_pin_gets_focus_before_the_native_drag() {
+        for focused in [None, Some(false)] {
+            let cmds = drag_commands(focused);
+            let focus = cmds
+                .iter()
+                .position(|c| *c == egui::ViewportCommand::Focus)
+                .expect("未聚焦必须补 Focus");
+            let drag = cmds
+                .iter()
+                .position(|c| *c == egui::ViewportCommand::StartDrag)
+                .expect("按下总要交给原生拖");
+            assert!(focus < drag, "Focus 必须排在 StartDrag 之前");
+        }
+        assert_eq!(
+            drag_commands(Some(true)),
+            vec![egui::ViewportCommand::StartDrag],
+            "已聚焦就直接拖，不多发一条 Focus"
+        );
     }
 
     /// **形状核查：贴图的落点只有一个来源——状态给的那一个。**
