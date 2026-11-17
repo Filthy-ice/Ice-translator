@@ -540,6 +540,21 @@ fn load_selection(d: &egui::util::IdTypeMap, display: u8, frozen_id: u64) -> Sel
         .unwrap_or_default()
 }
 
+/// 这一轮**任一扇屏**已经拖出过框没有（REQ-108 的"用户还没有拖出选区"问的是人，
+/// 不是屏）。存在根上下文、按轮号 keyed：A 屏画了框，B 屏的认窗高亮与单击截整窗
+/// 都得停——不然鼠标挪到另一块屏还能点亮窗、单击还会把那一扇截走（D-45）。
+/// 一轮之内只增不减：框一旦画出，到确认/esc 结束这一轮之前都算"已经有框"。
+fn any_selection(root: &egui::Context, frozen_id: u64) -> bool {
+    root.data(|d| {
+        d.get_temp::<bool>(Id::NULL.with("ice-selection.any-sel").with(frozen_id))
+            .unwrap_or(false)
+    })
+}
+
+fn mark_selection(root: &egui::Context, frozen_id: u64) {
+    root.data_mut(|d| d.insert_temp(Id::NULL.with("ice-selection.any-sel").with(frozen_id), true));
+}
+
 // ---- 标注层与工具态（CHG-014） ----
 
 fn ann_key(display: u8) -> Id {
@@ -874,11 +889,17 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         let tool_before = ts.clone();
         let here = ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO);
         let holding = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
-        // 认窗（REQ-108）：**光标真在这块屏、还没框、也没在拖**的时候，鼠标底下那扇应用窗亮出来。
+        // 认窗（REQ-108）：**光标真在这块屏、这一轮还没框、也没在拖**的时候，鼠标底下那扇应用窗亮出来。
         // 已经有框就不再认——那会儿用户在调自己那个框，亮另一扇窗只会跟他抢注意力。
+        // "还没框"问的是**这一轮所有屏**（any_selection）：A 屏画了框，B 屏也不许再认（D-45）。
         // `cursor_here` 把另一块屏挡在外面：那扇遮罩读不到指针，`here` 会是本地 (0,0)，
         // 不挡的话它左上角那扇窗会被点亮（用户那句「两块屏上的窗都亮了、只有周边灰」）。
-        let hover = if cursor_here && next.rect.is_none() && !holding && ts.tool.is_none() {
+        let hover = if cursor_here
+            && next.rect.is_none()
+            && !any_selection(&root, frozen_id)
+            && !holding
+            && ts.tool.is_none()
+        {
             windows.candidate(origin, here, field.bounds)
         } else {
             None
@@ -1081,7 +1102,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 // 按下那一帧已经把旧框押进 `previous`、把 `rect` 换成了一个零尺寸的点，
                 // 在抬起那一帧的开头去看 `rect` 只会看到那个点——真机读数就是"单击认窗从不触发"。
                 // `release` 之后 `rect` 恰好等于 gesture 之前的那份值，问它才是问对了东西。
-                if next.clicked() && next.rect.is_none() {
+                if next.clicked() && next.rect.is_none() && !any_selection(&root, frozen_id) {
                     if let Some(rect) = windows.candidate(origin, here, field.bounds) {
                         next.take_window(&field, rect);
                         tracing::info!("遮罩：单击认窗，整扇拿下 {rect:?}");
@@ -1193,6 +1214,9 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             }
         }
         if changed {
+            if next.rect.is_some() {
+                mark_selection(&root, frozen_id);
+            }
             ui.ctx()
                 .data_mut(|d| d.insert_temp(sel_key(display), (frozen_id, next)));
             // 自己叫醒自己：指针事件只到这一扇子窗，不叫它重画，框就停在上一次画出来的样子
@@ -1929,7 +1953,7 @@ mod tests {
     fn the_window_hover_is_gated_by_the_cursor_being_on_this_screen() {
         let body = crate::system::implementation_lines(include_str!("selection.rs"));
         assert!(
-            body.contains("if cursor_here && next.rect.is_none() && !holding"),
+            body.contains("let hover = if cursor_here"),
             "认窗高亮只在光标真所在的那块屏上做，另一块不许亮"
         );
     }
@@ -2426,5 +2450,25 @@ mod tests {
             write_back > toggle,
             "写回必须在开关之后，不然开关结果存不进去"
         );
+    }
+
+    /// D-45：「已经有框」这一轮全屏幕共享——任一屏画了框就算有，新一轮回到没有。
+    /// 拿真存储走一遍，不抄读法。
+    #[test]
+    fn the_any_selection_flag_is_round_scoped_and_shared_across_screens() {
+        let ctx = egui::Context::default();
+        assert!(!any_selection(&ctx, 10), "新一轮开始没有框");
+        mark_selection(&ctx, 10);
+        assert!(any_selection(&ctx, 10), "任一屏画了框，这一轮就算有框");
+        assert!(!any_selection(&ctx, 11), "换轮回到没有框");
+    }
+
+    /// 形状核查：认窗的两个出口——悬停高亮与单击截整窗——都必须问这一轮的
+    /// 「已经有框」标记（D-45：A 屏画了框，B 屏不许再认、更不许单击截走）。
+    #[test]
+    fn both_window_recognition_gates_ask_the_round_flag() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        let n = body.matches("!any_selection(&root, frozen_id)").count();
+        assert!(n >= 2, "悬停高亮与单击截整窗两处都要问标记，只找到 {n} 处");
     }
 }
