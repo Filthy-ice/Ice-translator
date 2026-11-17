@@ -1,0 +1,162 @@
+{
+  "baseline": {
+    "change": "CHG-015",
+    "version": "v0.1",
+    "spec_hash": "5ce8c5732953664427d6777d8ca283636af4cabbc6ead11fa9cc713826a26a8b"
+  },
+  "design": [
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
+      "note": "撤销与再编辑无头：一笔撤销逐像素等于落笔前（H1）、铅笔拖三段一笔撤、橡皮擦痕可撤、30 条+64MB 双上限丢最旧、空栈无声、文字输入让位；空层确认不建 Anno、带层显示==盘上烧录 PNG、revision 变缓存变、成品折叠；按钮表 4/5 顺序文案；提交重写历史 PNG 不新增文件、在飞 generation 作废、esc 三层；烧录图新建层旧像素不变"
+    },
+    {
+      "id": "V-002",
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "note": "全量无回归：无标注贴图的显示/复制/保存/翻译/拖动/右键/esc/空格逐项不变；工具条抽公共后遮罩形状断言（写回顺序/像素漏斗/认窗门/对勾最后）全部保持；选框/认窗/冻结/换算/热键/配置/剪贴板一项不许回退"
+    },
+    {
+      "id": "V-003",
+      "requirements": [
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "note": "clippy 全绿（-D warnings）：撤销栈、抽公共的工具条与编辑态接线不许带警告进仓"
+    },
+    {
+      "id": "V-004",
+      "requirements": [
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "cargo",
+        "tree",
+        "-p",
+        "ice-app",
+        "-e",
+        "normal"
+      ],
+      "note": "依赖图零增量：撤销用 Vec+既有 image，编辑器复用既有工具条，不新增 crate 名；与基线输出逐行相同才算过，多一个名字即停止条件 1"
+    },
+    {
+      "id": "V-005",
+      "requirements": [
+        "REQ-006"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": [
+        "./sdd",
+        "scan"
+      ],
+      "note": "敏感信息基线扫描：本包不新增落盘面（重写的是既有历史 PNG 那一个文件），日志不落用户内容；scan 通过是隐私口径不漂的下限"
+    },
+    {
+      "id": "V-006",
+      "requirements": [
+        "REQ-002",
+        "REQ-004"
+      ],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "static",
+      "required": true,
+      "command": [
+        "bash",
+        "-c",
+        "grep -c 'composite_into' crates/ice-app/src/system/annotate.rs crates/ice-app/src/state.rs crates/ice-app/src/system/pin.rs; grep -n 'exactly_five_actions' crates/ice-app/src/system/pin.rs"
+      ],
+      "note": "形状核查：合成实现仍只有 annotate.rs 一处定义（调用点可多：裁图/显示/提交三个出口都调它，不许出现第二份合成实现）；按钮表长度断言已改锁五项。grep 命中才算过"
+    },
+    {
+      "id": "V-007",
+      "requirements": [
+        "REQ-001",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005"
+      ],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "W-15.1：用户真机——遮罩里画几笔按 ctrl+z/cmd+z 逐笔退、铅笔一整段一笔退；钉住后药丸点「标注」续画、钉住前的笔接着撤；橡皮擦得掉新笔擦不掉烧录旧笔；对勾/esc 关闭后改动还在、F2 再钉出来是最新的；翻译链不回退。观感手感只有用户眼睛能判，不许拿日志或无头用例冒充。前像不精确＝停止条件 2、默认路径回退＝3、翻译链被搅＝4、手势打架＝5，都回来报"
+    }
+  ]
+}

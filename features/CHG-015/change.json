@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "id": "CHG-015",
+  "title": "标注撤销与钉住后再编辑",
+  "version": "v0.1",
+  "status": "SPEC_REVIEW",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-001",
+      "blocking": false,
+      "question": "要不要重做（Cmd+Shift+Z / Ctrl+Y）？",
+      "resolution": "不做。用户只点名撤销；他要了再加。",
+      "source": "2026-11-17 用户原话只提 ctrl+z 撤销。"
+    },
+    {
+      "id": "Q-002",
+      "blocking": false,
+      "question": "「标注」放药丸哪个位置？",
+      "resolution": "追加在末位（翻译/复制/保存/标注），既有三颗顺序不动。",
+      "source": "用户纪律「我说了没问题的不要动」。"
+    },
+    {
+      "id": "Q-003",
+      "blocking": false,
+      "question": "撤销栈上限多少？",
+      "resolution": "30 条 + 64MB 双上限，任一超了丢最旧。只封顶条数挡不住一笔横穿全屏的脏矩形。",
+      "source": "事实 6 算术：4K 整层 ≈33MB。"
+    },
+    {
+      "id": "Q-004",
+      "blocking": false,
+      "question": "烧录图（F2 历史/重启后）擦不掉旧标注，接受吗？",
+      "resolution": "接受并在文档写明。层不持久化是本包边界；跨重启可编辑要落侧车文件，属另一包。",
+      "source": "REQ-005 边界。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-17T07:17:29+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-11-17T07:31:26+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-11-17T07:31:26+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    }
+  ],
+  "approval": null,
+  "plan_hash": null
+}
