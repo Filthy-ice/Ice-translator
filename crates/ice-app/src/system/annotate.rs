@@ -16,6 +16,9 @@ use image::RgbaImage;
 /// 默认中档；档位选择是运行态，不进 config（REQ-003）。
 pub const THICKNESS: [f32; 3] = [2.0, 4.0, 7.0];
 
+/// 粗细档的下拉文案，与 [`THICKNESS`] 同序（REQ-003 药丸下拉读这一份）。
+pub const THICKNESS_NAMES: [&str; 3] = ["细", "中", "粗"];
+
 /// 序号标半径三档（点）：与粗细同一个档位读法（REQ-003）。默认中档。
 pub const BADGE_RADIUS: [f32; 3] = [10.0, 14.0, 18.0];
 
@@ -34,6 +37,9 @@ pub const PALETTE: [[u8; 4]; 6] = [
     [245, 245, 245, 255],
     [20, 20, 20, 255],
 ];
+
+/// 色板六色的下拉文案，与 [`PALETTE`] 同序、红在最前（REQ-003）。
+pub const PALETTE_NAMES: [&str; 6] = ["红", "黄", "蓝", "绿", "白", "黑"];
 
 /// 一层标注。`revision` 每落一笔加一：显示侧拿它判"要不要重传纹理"（照定格纹理那套缓存读法）。
 pub struct Layer {
@@ -511,5 +517,44 @@ mod tests {
         l.mosaic(&bg, (8.0, 8.0), (8.0, 20.0), 4);
         assert_eq!(l.revision, 0);
         assert!(l.image.pixels().all(|p| p[3] == 0));
+    }
+
+    /// REQ-003：换粗细档，落层线宽跟着变（同一条线，粗档不透明像素更多）。
+    #[test]
+    fn thicker_tier_paints_a_wider_line() {
+        let count = |w: f32| {
+            let mut l = Layer::new(64, 64);
+            l.line((8.0, 32.0), (56.0, 32.0), w, PALETTE[0]);
+            l.image.pixels().filter(|p| p[3] > 0).count()
+        };
+        assert!(
+            count(THICKNESS[2]) > count(THICKNESS[1]) && count(THICKNESS[1]) > count(THICKNESS[0]),
+            "细<中<粗三档落层宽度必须递增"
+        );
+    }
+
+    /// REQ-003：换色板，落层颜色跟着变；默认档（0）就是红。
+    #[test]
+    fn palette_tier_changes_the_painted_color_and_default_is_red() {
+        assert_eq!(PALETTE[0], [220, 40, 40, 255], "默认红在最前");
+        let mid = |c: [u8; 4]| {
+            let mut l = Layer::new(64, 64);
+            l.line((8.0, 32.0), (56.0, 32.0), THICKNESS[1], c);
+            *l.image.get_pixel(32, 32)
+        };
+        let red = mid(PALETTE[0]);
+        let blue = mid(PALETTE[2]);
+        assert_eq!(red.0, [220, 40, 40, 255]);
+        assert_eq!(blue.0, [40, 110, 220, 255]);
+        assert_ne!(red, blue);
+    }
+
+    /// REQ-003：下拉文案与档值同序同长（名字表错位＝下拉选的是另一档）。
+    #[test]
+    fn tier_names_line_up_with_tier_values() {
+        assert_eq!(THICKNESS_NAMES.len(), THICKNESS.len());
+        assert_eq!(PALETTE_NAMES.len(), PALETTE.len());
+        assert_eq!(THICKNESS_NAMES[1], "中", "默认中档");
+        assert_eq!(PALETTE_NAMES[0], "红", "默认红");
     }
 }

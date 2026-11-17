@@ -132,6 +132,11 @@
       "at": "2026-11-17T03:41:39+00:00",
       "action": "transition",
       "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-11-17T08:10:59+00:00",
+      "action": "task-done",
+      "detail": "T-003"
     }
   ],
   "approval": {

@@ -10,7 +10,8 @@
 //!    两处各除一次或都忘了除的现场：贴图大一倍、文字层整体错位。
 
 use crate::system::annotate::{
-    BADGE_RADIUS, Layer, MOSAIC_BLOCK_PT, PALETTE, TEXT_SIZE, THICKNESS,
+    BADGE_RADIUS, Layer, MOSAIC_BLOCK_PT, PALETTE, PALETTE_NAMES, TEXT_SIZE, THICKNESS,
+    THICKNESS_NAMES,
 };
 use crate::system::bar::{self, GAP};
 use crate::system::wake_root;
@@ -412,21 +413,24 @@ fn resize(rect: Rect, index: u8, to: Pos2) -> Rect {
 /// 300——内容只占约一半、右边空一大截黑底，正是用户那句"按钮文字排列好丑"（2026-11-11）。
 /// `label_w` 由 [`label_width`] 用绘制同一字体量出，按下判定与绘制各按自己那一刻的选区量，
 /// 读的都是同一个 `next`，不会分岔。
-fn bar_of(sel: &Selection, field: &Field, label_w: f32) -> Option<Rect> {
+fn bar_of(sel: &Selection, field: &Field, label_w: f32, tool_active: bool) -> Option<Rect> {
     let rect = sel
         .rect
         .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)?;
-    let size = Vec2::new(bar_width(label_w), BAR_H);
+    let size = Vec2::new(bar_width(label_w, tool_active), BAR_H);
     Some(bar::rect(rect, size, bar::side(rect, size, field.bounds)))
 }
 
-/// 药丸宽 = 全部线稿颗（[`BAR_ICONS`]）+ 一句尺寸读数 + 颗间 [`bar::BTN_GAP`] + 两端
-/// [`bar::SIDE_PAD`]。没有读数（屏比例不可信、量不出像素）时少一颗、也少一条缝。与贴图那条
+/// 药丸宽 = 全部线稿颗（[`BAR_ICONS`]）+ 选中工具时两颗定宽下拉（[`OPT_W`]）+ 一句尺寸读数，
+/// 再加上各项之间的 [`bar::BTN_GAP`] 与两端 [`bar::SIDE_PAD`]。项数按"线稿颗 + 下拉 + 读数"数，
+/// 缝 = 项数 − 1；没有读数（屏比例不可信、量不出像素）时少一项、也少一条缝。与贴图那条
 /// `width_for` 同一条"按内容定宽"的纪律，只是这边末颗是变宽的尺寸文字而非定宽文字按钮。
-fn bar_width(label_w: f32) -> f32 {
+fn bar_width(label_w: f32, tool_active: bool) -> f32 {
     let icons = BAR_ICONS.len() as f32;
-    let gaps = if label_w > 0.0 { icons } else { icons - 1.0 };
-    2.0 * bar::SIDE_PAD + icons * ICON_W + gaps * bar::BTN_GAP + label_w
+    let opts = if tool_active { 2.0 } else { 0.0 };
+    let label = if label_w > 0.0 { 1.0 } else { 0.0 };
+    let gaps = icons + opts + label - 1.0;
+    2.0 * bar::SIDE_PAD + icons * ICON_W + opts * OPT_W + gaps * bar::BTN_GAP + label_w
 }
 
 /// 量一句尺寸读数在**绘制用的同一字体**（Body）下占多宽（点）。`ui.label` 默认就是 Body，
@@ -666,6 +670,10 @@ struct ToolState {
     next_number: u32,
     /// 文字工具开着的那条输入：落点 + 正在打的字。`None` = 没在输入。
     text_input: Option<(Pos2, String)>,
+    /// 粗细档（REQ-003）：默认中档。运行态，不进 config；落层与预览同源读。
+    thickness_idx: usize,
+    /// 色板档（REQ-003）：默认红。马赛克与橡皮不读它（一个取背景色、一个只清 alpha）。
+    color_idx: usize,
 }
 
 impl Default for ToolState {
@@ -677,6 +685,8 @@ impl Default for ToolState {
             dragging: false,
             next_number: 1,
             text_input: None,
+            thickness_idx: 1,
+            color_idx: 0,
         }
     }
 }
@@ -719,9 +729,9 @@ fn stamp_number(
     if let Ok(mut l) = layer.lock() {
         l.number_badge(
             center,
-            BADGE_RADIUS[1] * scale,
+            BADGE_RADIUS[ts.thickness_idx] * scale,
             ts.next_number,
-            PALETTE[0],
+            PALETTE[ts.color_idx],
             &metrics,
         );
         ts.next_number += 1;
@@ -751,7 +761,13 @@ fn commit_text_input(
         return;
     };
     if let Ok(mut l) = layer.lock() {
-        let missing = l.text(p, &text, TEXT_SIZE[1] * scale, PALETTE[0], &metrics);
+        let missing = l.text(
+            p,
+            &text,
+            TEXT_SIZE[ts.thickness_idx] * scale,
+            PALETTE[ts.color_idx],
+            &metrics,
+        );
         if missing > 0 {
             tracing::warn!(missing, "文字标注：有字符本机字体画不出");
         }
@@ -1076,7 +1092,12 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         // **落在药丸上的那一下不算框选手势。** 先前没有这一条：按下落在对勾上，`press` 先把
         // 旧框换成一个零尺寸的点，药丸那一块下一帧就没了位置，那颗按钮收不到完整的
         // "按下—抬起"——真机上的表现就是"点了对勾什么都不钉"（用户 2026-11-09 晚第二条原话）。
-        let bar_now = bar_of(&next, &field, label_width(ui, &next, &field));
+        let bar_now = bar_of(
+            &next,
+            &field,
+            label_width(ui, &next, &field),
+            ts.tool.is_some(),
+        );
         let on_bar = bar_now.is_some_and(|bar| bar.contains(here));
         let pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
@@ -1124,7 +1145,11 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                     p.y.clamp(ann_field.bounds.min.y, ann_field.bounds.max.y),
                 )
             };
-            if pressed && !on_bar {
+            // 落在药丸 / 下拉弹出菜单 / 文字输入框这些浮层上的那一下不算画手势：
+            // `is_pointer_over_egui` 认出指针正压在某个 Foreground 浮层上（画布是 Background
+            // 根面板，不在此列）。少了这一条，从色板下拉里选个颜色会在菜单底下的画布上
+            // 顺手点出一笔（REQ-003 换档换色不许污染画面）。
+            if pressed && !on_bar && !ui.ctx().is_pointer_over_egui() {
                 if let Some(rect) = input_rect {
                     // 输入开着：落在框外那一下 = 确认这条输入，这一下不起新手势；
                     // 落在框里交给 TextEdit（挪光标），不动工具态。
@@ -1159,10 +1184,14 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                         if let Ok(mut l) = layer.lock() {
                             match ts.tool {
                                 Some(Tool::Pencil) => {
-                                    l.pencil(&[a, b], THICKNESS[1] * scale, PALETTE[0]);
+                                    l.pencil(
+                                        &[a, b],
+                                        THICKNESS[ts.thickness_idx] * scale,
+                                        PALETTE[ts.color_idx],
+                                    );
                                 }
                                 Some(Tool::Eraser) => {
-                                    l.erase(a, b, THICKNESS[1] * scale * 3.0);
+                                    l.erase(a, b, THICKNESS[ts.thickness_idx] * scale * 3.0);
                                 }
                                 _ => {}
                             }
@@ -1179,7 +1208,8 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 {
                     if let Some(scale) = ann_field.scale() {
                         if let Ok(mut l) = layer.lock() {
-                            let width = THICKNESS[1] * scale;
+                            let width = THICKNESS[ts.thickness_idx] * scale;
+                            let color = PALETTE[ts.color_idx];
                             match ts.tool {
                                 Some(Tool::Rect) => {
                                     let rect = ann_field.clamp(Rect::from_two_pos(a, b));
@@ -1189,15 +1219,15 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                                                 (px_rect.x, px_rect.y),
                                                 (px_rect.x + px_rect.w, px_rect.y + px_rect.h),
                                                 width,
-                                                PALETTE[0],
+                                                color,
                                             );
                                         }
                                     }
                                 }
-                                Some(Tool::Line) => l.line(pa, pb, width, PALETTE[0]),
-                                Some(Tool::Arrow) => l.arrow(pa, pb, width, PALETTE[0]),
+                                Some(Tool::Line) => l.line(pa, pb, width, color),
+                                Some(Tool::Arrow) => l.arrow(pa, pb, width, color),
                                 // 铅笔/橡皮拖的过程中已经落完；单击没拖也要落一个点
-                                Some(Tool::Pencil) => l.pencil(&[pa], width, PALETTE[0]),
+                                Some(Tool::Pencil) => l.pencil(&[pa], width, color),
                                 Some(Tool::Eraser) => l.erase(pa, pa, width * 3.0),
                                 Some(Tool::Mosaic) => {
                                     let block = (MOSAIC_BLOCK_PT * scale).round().max(1.0) as u32;
@@ -1228,8 +1258,11 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         // 拖动中的矢量预览：与落层同一份几何、同一个色，松手落下去的就是看到的那个。
         // 铅笔/橡皮是连续落层，不需要预览（画出来的就是层本身）。
         if ts.dragging {
-            let c = PALETTE[0];
-            let stroke = egui::Stroke::new(THICKNESS[1], egui::Color32::from_rgb(c[0], c[1], c[2]));
+            let c = PALETTE[ts.color_idx];
+            let stroke = egui::Stroke::new(
+                THICKNESS[ts.thickness_idx],
+                egui::Color32::from_rgb(c[0], c[1], c[2]),
+            );
             let painter = ui.painter();
             match ts.tool {
                 Some(Tool::Rect) => {
@@ -1245,7 +1278,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                     let [h1, h2] = crate::system::annotate::arrow_head(
                         (ts.anchor.x, ts.anchor.y),
                         (here.x, here.y),
-                        THICKNESS[1],
+                        THICKNESS[ts.thickness_idx],
                     );
                     painter.line_segment([here, pos2(h1.0, h1.1)], stroke);
                     painter.line_segment([here, pos2(h2.0, h2.1)], stroke);
@@ -1268,7 +1301,12 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         // 动作条：**圆角药丸，浮在选区下方，放不下翻上方**；不许铺满整幅图宽（REQ-103）。
         // 宽度按内容定（[`bar_width`]），版式照贴图那条已批准药丸（`pill.rs`）：两端让出
         // `SIDE_PAD`、颗间 `BTN_GAP`、整行在 `BAR_H` 里垂直居中——不再齐平顶格、右边空一大截。
-        if let Some(bar) = bar_of(&next, &field, label_width(ui, &next, &field)) {
+        if let Some(bar) = bar_of(
+            &next,
+            &field,
+            label_width(ui, &next, &field),
+            ts.tool.is_some(),
+        ) {
             // 用 Area 浮在遮罩之上：药丸的位置跟着选区算，不占窗口布局（占位会把图片挤走）。
             // Area 原点左移一格 SIDE_PAD，下面那一行就从药丸左缘往里 SIDE_PAD 处起摆。
             egui::Area::new(Id::NULL.with("ice-selection.bar"))
@@ -1327,6 +1365,48 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                                     }
                                     wake_root(&root);
                                 }
+                            }
+                            // 选中工具才长出粗细 / 色板两颗下拉（REQ-003）：换档换色，落层与
+                            // 预览同源读 `ts.thickness_idx` / `ts.color_idx`。没选工具时不占位，
+                            // 药丸宽度由 [`bar_width`] 的 `tool_active` 同步收回去。两颗定宽 OPT_W，
+                            // 换档时药丸不跳宽。按钮套一层暗色 visuals 与药丸同底；弹出菜单跟随
+                            // 应用主题（与贴图右键菜单一致，不另造一套）。
+                            if ts.tool.is_some() {
+                                let mut dark = ui.visuals().clone();
+                                dark.widgets.inactive.bg_fill =
+                                    egui::Color32::from_rgba_premultiplied(48, 48, 52, 235);
+                                dark.widgets.inactive.weak_bg_fill =
+                                    egui::Color32::from_rgba_premultiplied(48, 48, 52, 235);
+                                dark.widgets.inactive.fg_stroke =
+                                    egui::Stroke::new(1.0, egui::Color32::from_gray(235));
+                                dark.widgets.hovered.bg_fill =
+                                    egui::Color32::from_rgba_premultiplied(66, 66, 72, 245);
+                                dark.widgets.hovered.weak_bg_fill =
+                                    egui::Color32::from_rgba_premultiplied(66, 66, 72, 245);
+                                // 暗色只套在这两颗下拉上（scope 隔离），不波及后面的尺寸读数。
+                                ui.scope(|ui| {
+                                    ui.set_visuals(dark);
+                                    egui::ComboBox::from_id_salt("ice-selection.thickness")
+                                        .selected_text(THICKNESS_NAMES[ts.thickness_idx])
+                                        .width(OPT_W)
+                                        .show_ui(ui, |ui| {
+                                            for (i, name) in THICKNESS_NAMES.iter().enumerate() {
+                                                ui.selectable_value(
+                                                    &mut ts.thickness_idx,
+                                                    i,
+                                                    *name,
+                                                );
+                                            }
+                                        });
+                                    egui::ComboBox::from_id_salt("ice-selection.color")
+                                        .selected_text(PALETTE_NAMES[ts.color_idx])
+                                        .width(OPT_W)
+                                        .show_ui(ui, |ui| {
+                                            for (i, name) in PALETTE_NAMES.iter().enumerate() {
+                                                ui.selectable_value(&mut ts.color_idx, i, *name);
+                                            }
+                                        });
+                                });
                             }
                             // 尺寸读数与裁剪同源（同一个 `Field`），这里只报一次。
                             // 字体就是 Body（[`label_width`] 量的也是它），画出来的宽与量出来的同源。
@@ -1596,6 +1676,10 @@ pub const BAR_H: f32 = 34.0;
 /// 一颗线稿按钮的槽宽（点）。[`icon_button`] 占位与 [`bar_width`] 算宽都读这一处，
 /// 改大改小两边一起动，不会分岔出"按钮挤出去 / 药丸留空"。
 pub const ICON_W: f32 = 26.0;
+
+/// 粗细 / 色板两个下拉的定宽（点）。选中工具才长出来（REQ-003），[`bar_width`] 按此加宽。
+/// 定宽而非按内容：换档换色时药丸宽度不跳，两颗下拉始终对齐同一槽。
+pub const OPT_W: f32 = 46.0;
 
 #[cfg(test)]
 mod tests {
@@ -2044,19 +2128,30 @@ mod tests {
         let n = BAR_ICONS.len() as f32;
         let no_label = 2.0 * bar::SIDE_PAD + n * ICON_W + (n - 1.0) * bar::BTN_GAP;
         assert_eq!(
-            bar_width(0.0),
+            bar_width(0.0, false),
             no_label,
             "没读数：全部颗 + 颗间缝 + 两端留白"
         );
         assert_eq!(
-            bar_width(60.0),
+            bar_width(60.0, false),
             no_label + 60.0 + bar::BTN_GAP,
             "多一句读数：多它本身的宽 + 多一条缝"
         );
         assert_ne!(
-            bar_width(60.0),
+            bar_width(60.0, false),
             300.0,
             "宽是按内容算出来的，不是先前写死的 300（颗数多了它会跟着长）"
+        );
+        // 选中工具：两颗定宽下拉各占 OPT_W，且各多一条缝（REQ-003）。
+        assert_eq!(
+            bar_width(60.0, true),
+            bar_width(60.0, false) + 2.0 * OPT_W + 2.0 * bar::BTN_GAP,
+            "选中工具：药丸长出两颗下拉，各加一份宽与一条缝"
+        );
+        assert_eq!(
+            bar_width(0.0, true),
+            bar_width(0.0, false) + 2.0 * OPT_W + 2.0 * bar::BTN_GAP,
+            "没读数时选中工具同样长出两颗下拉"
         );
     }
 
@@ -2072,10 +2167,10 @@ mod tests {
             &field,
             Rect::from_min_max(pos2(100.0, 100.0), pos2(900.0, 500.0)),
         );
-        let a = bar_of(&narrow, &field, 60.0).expect("有框就有药丸");
-        let b = bar_of(&wide, &field, 60.0).expect("有框就有药丸");
+        let a = bar_of(&narrow, &field, 60.0, false).expect("有框就有药丸");
+        let b = bar_of(&wide, &field, 60.0, false).expect("有框就有药丸");
         assert_eq!(a.width(), b.width(), "同一句读数，窄框宽框配同一颗药丸");
-        assert_eq!(a.width(), bar_width(60.0));
+        assert_eq!(a.width(), bar_width(60.0, false));
         assert_eq!(a.center().x, narrow.rect.unwrap().center().x, "中线对齐");
         assert_eq!(b.center().x, wide.rect.unwrap().center().x, "中线对齐");
         assert!(!a.intersects(narrow.rect.unwrap()) && !b.intersects(wide.rect.unwrap()));
@@ -2115,7 +2210,7 @@ mod tests {
         let field = main_screen();
         let box_rect = Rect::from_min_max(pos2(600.0, 300.0), pos2(900.0, 500.0));
         let sel = Selection::from_rect(&field, box_rect);
-        let bar = bar_of(&sel, &field, 60.0).expect("有框就该有药丸");
+        let bar = bar_of(&sel, &field, 60.0, false).expect("有框就该有药丸");
         assert_eq!(bar.min.y, box_rect.max.y + GAP, "药丸浮在选区下方 3 点");
         assert!(!bar.intersects(box_rect), "药丸不许压住选区");
 
@@ -2284,11 +2379,54 @@ mod tests {
             dragging: false,
             next_number: 1,
             text_input: None,
+            thickness_idx: 1,
+            color_idx: 0,
         };
         map.insert_temp(tool_key(1), (10_u64, ts));
         assert_eq!(load_tool_state(&map, 1, 10).tool, Some(Tool::Rect));
         assert_eq!(load_tool_state(&map, 1, 11).tool, None, "换轮读空白");
         assert_eq!(load_tool_state(&map, 2, 10).tool, None, "换屏不借");
+    }
+
+    /// **形状核查：粗细 / 色板落层与预览同源读运行态档位**（REQ-003）。
+    /// 实现段里不许再出现写死的中档 / 红色字面量——那正是"换档换色不生效"的旧写法；
+    /// 两颗下拉的 id 与读 `ts` 档位的出处都得在。
+    #[test]
+    fn thickness_and_color_read_the_live_tier_everywhere() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        for lit in [
+            "THICKNESS[1]",
+            "PALETTE[0]",
+            "BADGE_RADIUS[1]",
+            "TEXT_SIZE[1]",
+        ] {
+            assert!(
+                !body.contains(lit),
+                "实现段不许写死档位字面量 {lit}：落层与预览都得读 ts 的档"
+            );
+        }
+        assert!(
+            body.contains("THICKNESS[ts.thickness_idx]") && body.contains("PALETTE[ts.color_idx]"),
+            "落层 / 预览 / 序号 / 文字都读运行态档位"
+        );
+        assert!(
+            body.contains("BADGE_RADIUS[ts.thickness_idx]")
+                && body.contains("TEXT_SIZE[ts.thickness_idx]"),
+            "序号半径与文字字号也随粗细档走"
+        );
+        assert!(
+            body.contains("ice-selection.thickness") && body.contains("ice-selection.color"),
+            "药丸里得有粗细与色板两颗下拉"
+        );
+        assert!(
+            body.contains("THICKNESS_NAMES[ts.thickness_idx]")
+                && body.contains("PALETTE_NAMES[ts.color_idx]"),
+            "下拉选中文字读档位名，与档位值同源（annotate 那一份常量）"
+        );
+        assert!(
+            body.contains("if pressed && !on_bar && !ui.ctx().is_pointer_over_egui()"),
+            "工具按下要避开浮层：从下拉里选色不许在菜单底下的画布上点出一笔"
+        );
     }
 
     /// **形状核查：esc 先退工具、不取消遮罩**（REQ-006）。工具态那一支不许推 Cancel。
