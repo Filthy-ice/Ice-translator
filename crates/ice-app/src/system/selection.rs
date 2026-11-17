@@ -1201,13 +1201,6 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             // 这里**不**叫主窗：拖动与悬停每帧都在变，主窗那一侧没有要跟着变的东西，
             // 每帧把它叫醒一次正是 D-31~D-35 那一族。要它醒的只有"推进槽里的那一刻"。
         }
-        // 工具态写回：与选区那格同形（带轮号），变了才写、才叫醒自己。
-        // 落层那一笔也在这里被看见：层 revision 变了，下一帧 annotation_texture 重传。
-        if ts != tool_before {
-            ui.ctx()
-                .data_mut(|d| d.insert_temp(tool_key(display), (frozen_id, ts.clone())));
-            child.request_repaint();
-        }
         // 拖动中的矢量预览：与落层同一份几何、同一个色，松手落下去的就是看到的那个。
         // 铅笔/橡皮是连续落层，不需要预览（画出来的就是层本身）。
         if ts.dragging {
@@ -1319,6 +1312,15 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                         },
                     );
                 });
+        }
+        // 工具态写回：与选区那格同形（带轮号），变了才写、才叫醒自己。
+        // **必须放在药丸循环之后**：工具开关在那循环里才拨动，写回若抢在它前面，
+        // 拨动的结果存不进去、下一帧读回还是旧态——真机报的"工具按钮点了没反应"
+        // 正是这条顺序错（D-44）。落层那一笔也在这里被看见：revision 变了下一帧重传纹理。
+        if ts != tool_before {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(tool_key(display), (frozen_id, ts.clone())));
+            child.request_repaint();
         }
     });
 }
@@ -2406,6 +2408,23 @@ mod tests {
         assert!(
             !tool_branch.contains("let (pa, pb) = ((a.x, a.y), (b.x, b.y))"),
             "松手落层不许把点坐标直接喂给层函数"
+        );
+    }
+
+    /// **形状核查：工具态写回必须排在药丸开关之后**（D-44 的根因）。
+    /// 写回抢在开关前面，拨动的结果存不进去，真机就是"工具按钮点了没反应"。
+    #[test]
+    fn the_tool_write_back_comes_after_the_bar_toggle() {
+        let body = crate::system::implementation_lines(include_str!("selection.rs"));
+        let toggle = body
+            .find("ts.tool = if ts.tool == Some(t)")
+            .expect("药丸里得有工具开关");
+        let write_back = body
+            .find("if ts != tool_before")
+            .expect("工具态写回得有出处");
+        assert!(
+            write_back > toggle,
+            "写回必须在开关之后，不然开关结果存不进去"
         );
     }
 }
