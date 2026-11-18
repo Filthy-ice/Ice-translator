@@ -1753,17 +1753,16 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
             );
         }
         BarIcon::Pencil => {
-            // 铅笔线稿：斜放、占满图标框、笔身够粗，和箭头/直线那几颗一个视觉分量
-            // （之前太细，跟自家图标不搭）。笔身两长边 + 尾封口 + 削尖三角头 + 锥底分隔 + 实心铅芯。
+            // 铅笔线稿：拉满整幅对角（之前偏短）、笔身够粗，尖头处加一条曲线示意"能随便画"。
             let p = |fx: f32, fy: f32| {
                 egui::pos2(
                     rect.min.x + rect.width() * fx,
                     rect.min.y + rect.height() * fy,
                 )
             };
-            let tip = p(0.14, 0.86);
-            let (cone_l, cone_r) = (p(0.363, 0.793), p(0.207, 0.637));
-            let (back_l, back_r) = (p(0.786, 0.370), p(0.630, 0.214));
+            let tip = p(0.10, 0.90);
+            let (cone_l, cone_r) = (p(0.326, 0.830), p(0.170, 0.674));
+            let (back_l, back_r) = (p(0.844, 0.312), p(0.688, 0.156));
             // 笔身两条长边 + 尾封口
             painter.line_segment([cone_l, back_l], stroke);
             painter.line_segment([cone_r, back_r], stroke);
@@ -1775,10 +1774,21 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
             painter.line_segment([cone_l, cone_r], stroke);
             // 铅芯：靠近尖端一小段填实
             painter.add(egui::Shape::convex_polygon(
-                vec![tip, p(0.218, 0.838), p(0.164, 0.784)],
+                vec![tip, p(0.168, 0.876), p(0.121, 0.829)],
                 ink,
                 egui::Stroke::NONE,
             ));
+            // 鼻尖一条曲线：示意铅笔能自由画线（用户 2026-11-18 要）。egui 0.37 无
+            // Shape::cubic_bezier，用几段折线拼出一条弧线。
+            let curve = [
+                p(0.10, 0.90),
+                p(0.068, 0.803),
+                p(0.077, 0.724),
+                p(0.13, 0.66),
+            ];
+            for pair in curve.windows(2) {
+                painter.line_segment([pair[0], pair[1]], stroke);
+            }
         }
         BarIcon::Number => {
             // 序号标线稿：一个圆 + 里面两段线画的「1」（竖杆 + 顶部小旗），
@@ -1820,17 +1830,16 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
             painter.rect_stroke(cell(0.0, 1.0), 0.0, stroke, egui::StrokeKind::Inside);
         }
         BarIcon::Eraser => {
-            // 橡皮线稿（对齐 某截图工具）：斜放的一块长方形橡皮 + 一道斜线分出靠外的橡皮头（填实），
-            // 底下再加一条横线（某截图工具 那颗橡皮下面有一条擦过的基线，用户 2026-11-18 要）。
+            // 橡皮线稿：整体放大、白色笔身加长（实心橡皮头缩短、分隔线往尖端挪），底下保留一条横线。
             let p = |fx: f32, fy: f32| {
                 egui::pos2(
                     rect.min.x + rect.width() * fx,
                     rect.min.y + rect.height() * fy,
                 )
             };
-            let (a, b, c, d) = (p(0.18, 0.54), p(0.58, 0.78), p(0.84, 0.42), p(0.44, 0.18));
-            let (q1, q2) = (p(0.58, 0.264), p(0.32, 0.624));
-            // 橡皮头（a-d 那一端）填实 + 描边
+            let (a, b, c, d) = (p(0.12, 0.56), p(0.56, 0.84), p(0.90, 0.44), p(0.46, 0.14));
+            let (q1, q2) = (p(0.583, 0.224), p(0.243, 0.638));
+            // 橡皮头（a-d 那一端）填实 + 描边——只占靠尖端一小截，白色笔身更长
             painter.add(egui::Shape::convex_polygon(vec![a, d, q1, q2], ink, stroke));
             // 整块橡皮轮廓
             painter.add(egui::Shape::convex_polygon(
@@ -1838,8 +1847,8 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
                 egui::Color32::TRANSPARENT,
                 stroke,
             ));
-            // 底下那条横线
-            painter.line_segment([p(0.16, 0.90), p(0.74, 0.90)], stroke);
+            // 底下那条横线（跟放大后的橡皮同宽）
+            painter.line_segment([p(0.10, 0.92), p(0.80, 0.92)], stroke);
         }
         BarIcon::Check => {
             // 两段线，短的那段从左边起头——和 某截图工具 那颗对勾同一个读法
