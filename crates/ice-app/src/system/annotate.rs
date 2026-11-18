@@ -59,6 +59,7 @@ impl PxRect {
 
 /// 一笔撤销的前像集合（REQ-001）。单击类工具一个 part；铅笔/橡皮一次拖拽累积多个 part
 /// （每段落像素前先抄该段包围盒的前像），松手时整段算一条入栈。
+#[derive(Clone, Debug)]
 pub struct UndoEntry {
     pub parts: Vec<(PxRect, RgbaImage)>,
 }
@@ -75,6 +76,9 @@ pub const MAX_UNDO_ENTRIES: usize = 30;
 pub const MAX_UNDO_BYTES: usize = 64 * 1024 * 1024;
 
 /// 一层标注。`revision` 每落一笔加一：显示侧拿它判"要不要重传纹理"（照定格纹理那套缓存读法）。
+/// 可克隆：确认截图时把层的所有权（像素＋撤销栈）clone 一份交给贴图（CHG-015 REQ-002），
+/// 不借遮罩那扇随确认即清的 Arc。
+#[derive(Clone, Debug)]
 pub struct Layer {
     pub image: RgbaImage,
     pub revision: u64,
@@ -336,55 +340,73 @@ impl Layer {
 
     /// 马赛克：拖区按块度盒式平均，从冻结背景取色、**不透明**写层（REQ-002）。
     /// 块格对齐区域左上角，一块一色——出来是像素化不是模糊（某截图工具「马赛克」档同读法）。
-    /// 零宽/零高的区不落、不 touch。
+    /// 零宽/零高的区不落、不 touch。绘制本体抽到 [`mosaic_paint`]，与对象引擎共用一份。
     pub fn mosaic(&mut self, background: &RgbaImage, a: (f32, f32), b: (f32, f32), block: u32) {
-        let block = block.max(1) as i64;
         let (x0, x1) = (a.0.min(b.0).floor() as i64, a.0.max(b.0).ceil() as i64);
         let (y0, y1) = (a.1.min(b.1).floor() as i64, a.1.max(b.1).ceil() as i64);
         if x1 <= x0 || y1 <= y0 {
             return;
         }
         let part = self.before_image((x0 as f32, y0 as f32, x1 as f32, y1 as f32));
-        let (bw, bh) = (background.width() as i64, background.height() as i64);
-        let (lw, lh) = (self.image.width() as i64, self.image.height() as i64);
-        let mut cy = y0;
-        while cy < y1 {
-            let mut cx = x0;
-            while cx < x1 {
-                // 采样范围 = 块格 ∩ 拖区 ∩ 背景；边缘块按实际覆盖取平均
-                let (sx0, sy0) = (cx.max(0), cy.max(0));
-                let (sx1, sy1) = ((cx + block).min(x1).min(bw), (cy + block).min(y1).min(bh));
-                if sx1 > sx0 && sy1 > sy0 {
-                    let mut sum = [0u64; 3];
-                    let mut n = 0u64;
-                    for y in sy0..sy1 {
-                        for x in sx0..sx1 {
-                            let p = background.get_pixel(x as u32, y as u32);
-                            for c in 0..3 {
-                                sum[c] += p[c] as u64;
-                            }
-                            n += 1;
-                        }
-                    }
-                    let avg = image::Rgba([
-                        (sum[0] / n) as u8,
-                        (sum[1] / n) as u8,
-                        (sum[2] / n) as u8,
-                        255,
-                    ]);
-                    let (dx1, dy1) = ((cx + block).min(x1).min(lw), (cy + block).min(y1).min(lh));
-                    for y in sy0..dy1 {
-                        for x in sx0..dx1 {
-                            self.image.put_pixel(x as u32, y as u32, avg);
-                        }
-                    }
-                }
-                cx += block;
-            }
-            cy += block;
-        }
+        mosaic_paint(&mut self.image, background, a, b, block);
         self.record(part);
         self.touch();
+    }
+}
+
+/// 马赛克盒式平均落像素本体（无 undo 副作用，纯绘制）：拖区按 block 分格，每格取
+/// 背景 ∩ 拖区 ∩ 画布 的实际覆盖平均成不透明色写回 img。零宽/零高直接返回。
+/// 像素 Layer 的 mosaic 与对象引擎的 render 共用这一份（H1 逐像素同源）。
+fn mosaic_paint(
+    img: &mut RgbaImage,
+    background: &RgbaImage,
+    a: (f32, f32),
+    b: (f32, f32),
+    block: u32,
+) {
+    let block = block.max(1) as i64;
+    let (x0, x1) = (a.0.min(b.0).floor() as i64, a.0.max(b.0).ceil() as i64);
+    let (y0, y1) = (a.1.min(b.1).floor() as i64, a.1.max(b.1).ceil() as i64);
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let (bw, bh) = (background.width() as i64, background.height() as i64);
+    let (lw, lh) = (img.width() as i64, img.height() as i64);
+    let mut cy = y0;
+    while cy < y1 {
+        let mut cx = x0;
+        while cx < x1 {
+            // 采样范围 = 块格 ∩ 拖区 ∩ 背景；边缘块按实际覆盖取平均
+            let (sx0, sy0) = (cx.max(0), cy.max(0));
+            let (sx1, sy1) = ((cx + block).min(x1).min(bw), (cy + block).min(y1).min(bh));
+            if sx1 > sx0 && sy1 > sy0 {
+                let mut sum = [0u64; 3];
+                let mut n = 0u64;
+                for y in sy0..sy1 {
+                    for x in sx0..sx1 {
+                        let p = background.get_pixel(x as u32, y as u32);
+                        for c in 0..3 {
+                            sum[c] += p[c] as u64;
+                        }
+                        n += 1;
+                    }
+                }
+                let avg = image::Rgba([
+                    (sum[0] / n) as u8,
+                    (sum[1] / n) as u8,
+                    (sum[2] / n) as u8,
+                    255,
+                ]);
+                let (dx1, dy1) = ((cx + block).min(x1).min(lw), (cy + block).min(y1).min(lh));
+                for y in sy0..dy1 {
+                    for x in sx0..dx1 {
+                        img.put_pixel(x as u32, y as u32, avg);
+                    }
+                }
+            }
+            cx += block;
+        }
+        cy += block;
     }
 }
 
@@ -550,6 +572,302 @@ fn points_bounds(points: &[(f32, f32)], half: f32) -> (f32, f32, f32, f32) {
         x1 + half + 1.0,
         y1 + half + 1.0,
     )
+}
+
+// ── 对象模型引擎（CHG-016 T-001）──────────────────────────────────────────
+// 事实源从"一层像素"换成"一组对象"：每件标注是带几何＋样式＋自身擦除痕迹的对象，
+// 像素层降级为按对象列表重渲染的派生缓存。T-001 先立引擎与 render（上面那套像素 Layer
+// 仍服务于现网，未接线前标 allow(dead_code)；T-002 把八件工具切到建对象、T-003 把撤销
+// 切到对象快照后，本注释与 allow 移除、旧脏矩形前像那套删除）。
+//
+// 擦除是绑定到对象自身的透明痕迹（事实 18 用户实测：拖走被擦对象，缺口跟着挪）：
+// render 逐件先画几何进临时 tile、再用该件 erased 对 tile 自身 destination-out 减 alpha，
+// 最后合成进层——所以擦除天然随对象平移，且命中只看几何（REQ-004）。
+
+/// 一件标注对象的几何＋样式（坐标物理像素，样式存具体值不是档索引）。
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum Shape {
+    Rect {
+        a: (f32, f32),
+        b: (f32, f32),
+        width: f32,
+        color: [u8; 4],
+    },
+    Arrow {
+        from: (f32, f32),
+        to: (f32, f32),
+        width: f32,
+        color: [u8; 4],
+    },
+    Line {
+        a: (f32, f32),
+        b: (f32, f32),
+        width: f32,
+        color: [u8; 4],
+    },
+    Pencil {
+        points: Vec<(f32, f32)>,
+        width: f32,
+        color: [u8; 4],
+    },
+    Serial {
+        center: (f32, f32),
+        radius: f32,
+        number: u32,
+        color: [u8; 4],
+    },
+    Text {
+        at: (f32, f32),
+        text: String,
+        font_size: f32,
+        color: [u8; 4],
+    },
+    Mosaic {
+        a: (f32, f32),
+        b: (f32, f32),
+        block: u32,
+    },
+}
+
+/// 橡皮对某件对象划过的擦除痕迹：画笔轨迹 / 矩形区两模式（对应 某截图工具 PathMode）。
+/// 与所属对象一起平移，故擦除跟着对象走（事实 18）。
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum EraseStamp {
+    Pen { points: Vec<(f32, f32)>, width: f32 },
+    Rect { a: (f32, f32), b: (f32, f32) },
+}
+
+/// 一个标注对象：几何＋样式＋自身擦除痕迹。
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnnoObject {
+    pub shape: Shape,
+    pub erased: Vec<EraseStamp>,
+}
+
+/// 对象列表＝标注唯一事实源。undo/redo 快照在 T-003 接线；本包先建 objects/revision/next_serial。
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct ObjectList {
+    pub objects: Vec<AnnoObject>,
+    pub revision: u64,
+    pub next_serial: u32,
+}
+
+#[allow(dead_code)]
+impl ObjectList {
+    pub fn new() -> Self {
+        Self {
+            objects: Vec::new(),
+            revision: 0,
+            next_serial: 1,
+        }
+    }
+
+    pub fn push(&mut self, obj: AnnoObject) {
+        self.objects.push(obj);
+        self.touch();
+    }
+
+    fn touch(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+}
+
+#[allow(dead_code)]
+impl AnnoObject {
+    /// 整体平移：几何点与自身擦除痕迹一起挪（擦除跟着对象走，事实 18）。
+    pub fn translate(&mut self, dx: f32, dy: f32) {
+        let shift = |p: &mut (f32, f32)| {
+            p.0 += dx;
+            p.1 += dy;
+        };
+        match &mut self.shape {
+            Shape::Rect { a, b, .. } => {
+                shift(a);
+                shift(b);
+            }
+            Shape::Arrow { from, to, .. } => {
+                shift(from);
+                shift(to);
+            }
+            Shape::Line { a, b, .. } => {
+                shift(a);
+                shift(b);
+            }
+            Shape::Pencil { points, .. } => {
+                for p in points.iter_mut() {
+                    shift(p);
+                }
+            }
+            Shape::Serial { center, .. } => shift(center),
+            Shape::Text { at, .. } => shift(at),
+            Shape::Mosaic { a, b, .. } => {
+                shift(a);
+                shift(b);
+            }
+        }
+        for s in &mut self.erased {
+            match s {
+                EraseStamp::Pen { points, .. } => {
+                    for p in points.iter_mut() {
+                        shift(p);
+                    }
+                }
+                EraseStamp::Rect { a, b } => {
+                    shift(a);
+                    shift(b);
+                }
+            }
+        }
+    }
+}
+
+/// 按列表序逐件重渲染整层：每件先画几何进临时 tile、再用该件 erased 对 tile 自身
+/// destination-out 减 alpha，最后合成进层。叠放序＝列表序＝落笔序（H1 与旧像素引擎逐像素同源）。
+#[allow(dead_code)]
+pub fn render(objects: &[AnnoObject], background: &RgbaImage, metrics: &FileMetrics) -> RgbaImage {
+    let (w, h) = (background.width(), background.height());
+    let mut layer = RgbaImage::new(w, h);
+    let mut tile = RgbaImage::new(w, h);
+    for obj in objects {
+        for p in tile.pixels_mut() {
+            *p = image::Rgba([0, 0, 0, 0]);
+        }
+        paint_shape(&mut tile, &obj.shape, background, metrics);
+        for stamp in &obj.erased {
+            punch_stamp(&mut tile, stamp);
+        }
+        composite_into(&mut layer, &tile, 0, 0);
+    }
+    layer
+}
+
+/// 单件对象的几何落像素（纯绘制，无 undo 副作用），复用既有光栅基元。
+#[allow(dead_code)]
+fn paint_shape(img: &mut RgbaImage, shape: &Shape, background: &RgbaImage, metrics: &FileMetrics) {
+    match shape {
+        Shape::Rect { a, b, width, color } => {
+            let half = width / 2.0;
+            let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
+            let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+            for (p, q) in [
+                ((x0, y0), (x1, y0)),
+                ((x1, y0), (x1, y1)),
+                ((x1, y1), (x0, y1)),
+                ((x0, y1), (x0, y0)),
+            ] {
+                paint_segment(img, p, q, half, *color);
+            }
+        }
+        Shape::Line { a, b, width, color } => {
+            paint_segment(img, *a, *b, width / 2.0, *color);
+        }
+        Shape::Arrow {
+            from,
+            to,
+            width,
+            color,
+        } => {
+            let half = width / 2.0;
+            let [h1, h2] = arrow_head(*from, *to, *width);
+            paint_segment(img, *from, *to, half, *color);
+            paint_segment(img, *to, h1, half, *color);
+            paint_segment(img, *to, h2, half, *color);
+        }
+        Shape::Pencil {
+            points,
+            width,
+            color,
+        } => {
+            let half = width / 2.0;
+            for pair in points.windows(2) {
+                paint_segment(img, pair[0], pair[1], half, *color);
+            }
+            if let Some(&p) = points.first() {
+                if points.len() == 1 {
+                    paint_segment(img, p, p, half, *color);
+                }
+            }
+        }
+        Shape::Serial {
+            center,
+            radius,
+            number,
+            color,
+        } => {
+            let font_size = radius * 1.2;
+            let line_h = metrics.line_height(font_size);
+            let area = PixelRect::new(
+                center.0 - radius,
+                center.1 - line_h / 2.0,
+                radius * 2.0,
+                line_h,
+            );
+            let label = number.to_string();
+            paint_segment(img, *center, *center, *radius, *color);
+            stamp_line(
+                img,
+                area,
+                &label,
+                font_size,
+                Align::Center,
+                [255, 255, 255, 255],
+                metrics,
+            );
+        }
+        Shape::Text {
+            at,
+            text,
+            font_size,
+            color,
+        } => {
+            let t = text.trim();
+            if t.is_empty() {
+                return;
+            }
+            let line_h = metrics.line_height(*font_size);
+            let width = metrics.text_width(t, *font_size);
+            let area = PixelRect::new(at.0, at.1, width.max(1.0), line_h);
+            stamp_line(img, area, t, *font_size, Align::Left, *color, metrics);
+        }
+        Shape::Mosaic { a, b, block } => mosaic_paint(img, background, *a, *b, *block),
+    }
+}
+
+/// 对 tile 自身按擦除痕迹 destination-out 减 alpha（复用 CHG-014 erase 那套覆盖率算法）。
+#[allow(dead_code)]
+fn punch_stamp(img: &mut RgbaImage, stamp: &EraseStamp) {
+    match stamp {
+        EraseStamp::Pen { points, width } => {
+            let r = width / 2.0;
+            let segs: Vec<((f32, f32), (f32, f32))> = if points.len() < 2 {
+                points.iter().map(|&p| (p, p)).collect()
+            } else {
+                points.windows(2).map(|w| (w[0], w[1])).collect()
+            };
+            for (a, b) in segs {
+                for_each_covered_pixel(img, a, b, r, |img, x, y, cov| {
+                    let px = img.get_pixel_mut(x as u32, y as u32);
+                    px[3] = ((px[3] as f32) * (1.0 - cov)).round() as u8;
+                });
+            }
+        }
+        EraseStamp::Rect { a, b } => {
+            let (w, h) = (img.width(), img.height());
+            let x0 = (a.0.min(b.0).floor().max(0.0) as u32).min(w);
+            let x1 = (a.0.max(b.0).ceil().max(0.0) as u32).min(w);
+            let y0 = (a.1.min(b.1).floor().max(0.0) as u32).min(h);
+            let y1 = (a.1.max(b.1).ceil().max(0.0) as u32).min(h);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    img.get_pixel_mut(x, y)[3] = 0;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -840,5 +1158,88 @@ mod tests {
         l.end_stroke();
         assert_eq!(l.revision, 0);
         assert!(!l.undo());
+    }
+
+    // ── 对象引擎（CHG-016 T-001）────────────────────────────────
+
+    /// REQ-001：空对象列表渲染得全透明层，尺寸＝背景尺寸（物理像素）。
+    #[test]
+    fn render_empty_list_is_fully_transparent() {
+        let Ok(m) = FileMetrics::open() else { return };
+        let bg = RgbaImage::from_pixel(32, 32, image::Rgba([10, 20, 30, 255]));
+        let layer = render(&[], &bg, &m);
+        assert_eq!(layer.width(), 32);
+        assert_eq!(layer.height(), 32);
+        assert!(layer.pixels().all(|p| p[3] == 0), "空列表必须全透明");
+    }
+
+    /// H1：单件 Rect 的对象渲染与旧像素引擎 rect_stroke 逐像素一致。
+    #[test]
+    fn render_rect_matches_pixel_engine() {
+        let Ok(m) = FileMetrics::open() else { return };
+        let bg = RgbaImage::new(64, 64);
+        let obj = AnnoObject {
+            shape: Shape::Rect {
+                a: (10.0, 10.0),
+                b: (50.0, 40.0),
+                width: 3.0,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        let rendered = render(&[obj], &bg, &m);
+        let mut l = Layer::new(64, 64);
+        l.rect_stroke((10.0, 10.0), (50.0, 40.0), 3.0, RED);
+        assert_eq!(
+            rendered, l.image,
+            "对象渲染必须与旧像素引擎逐像素一致（H1）"
+        );
+    }
+
+    /// 事实 18：擦除是对象自身的透明痕迹——擦半条线只擦那半条，且 translate 后缺口跟着挪。
+    #[test]
+    fn erased_punch_is_partial_and_follows_translate() {
+        let Ok(m) = FileMetrics::open() else { return };
+        let bg = RgbaImage::new(64, 64);
+        let mut obj = AnnoObject {
+            shape: Shape::Line {
+                a: (10.0, 32.0),
+                b: (54.0, 32.0),
+                width: 4.0,
+                color: RED,
+            },
+            erased: vec![EraseStamp::Pen {
+                points: vec![(10.0, 32.0), (30.0, 32.0)],
+                width: 12.0,
+            }],
+        };
+        let layer = render(&[obj.clone()], &bg, &m);
+        assert_eq!(layer.get_pixel(20, 32)[3], 0, "擦过的那半必须透明");
+        assert!(layer.get_pixel(45, 32)[3] > 200, "没擦的那半必须还在");
+
+        obj.translate(0.0, 10.0);
+        let moved = render(&[obj], &bg, &m);
+        assert_eq!(moved.get_pixel(20, 42)[3], 0, "擦除跟着对象挪到 y=42");
+        assert!(moved.get_pixel(45, 42)[3] > 200, "没擦那半也挪到 y=42");
+        assert_eq!(moved.get_pixel(20, 32)[3], 0, "原 y=32 整条已挪走、透明");
+    }
+
+    /// REQ-001：ObjectList push 即 bump revision，next_serial 默认从 1 起（CHG-014 行为）。
+    #[test]
+    fn object_list_push_bumps_revision_and_starts_serial_at_one() {
+        let mut ol = ObjectList::new();
+        assert_eq!(ol.revision, 0);
+        assert_eq!(ol.next_serial, 1);
+        ol.push(AnnoObject {
+            shape: Shape::Line {
+                a: (0.0, 0.0),
+                b: (1.0, 1.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        });
+        assert_eq!(ol.revision, 1);
+        assert_eq!(ol.objects.len(), 1);
     }
 }
