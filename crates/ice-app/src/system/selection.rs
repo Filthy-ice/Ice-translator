@@ -1753,18 +1753,32 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
             );
         }
         BarIcon::Pencil => {
-            // 铅笔线稿：两条平行边 + 尾端封口 + 尖头两段（笔尖朝左下）
+            // 铅笔线稿（对齐 某截图工具 那种一眼认得出）：斜放的笔身 + 削尖的三角头 + 实心笔尖。
+            // 沿主对角线从笔尖(左下)到笔尾(右上)，两条平行长边 + 尾封口 + 锥底分隔线。
             let p = |fx: f32, fy: f32| {
                 egui::pos2(
                     rect.min.x + rect.width() * fx,
                     rect.min.y + rect.height() * fy,
                 )
             };
-            painter.line_segment([p(0.25, 0.89), p(0.89, 0.25)], stroke);
-            painter.line_segment([p(0.11, 0.75), p(0.75, 0.11)], stroke);
-            painter.line_segment([p(0.89, 0.25), p(0.75, 0.11)], stroke);
-            painter.line_segment([p(0.25, 0.89), p(0.18, 0.82)], stroke);
-            painter.line_segment([p(0.18, 0.82), p(0.11, 0.75)], stroke);
+            let tip = p(0.18, 0.82);
+            let (cone_l, cone_r) = (p(0.385, 0.743), p(0.257, 0.615));
+            let (back_l, back_r) = (p(0.710, 0.418), p(0.582, 0.290));
+            // 笔身两条长边 + 尾封口
+            painter.line_segment([cone_l, back_l], stroke);
+            painter.line_segment([cone_r, back_r], stroke);
+            painter.line_segment([back_l, back_r], stroke);
+            // 削尖三角头两条斜边收到笔尖
+            painter.line_segment([cone_l, tip], stroke);
+            painter.line_segment([cone_r, tip], stroke);
+            // 锥底与笔身分隔线
+            painter.line_segment([cone_l, cone_r], stroke);
+            // 笔尖：靠近尖端的一小段填实，读得出"削出来的铅芯"
+            painter.add(egui::Shape::convex_polygon(
+                vec![tip, p(0.242, 0.797), p(0.203, 0.759)],
+                ink,
+                egui::Stroke::NONE,
+            ));
         }
         BarIcon::Number => {
             // 序号标线稿：一个圆 + 里面两段线画的「1」（竖杆 + 顶部小旗），
@@ -1806,21 +1820,24 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
             painter.rect_stroke(cell(0.0, 1.0), 0.0, stroke, egui::StrokeKind::Inside);
         }
         BarIcon::Eraser => {
-            // 橡皮线稿：45° 斜放的长方块（与铅笔同朝向），靠尖一端一道分隔，
-            // 擦头那格填实——和马赛克的实心格同一种读法。菱形+斜线读不出橡皮。
+            // 橡皮线稿（对齐 某截图工具）：斜放的一块长方形橡皮，一道斜线分出靠外的橡皮头，
+            // 橡皮头那截填实——一眼是"一块橡皮"，不再是抽象方块。
             let p = |fx: f32, fy: f32| {
                 egui::pos2(
                     rect.min.x + rect.width() * fx,
                     rect.min.y + rect.height() * fy,
                 )
             };
-            let (a, b, c, d) = (p(0.14, 0.62), p(0.38, 0.86), p(0.86, 0.38), p(0.62, 0.14));
-            let (e, f) = (p(0.31, 0.45), p(0.55, 0.69));
-            painter.add(egui::Shape::convex_polygon(vec![a, b, f, e], ink, stroke));
-            painter.line_segment([b, c], stroke);
-            painter.line_segment([c, d], stroke);
-            painter.line_segment([d, a], stroke);
-            painter.line_segment([e, f], stroke);
+            let (a, b, c, d) = (p(0.16, 0.60), p(0.62, 0.86), p(0.84, 0.42), p(0.38, 0.16));
+            let (q1, q2) = (p(0.541, 0.251), p(0.321, 0.691));
+            // 橡皮头（a-d 那一端）填实 + 描边
+            painter.add(egui::Shape::convex_polygon(vec![a, d, q1, q2], ink, stroke));
+            // 整块橡皮轮廓
+            painter.add(egui::Shape::convex_polygon(
+                vec![a, b, c, d],
+                egui::Color32::TRANSPARENT,
+                stroke,
+            ));
         }
         BarIcon::Check => {
             // 两段线，短的那段从左边起头——和 某截图工具 那颗对勾同一个读法
