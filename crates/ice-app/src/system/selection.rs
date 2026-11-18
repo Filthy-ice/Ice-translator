@@ -690,7 +690,18 @@ struct ToolState {
     moving: Option<usize>,
     /// 拖动既有对象时上一帧的落点（点空间），用来算每帧位移。
     move_last: Pos2,
+    /// 当前**选中**的既有对象下标（CHG-016 T-004/T-005）：按下命中即选中，选中态在松手后仍保留，
+    /// 用于①显示它的控制点、②改粗细/颜色只作用在它身上、③Delete 删它。与 `moving` 分开：
+    /// `moving` 只在拖那一两帧有值，`selected` 拖完仍在，控制点常显一档（Q-004）。
+    selected: Option<usize>,
+    /// 正在拖拽的控制点序号（落在 `selected` 对象的某个控制点上时置上，松手清）。
+    /// `None` = 没在改形（在整体移动或在画新的）。
+    resize_cp: Option<usize>,
 }
+
+/// 控制点抓取半径与画出的方块边长（点空间）：抓取比画的大一点，好按不准也抓得住。
+const CP_TOL_PT: f32 = 9.0;
+const CP_BOX_PT: f32 = 7.0;
 
 impl Default for ToolState {
     fn default() -> Self {
@@ -707,6 +718,8 @@ impl Default for ToolState {
             erase_points: Vec::new(),
             moving: None,
             move_last: Pos2::ZERO,
+            selected: None,
+            resize_cp: None,
         }
     }
 }
@@ -728,6 +741,64 @@ fn load_tool_state(d: &egui::util::IdTypeMap, display: u8, frozen_id: u64) -> To
 fn point_to_px(field: Field, p: Pos2) -> Option<(f32, f32)> {
     let r = field.to_pixels(Rect::from_min_size(p, Vec2::ZERO))?;
     Some((r.x, r.y))
+}
+
+/// 物理像素点 → 点空间（[`point_to_px`] 的逆）：控制点、选中框存的是像素，画到 egui 要换算回来。
+/// `scale` 不可信（零宽屏）时返回 `None`，与正着走同一条护栏。
+fn px_to_point(field: Field, p: (f32, f32)) -> Option<Pos2> {
+    let scale = field.scale()?;
+    Some(pos2(
+        field.bounds.min.x + p.0 / scale,
+        field.bounds.min.y + p.1 / scale,
+    ))
+}
+
+/// 落在选中对象 `sel` 的某个控制点附近（点空间容差 `tol_pt`）→ 返回该控制点序号。
+/// 下标越界、无角点形状（铅笔/马赛克/序号/文字）都返回 `None`，即不抢角。
+fn grab_control_point(
+    objects: &std::sync::Arc<std::sync::Mutex<ObjectList>>,
+    field: Field,
+    sel: usize,
+    here_pt: Pos2,
+    tol_pt: f32,
+) -> Option<usize> {
+    let cps = objects
+        .lock()
+        .ok()?
+        .objects
+        .get(sel)?
+        .control_points()
+        .into_iter()
+        .collect::<Vec<_>>();
+    cps.into_iter().enumerate().find_map(|(i, cp)| {
+        px_to_point(field, cp)
+            .filter(|pp| pp.distance(here_pt) <= tol_pt)
+            .map(|_| i)
+    })
+}
+
+/// 改选中对象样式（REQ-006/T-005）：文字取字号档、其余取线宽档，马赛克不改（只吃背景）。
+/// 换算成物理像素后交给 `ObjectList::restyle`（内部压一条撤销快照，一次改＝一条撤销）。
+fn restyle_selected(
+    objects: &std::sync::Arc<std::sync::Mutex<ObjectList>>,
+    field: Field,
+    sel: usize,
+    thickness_idx: usize,
+    color_idx: usize,
+) {
+    let Some(scale) = field.scale() else { return };
+    let Ok(mut ol) = objects.lock() else { return };
+    if sel >= ol.objects.len() {
+        return;
+    }
+    // 先定这一档数值该喂哪个数组：文字是字号、其它是线宽。
+    let is_text = matches!(ol.objects[sel].shape, Shape::Text { .. });
+    let width = if is_text {
+        TEXT_SIZE[thickness_idx] * scale
+    } else {
+        THICKNESS[thickness_idx] * scale
+    };
+    ol.restyle(sel, width, PALETTE[color_idx]);
 }
 
 /// 序号标落一件：点换像素 → 建 Serial 对象（号取对象列表的 next_serial 并自增，默认 1 起）。
@@ -1112,16 +1183,47 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 )
             })
         });
+        // 删除键（REQ-007）：Delete／退格删掉当前**选中**的那件对象（一次＝一条撤销）。
+        // 只清对象 + 叫醒自己，不推意图（与撤销同口径）。文字输入开着时让给输入框删字。
+        let delete_pressed = child.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        key: k,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if (k == &egui::Key::Delete || k == &egui::Key::Backspace)
+                        && modifiers.is_none()
+                )
+            })
+        });
         if ts.text_input.is_none() {
             if undo_pressed {
                 if let Ok(mut ol) = objects.lock() {
                     if ol.undo() {
+                        // 撤销可能删掉/换回对象，选中下标会指错，一律清空
+                        ts.selected = None;
+                        ts.resize_cp = None;
                         child.request_repaint();
                     }
                 }
             } else if redo_pressed {
                 if let Ok(mut ol) = objects.lock() {
                     if ol.redo() {
+                        ts.selected = None;
+                        ts.resize_cp = None;
+                        child.request_repaint();
+                    }
+                }
+            } else if delete_pressed {
+                // 越界（选中后又被别处删掉）时 remove 返回 false，什么都不动
+                let hit = ts.selected;
+                if let (Some(idx), Ok(mut ol)) = (hit, objects.lock()) {
+                    if ol.remove(idx) {
+                        ts.selected = None;
+                        ts.resize_cp = None;
                         child.request_repaint();
                     }
                 }
@@ -1238,32 +1340,60 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 } else {
                     match ts.tool {
                         Some(Tool::Number) => {
+                            // 单击落序号＝画新的：取消任何选中，控制点随即消失。
+                            ts.selected = None;
+                            ts.resize_cp = None;
                             stamp_number(&ts, &objects, ann_field, clamp_pt(here));
                         }
                         Some(Tool::Text) => {
                             // 上一条还没确认的先落，再在这一下的位置开新的
                             commit_text_input(&mut ts, &objects, ann_field);
+                            ts.selected = None;
+                            ts.resize_cp = None;
                             ts.text_input = Some((clamp_pt(here), String::new()));
                         }
                         _ => {
-                            // 先试命中已有对象：命中就抓起来拖（begin_move 压一条撤销快照）。
-                            let hit = point_to_px(ann_field, clamp_pt(here))
-                                .and_then(|pt| objects.lock().ok().and_then(|ol| ol.hit(pt, 8.0)));
-                            if let Some(idx) = hit {
+                            // 三段优先级：① 落在已选对象的控制点上 → 抓那个角改形（T-004）；
+                            // ② 命中已有对象 → 抓起来整体拖 + 选中它（T-005 移动）；
+                            // ③ 都没落到 → 画新的（取消选中）。①②都先 begin_move 压一条撤销快照。
+                            let grabbed_cp = ts.selected.and_then(|sel| {
+                                grab_control_point(
+                                    &objects,
+                                    ann_field,
+                                    sel,
+                                    clamp_pt(here),
+                                    CP_TOL_PT,
+                                )
+                            });
+                            if let Some(cp) = grabbed_cp {
                                 if let Ok(mut ol) = objects.lock() {
                                     ol.begin_move();
                                 }
-                                ts.moving = Some(idx);
-                                ts.move_last = clamp_pt(here);
+                                ts.resize_cp = Some(cp);
                             } else {
-                                ts.anchor = clamp_pt(here);
-                                ts.last = ts.anchor;
-                                match ts.tool {
-                                    Some(Tool::Pencil | Tool::Mosaic) => {
-                                        ts.stroke_points = vec![ts.anchor]
+                                // 先试命中已有对象：命中就抓起来拖（begin_move 压一条撤销快照）。
+                                let hit = point_to_px(ann_field, clamp_pt(here)).and_then(|pt| {
+                                    objects.lock().ok().and_then(|ol| ol.hit(pt, 8.0))
+                                });
+                                if let Some(idx) = hit {
+                                    if let Ok(mut ol) = objects.lock() {
+                                        ol.begin_move();
                                     }
-                                    Some(Tool::Eraser) => ts.erase_points = vec![ts.anchor],
-                                    _ => {}
+                                    ts.moving = Some(idx);
+                                    ts.selected = Some(idx);
+                                    ts.move_last = clamp_pt(here);
+                                } else {
+                                    ts.selected = None;
+                                    ts.resize_cp = None;
+                                    ts.anchor = clamp_pt(here);
+                                    ts.last = ts.anchor;
+                                    match ts.tool {
+                                        Some(Tool::Pencil | Tool::Mosaic) => {
+                                            ts.stroke_points = vec![ts.anchor]
+                                        }
+                                        Some(Tool::Eraser) => ts.erase_points = vec![ts.anchor],
+                                        _ => {}
+                                    }
                                 }
                             }
                             ts.dragging = true;
@@ -1271,10 +1401,18 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                     }
                 }
             }
-            // 拖拽中：抓着的既有对象→逐帧平移；铅笔/橡皮→累积点。
+            // 拖拽中：抓着的控制点→逐帧改形（T-004）；抓着的既有对象→逐帧平移；铅笔/橡皮→累积点。
             if ts.dragging && ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
                 let to = clamp_pt(here);
-                if let Some(idx) = ts.moving {
+                if let (Some(sel), Some(cp)) = (ts.selected, ts.resize_cp) {
+                    // 改形：手上那点换成物理像素，把 selected 对象的第 cp 个控制点拖过去
+                    // （begin_move 已在按下那帧压过快照，这里逐帧改不再压）。
+                    if let Some(p) = point_to_px(ann_field, to) {
+                        if let Ok(mut ol) = objects.lock() {
+                            ol.resize_object(sel, cp, p);
+                        }
+                    }
+                } else if let Some(idx) = ts.moving {
                     if let (Some(a), Some(b)) = (
                         point_to_px(ann_field, ts.move_last),
                         point_to_px(ann_field, to),
@@ -1297,8 +1435,12 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 ts.dragging = false;
                 let a = ts.anchor;
                 let b = clamp_pt(here);
-                if ts.moving.take().is_some() {
-                    // 拖动既有对象收口：位置已逐帧改好、begin_move 已压快照，这里只收尾。
+                // 收口顺序：改形 / 整体拖动都只收尾（begin_move 已压快照、几何已逐帧改好，
+                // **保留 selected** 让控制点继续常显）；两者都没发生才落到"画新的"那一大段。
+                let resized = ts.resize_cp.take().is_some();
+                let moved = ts.moving.take().is_some();
+                if resized || moved {
+                    // 位置/形状已在拖拽中逐帧改完，这里不重复动对象列表。
                 } else if let (Some(pa), Some(pb)) =
                     (point_to_px(ann_field, a), point_to_px(ann_field, b))
                 {
@@ -1432,7 +1574,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         // 拖动中的矢量预览：与落层同一份几何、同一个色，松手落下去的就是看到的那个。
         // 抓着重画对象（ts.moving 有值）时不画新形状预览；铅笔/橡皮改成"累积后建对象"，
         // 不再实时落像素，所以这里补上它们的拖拽预览（铅笔=累积折线，橡皮=淡白擦痕）。
-        if ts.dragging && ts.moving.is_none() {
+        if ts.dragging && ts.moving.is_none() && ts.resize_cp.is_none() {
             let c = PALETTE[ts.color_idx];
             let stroke = egui::Stroke::new(
                 THICKNESS[ts.thickness_idx],
@@ -1516,6 +1658,42 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             }
         }
 
+        // 选中态可视化（CHG-016 T-004，Q-004"选中即常显一档"）：给选中的那件对象描一圈淡白
+        // 选中框，有可拖控制点的（框 4 角、直线/箭头 2 端点）在角上画小白方块——拖它们即改形。
+        // 铅笔/马赛克/序号/文字无角点，只描框示意"选中可整体移动/改样式/删除"。控制点是物理
+        // 像素坐标，换算回点空间（px_to_point）才画在对的位置。
+        if let Some(sel) = ts.selected {
+            if let Ok(ol) = objects.lock() {
+                if let Some(obj) = ol.objects.get(sel) {
+                    let (bx0, by0, bx1, by1) = obj.bbox();
+                    if let (Some(tl), Some(br)) = (
+                        px_to_point(ann_field, (bx0, by0)),
+                        px_to_point(ann_field, (bx1, by1)),
+                    ) {
+                        ui.painter().rect_stroke(
+                            Rect::from_two_pos(tl, br),
+                            0.0,
+                            egui::Stroke::new(1.0, egui::Color32::from_white_alpha(150)),
+                            egui::StrokeKind::Middle,
+                        );
+                    }
+                    for cp in obj.control_points() {
+                        if let Some(pp) = px_to_point(ann_field, cp) {
+                            let box_rect = Rect::from_center_size(pp, Vec2::splat(CP_BOX_PT));
+                            ui.painter()
+                                .rect_filled(box_rect, 1.0, egui::Color32::WHITE);
+                            ui.painter().rect_stroke(
+                                box_rect,
+                                1.0,
+                                egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // 笔刷光标反馈（用户 2026-11-18 要）：选中铅笔/橡皮/马赛克时，鼠标尖画一个跟粗细
         // 挂钩的圈，让人看得出要涂多宽。落在药丸/下拉浮层上、或指针不在画布内时不画。
         if matches!(ts.tool, Some(Tool::Pencil | Tool::Eraser | Tool::Mosaic))
@@ -1578,6 +1756,10 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                                         commit_text_input(&mut ts, &objects, ann_field);
                                         ts.tool = if ts.tool == Some(t) { None } else { Some(t) };
                                         ts.dragging = false;
+                                        // 切工具 = 换手上要画的活，选中态与在拖的控制点一并作废，
+                                        // 否则上一件的控制点会跟着新工具浮在画面上。
+                                        ts.selected = None;
+                                        ts.resize_cp = None;
                                         continue;
                                     }
                                     // 确认必须带上**这扇窗自己的框**：主窗不用再猜是哪块屏
@@ -1608,6 +1790,8 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                             // 换档时药丸不跳宽。按钮套一层暗色 visuals 与药丸同底；弹出菜单跟随
                             // 应用主题（与贴图右键菜单一致，不另造一套）。
                             if ts.tool.is_some() {
+                                let pre_th = ts.thickness_idx;
+                                let pre_col = ts.color_idx;
                                 let mut dark = ui.visuals().clone();
                                 dark.widgets.inactive.bg_fill =
                                     egui::Color32::from_rgba_premultiplied(48, 48, 52, 235);
@@ -1647,6 +1831,21 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                                             }
                                         });
                                 });
+                                // **选中态换档换色只改选中那一件**（REQ-006/T-005，用户"已经画出来
+                                // 的选中还能调整粗细、颜色"）：这一帧档/色变了且有选中 → restyle 它，
+                                // 一次＝一条撤销。没选中时这两档只管下一笔的默认，与旧行为一致。
+                                if let Some(sel) = ts.selected {
+                                    if ts.thickness_idx != pre_th || ts.color_idx != pre_col {
+                                        restyle_selected(
+                                            &objects,
+                                            ann_field,
+                                            sel,
+                                            ts.thickness_idx,
+                                            ts.color_idx,
+                                        );
+                                        child.request_repaint();
+                                    }
+                                }
                             }
                             // 尺寸读数与裁剪同源（同一个 `Field`），这里只报一次。
                             // 字体就是 Body（[`label_width`] 量的也是它），画出来的宽与量出来的同源。
@@ -2592,17 +2791,7 @@ mod tests {
         let mut map = egui::util::IdTypeMap::default();
         let ts = ToolState {
             tool: Some(Tool::Rect),
-            anchor: pos2(5.0, 5.0),
-            last: pos2(5.0, 5.0),
-            dragging: false,
-            next_number: 1,
-            text_input: None,
-            thickness_idx: 1,
-            color_idx: 0,
-            stroke_points: Vec::new(),
-            erase_points: Vec::new(),
-            moving: None,
-            move_last: pos2(0.0, 0.0),
+            ..Default::default()
         };
         map.insert_temp(tool_key(1), (10_u64, ts));
         assert_eq!(load_tool_state(&map, 1, 10).tool, Some(Tool::Rect));

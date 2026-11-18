@@ -3,7 +3,7 @@
   "id": "CHG-016",
   "title": "标注对象模型：可选中二次编辑、全控制点、跨重启持久化（对齐 某截图工具，取代 CHG-014/015 像素层）",
   "version": "v0.2",
-  "status": "SPEC_REVIEW",
+  "status": "IMPLEMENTING",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -111,8 +111,56 @@
       "at": "2026-11-18T07:04:50+00:00",
       "action": "revise",
       "detail": "用户 2026-11-18 要求马赛克由框选式改为涂抹式（某截图工具 画笔马赛克），取代 CHG-014 已批的框选；REQ-002/REQ-004 相应更新，橡皮部分擦结论不变"
+    },
+    {
+      "at": "2026-11-18T08:55:47+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "ad080bea546cf52a6a2fb3606a690e144d40cc5f800b8790ea332758ab8873ae",
+        "version": "v0.2",
+        "by": "Filthy-ice",
+        "reference": "用户2026-11-18：橡皮部分擦随对象移动＋马赛克改涂抹＋笔刷光标圈",
+        "at": "2026-11-18T08:55:47+00:00",
+        "snapshot": "approvals/v0.2-ad080bea546cf52a6a2fb3606a690e144d40cc5f800b8790ea332758ab8873ae.md",
+        "scope": "local-delivery",
+        "context_hash": "d5195664324452d6ea87042b72060b67d791c4d2a1420858a31984f2701b2391",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-18T08:59:34+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-016",
+        "version": "v0.2",
+        "spec_hash": "ad080bea546cf52a6a2fb3606a690e144d40cc5f800b8790ea332758ab8873ae"
+      }
+    },
+    {
+      "at": "2026-11-18T08:59:34+00:00",
+      "action": "seal-plan",
+      "detail": "d52b716674c42a760ce45d02f3fbb0ecd5ac42ae5be75a6aefb0d687d244255b"
+    },
+    {
+      "at": "2026-11-18T08:59:34+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
     }
   ],
-  "approval": null,
-  "plan_hash": null
+  "approval": {
+    "hash": "ad080bea546cf52a6a2fb3606a690e144d40cc5f800b8790ea332758ab8873ae",
+    "version": "v0.2",
+    "by": "Filthy-ice",
+    "reference": "用户2026-11-18：橡皮部分擦随对象移动＋马赛克改涂抹＋笔刷光标圈",
+    "at": "2026-11-18T08:55:47+00:00",
+    "snapshot": "approvals/v0.2-ad080bea546cf52a6a2fb3606a690e144d40cc5f800b8790ea332758ab8873ae.md",
+    "scope": "local-delivery",
+    "context_hash": "d5195664324452d6ea87042b72060b67d791c4d2a1420858a31984f2701b2391",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "d52b716674c42a760ce45d02f3fbb0ecd5ac42ae5be75a6aefb0d687d244255b"
 }

@@ -867,6 +867,47 @@ impl ObjectList {
             self.touch();
         }
     }
+
+    /// 逐帧改形：把下标 idx 对象的第 cp 个控制点拖到 p（begin_move 已压过快照，这里只改不再压）。
+    /// 改了形状才 bump revision；越界/无角点形状返回 false。
+    pub fn resize_object(&mut self, idx: usize, cp: usize, p: (f32, f32)) -> bool {
+        let changed = self
+            .objects
+            .get_mut(idx)
+            .is_some_and(|o| o.drag_control(cp, p));
+        if changed {
+            self.touch();
+        }
+        changed
+    }
+
+    /// 删除选中对象：压一份快照后从列表移除，bump revision。下标越界 false。
+    pub fn remove(&mut self, idx: usize) -> bool {
+        if idx >= self.objects.len() {
+            return false;
+        }
+        self.snapshot();
+        self.objects.remove(idx);
+        self.touch();
+        true
+    }
+
+    /// 改选中对象样式（一次改＝一条撤销）：只在**真的会改**时才压快照，避免空点击吃撤销条数。
+    /// width 语义由 shape 自己认（文字＝字号、其余＝线宽、序号/马赛克忽略 width）。
+    pub fn restyle(&mut self, idx: usize, width: f32, color: [u8; 4]) -> bool {
+        let Some(cur) = self.objects.get(idx) else {
+            return false;
+        };
+        let mut trial = cur.clone();
+        trial.set_style(width, color);
+        if trial == *cur {
+            return false;
+        }
+        self.snapshot();
+        self.objects[idx].set_style(width, color);
+        self.touch();
+        true
+    }
 }
 
 #[allow(dead_code)]
@@ -1024,6 +1065,106 @@ impl AnnoObject {
         let (rx0, rx1) = (a.0.min(b.0), a.0.max(b.0));
         let (ry0, ry1) = (a.1.min(b.1), a.1.max(b.1));
         rx0 <= ox1 && rx1 >= ox0 && ry0 <= oy1 && ry1 >= oy0
+    }
+
+    /// 改形用的控制点：矩形框 4 角（左上→右上→右下→左下），直线/箭头 2 端点。
+    /// 铅笔/马赛克/序号/文字返回空——它们只整体移动，不拖角改形。
+    pub fn control_points(&self) -> Vec<(f32, f32)> {
+        match &self.shape {
+            Shape::Rect { a, b, .. } => {
+                let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
+                let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+                vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+            }
+            Shape::Line { a, b, .. } => vec![*a, *b],
+            Shape::Arrow { from, to, .. } => vec![*from, *to],
+            Shape::Pencil { .. }
+            | Shape::Serial { .. }
+            | Shape::Text { .. }
+            | Shape::Mosaic { .. } => vec![],
+        }
+    }
+
+    /// 把第 idx 个控制点拖到 p 改对象几何，返回是否真的改了形状（调用方据此决定压不压撤销快照）。
+    /// 对角拖过后两值可能交叉，但 render/hit/bbox 都按 min/max 归一，无需当场纠正。
+    pub fn drag_control(&mut self, idx: usize, p: (f32, f32)) -> bool {
+        match &mut self.shape {
+            Shape::Rect { a, b, .. } => {
+                let (mut x0, mut x1) = (a.0.min(b.0), a.0.max(b.0));
+                let (mut y0, mut y1) = (a.1.min(b.1), a.1.max(b.1));
+                match idx {
+                    0 => {
+                        x0 = p.0;
+                        y0 = p.1;
+                    }
+                    1 => {
+                        x1 = p.0;
+                        y0 = p.1;
+                    }
+                    2 => {
+                        x1 = p.0;
+                        y1 = p.1;
+                    }
+                    3 => {
+                        x0 = p.0;
+                        y1 = p.1;
+                    }
+                    _ => return false,
+                }
+                *a = (x0, y0);
+                *b = (x1, y1);
+                true
+            }
+            Shape::Line { a, b, .. } => {
+                match idx {
+                    0 => *a = p,
+                    1 => *b = p,
+                    _ => return false,
+                }
+                true
+            }
+            Shape::Arrow { from, to, .. } => {
+                match idx {
+                    0 => *from = p,
+                    1 => *to = p,
+                    _ => return false,
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 换样式：改线宽/颜色（文字改字号）。序号无宽度、马赛克无颜色，按各自字段处理。
+    /// 供"选中对象后改粗细/颜色"复用，返回是否改了。
+    pub fn set_style(&mut self, width: f32, color: [u8; 4]) {
+        match &mut self.shape {
+            Shape::Rect {
+                width: w, color: c, ..
+            }
+            | Shape::Arrow {
+                width: w, color: c, ..
+            }
+            | Shape::Line {
+                width: w, color: c, ..
+            }
+            | Shape::Pencil {
+                width: w, color: c, ..
+            } => {
+                *w = width;
+                *c = color;
+            }
+            Shape::Serial { color: c, .. } => *c = color,
+            Shape::Text {
+                font_size,
+                color: c,
+                ..
+            } => {
+                *font_size = width;
+                *c = color;
+            }
+            Shape::Mosaic { .. } => {}
+        }
     }
 }
 
@@ -1708,5 +1849,240 @@ mod tests {
         assert_eq!(layer.get_pixel(16, 20)[3], 255, "涂到的块必须不透明");
         assert_eq!(layer.get_pixel(48, 20)[3], 0, "笔迹没到的右侧透明");
         assert_eq!(layer.get_pixel(16, 60)[3], 0, "笔迹上下方透明");
+    }
+
+    /// REQ-006：控制点个数与类型相符——框 4 角、直线/箭头 2 端点，其余（铅笔/马赛克/序号/文字）为空。
+    #[test]
+    fn control_points_match_shape() {
+        let rect = AnnoObject {
+            shape: Shape::Rect {
+                a: (40.0, 10.0),
+                b: (10.0, 30.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        // 即便 a>b 交叉，控制点也按 min/max 归一成左上→右上→右下→左下
+        assert_eq!(
+            rect.control_points(),
+            vec![(10.0, 10.0), (40.0, 10.0), (40.0, 30.0), (10.0, 30.0)]
+        );
+        let line = AnnoObject {
+            shape: Shape::Line {
+                a: (1.0, 2.0),
+                b: (3.0, 4.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        assert_eq!(line.control_points(), vec![(1.0, 2.0), (3.0, 4.0)]);
+        let arrow = AnnoObject {
+            shape: Shape::Arrow {
+                from: (5.0, 5.0),
+                to: (9.0, 9.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        assert_eq!(arrow.control_points(), vec![(5.0, 5.0), (9.0, 9.0)]);
+        let pencil = AnnoObject {
+            shape: Shape::Pencil {
+                points: vec![(1.0, 1.0), (2.0, 2.0)],
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        assert!(pencil.control_points().is_empty(), "铅笔只整体移动，无角点");
+        let mosaic = AnnoObject {
+            shape: Shape::Mosaic {
+                points: vec![(1.0, 1.0), (2.0, 2.0)],
+                width: 8.0,
+                block: 8,
+            },
+            erased: vec![],
+        };
+        assert!(mosaic.control_points().is_empty(), "涂抹式马赛克无角点");
+    }
+
+    /// REQ-006：拖控制点改形。框改对应边、直线/箭头改端点，越界索引返回 false 不改；无角点形状返回 false。
+    #[test]
+    fn drag_control_resizes_shape() {
+        let mut ol = ObjectList::new();
+        ol.push(AnnoObject {
+            shape: Shape::Rect {
+                a: (10.0, 10.0),
+                b: (40.0, 30.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        });
+        // 拖右下角（索引 2）到 (60,50)
+        assert!(ol.objects[0].drag_control(2, (60.0, 50.0)));
+        match &ol.objects[0].shape {
+            Shape::Rect { a, b, .. } => {
+                assert_eq!(*a, (10.0, 10.0), "左上角不动");
+                assert_eq!(*b, (60.0, 50.0), "右下角跟到手");
+            }
+            _ => panic!("应是 Rect"),
+        }
+        // 索引越界不改
+        assert!(!ol.objects[0].drag_control(9, (0.0, 0.0)));
+
+        let mut line = AnnoObject {
+            shape: Shape::Line {
+                a: (1.0, 2.0),
+                b: (3.0, 4.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        assert!(line.drag_control(0, (7.0, 8.0)));
+        match &line.shape {
+            Shape::Line { a, b, .. } => {
+                assert_eq!(*a, (7.0, 8.0));
+                assert_eq!(*b, (3.0, 4.0), "另一端不动");
+            }
+            _ => panic!("应是 Line"),
+        }
+
+        let mut pencil = AnnoObject {
+            shape: Shape::Pencil {
+                points: vec![(1.0, 1.0)],
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        assert!(
+            !pencil.drag_control(0, (9.0, 9.0)),
+            "铅笔无角点，改形应返回 false"
+        );
+    }
+
+    /// REQ-006：选中后改样式——矩形/线/箭头/铅笔改宽+色，文字改字号+色，序号只改色，马赛克不动。
+    #[test]
+    fn set_style_applies_per_shape() {
+        let blue = [0, 0, 255, 255];
+        let mut rect = AnnoObject {
+            shape: Shape::Rect {
+                a: (0.0, 0.0),
+                b: (9.0, 9.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        rect.set_style(6.0, blue);
+        match &rect.shape {
+            Shape::Rect { width, color, .. } => {
+                assert_eq!(*width, 6.0);
+                assert_eq!(*color, blue);
+            }
+            _ => unreachable!(),
+        }
+        let mut text = AnnoObject {
+            shape: Shape::Text {
+                at: (1.0, 1.0),
+                text: "hi".into(),
+                font_size: 20.0,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        text.set_style(32.0, blue);
+        match &text.shape {
+            Shape::Text {
+                font_size, color, ..
+            } => {
+                assert_eq!(*font_size, 32.0, "文字的 width 槽即字号");
+                assert_eq!(*color, blue);
+            }
+            _ => unreachable!(),
+        }
+        let mut serial = AnnoObject {
+            shape: Shape::Serial {
+                center: (1.0, 1.0),
+                radius: 14.0,
+                number: 1,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        serial.set_style(999.0, blue);
+        match &serial.shape {
+            Shape::Serial { radius, color, .. } => {
+                assert_eq!(*color, blue, "序号改色");
+                assert_eq!(*radius, 14.0, "序号半径不受 width 影响");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// REQ-006/REQ-007：列表级改形 bump revision；删除压快照可撤销，越界返回 false。
+    #[test]
+    fn resize_and_remove_bump_revision_and_undo() {
+        let mut ol = ObjectList::new();
+        ol.push(AnnoObject {
+            shape: Shape::Rect {
+                a: (10.0, 10.0),
+                b: (40.0, 30.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        });
+        let rev = ol.revision;
+        ol.begin_move(); // 改形前压快照
+        assert!(ol.resize_object(0, 2, (60.0, 50.0)), "有角点形状改形成功");
+        assert!(ol.revision > rev, "改形要 bump revision 触发重渲染");
+        assert!(
+            !ol.resize_object(99, 0, (0.0, 0.0)),
+            "越界下标改形返回 false"
+        );
+
+        // 删除：压快照 → 移除 → 可 undo 找回
+        let count_before = ol.objects.len();
+        assert!(ol.remove(0));
+        assert_eq!(ol.objects.len(), count_before - 1);
+        assert!(ol.undo(), "删除可撤销");
+        assert_eq!(ol.objects.len(), count_before, "撤销把对象找回来");
+        assert!(!ol.remove(5), "越界删除返回 false");
+    }
+
+    /// REQ-006/T-005：改样式一次＝一条撤销；同值不改、也不吃撤销条数（防空点击稀释 undo 栈）。
+    #[test]
+    fn restyle_applies_once_and_ignores_noop() {
+        let mut ol = ObjectList::new();
+        ol.push(AnnoObject {
+            shape: Shape::Rect {
+                a: (0.0, 0.0),
+                b: (10.0, 10.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        });
+        let blue = [0, 0, 255, 255];
+        let rev = ol.revision;
+        assert!(ol.restyle(0, 6.0, blue), "改了宽度与颜色应返回 true");
+        assert!(ol.revision > rev);
+        assert!(ol.undo(), "一次改样式＝一条撤销");
+        match &ol.objects[0].shape {
+            Shape::Rect { width, color, .. } => {
+                assert_eq!(*width, 2.0, "撤销回到改前宽");
+                assert_eq!(*color, RED, "撤销回到改前色");
+            }
+            _ => unreachable!(),
+        }
+        // 撤销栈顶那一条现在是刚才样式改动前的快照；再点同值不应新增撤销条数
+        let entries_before = ol.undo.len();
+        assert!(!ol.restyle(0, 2.0, RED), "同值不该改");
+        assert_eq!(ol.undo.len(), entries_before, "同值不吃撤销条数");
     }
 }

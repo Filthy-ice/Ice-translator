@@ -1,6 +1,6 @@
 Change: CHG-016
-Version: v0.1
-Spec-Hash: 0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2
+Version: v0.2
+Spec-Hash: ad080bea546cf52a6a2fb3606a690e144d40cc5f800b8790ea332758ab8873ae
 
 # CHG-016 · Design
 
