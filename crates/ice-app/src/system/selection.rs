@@ -1508,6 +1508,24 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             }
         }
 
+        // 笔刷光标反馈（用户 2026-11-18 要）：选中铅笔/橡皮/马赛克时，鼠标尖画一个跟粗细
+        // 挂钩的圈，让人看得出要涂多宽。落在药丸/下拉浮层上、或指针不在画布内时不画。
+        if matches!(ts.tool, Some(Tool::Pencil | Tool::Eraser | Tool::Mosaic))
+            && !on_bar
+            && !ui.ctx().is_pointer_over_egui()
+            && ann_field.bounds.contains(here)
+        {
+            let r = match ts.tool {
+                Some(Tool::Pencil) => THICKNESS[ts.thickness_idx] / 2.0,
+                _ => THICKNESS[ts.thickness_idx] * 1.5,
+            };
+            ui.painter().circle_stroke(
+                here,
+                r.max(2.0),
+                egui::Stroke::new(1.0, egui::Color32::from_white_alpha(210)),
+            );
+        }
+
         // 动作条：**圆角药丸，浮在选区下方，放不下翻上方**；不许铺满整幅图宽（REQ-103）。
         // 宽度按内容定（[`bar_width`]），版式照贴图那条已批准药丸（`pill.rs`）：两端让出
         // `SIDE_PAD`、颗间 `BTN_GAP`、整行在 `BAR_H` 里垂直居中——不再齐平顶格、右边空一大截。
