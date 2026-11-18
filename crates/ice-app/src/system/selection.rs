@@ -1778,17 +1778,6 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
                 ink,
                 egui::Stroke::NONE,
             ));
-            // 鼻尖一条曲线：示意铅笔能自由画线（用户 2026-11-18 要）。egui 0.37 无
-            // Shape::cubic_bezier，用几段折线拼出一条弧线。
-            let curve = [
-                p(0.10, 0.90),
-                p(0.068, 0.803),
-                p(0.077, 0.724),
-                p(0.13, 0.66),
-            ];
-            for pair in curve.windows(2) {
-                painter.line_segment([pair[0], pair[1]], stroke);
-            }
         }
         BarIcon::Number => {
             // 序号标线稿：一个圆 + 里面两段线画的「1」（竖杆 + 顶部小旗），
