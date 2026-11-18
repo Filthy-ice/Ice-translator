@@ -647,15 +647,19 @@ pub struct AnnoObject {
     pub erased: Vec<EraseStamp>,
 }
 
-/// 对象列表＝标注唯一事实源。undo/redo 快照在 T-003 接线；本包先建 objects/revision/next_serial。
-#[allow(dead_code)]
+/// 对象列表＝标注唯一事实源。undo/redo 存对象快照（廉价：一组对象不是像素），
+/// 取代像素层那套脏矩形前像（REQ-003）。next_serial 序号自增计数，跟着对象走。
 #[derive(Clone, Debug)]
 pub struct ObjectList {
     pub objects: Vec<AnnoObject>,
     pub revision: u64,
     pub next_serial: u32,
+    undo: Vec<Vec<AnnoObject>>,
+    redo: Vec<Vec<AnnoObject>>,
 }
 
+// 引擎已备齐但遮罩尚未接线（T-002 接线后移除本 allow）：现网仍走像素 Layer，
+// 这套对象列表的 undo/erase/render 仅由无头测试驱动，非测试构建里暂视为 dead。
 #[allow(dead_code)]
 impl ObjectList {
     pub fn new() -> Self {
@@ -663,16 +667,106 @@ impl ObjectList {
             objects: Vec::new(),
             revision: 0,
             next_serial: 1,
+            undo: Vec::new(),
+            redo: Vec::new(),
         }
-    }
-
-    pub fn push(&mut self, obj: AnnoObject) {
-        self.objects.push(obj);
-        self.touch();
     }
 
     fn touch(&mut self) {
         self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// 突变前压一份快照；新突变清空 redo（标准语义）；条数封 30（对象快照廉价，无字节上限）。
+    fn snapshot(&mut self) {
+        self.undo.push(self.objects.clone());
+        if self.undo.len() > MAX_UNDO_ENTRIES {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    /// 建一个对象（八件落墨工具松手/单击时调）：压快照 → 入列表 → bump revision。
+    pub fn push(&mut self, obj: AnnoObject) {
+        self.snapshot();
+        self.objects.push(obj);
+        self.touch();
+    }
+
+    /// 序号标：用 next_serial 建 Serial 并自增（默认从 1 起，CHG-014 行为）。
+    pub fn push_serial(&mut self, center: (f32, f32), radius: f32, color: [u8; 4]) {
+        let number = self.next_serial;
+        self.push(AnnoObject {
+            shape: Shape::Serial {
+                center,
+                radius,
+                number,
+                color,
+            },
+            erased: Vec::new(),
+        });
+        self.next_serial += 1;
+    }
+
+    /// 橡皮画笔：把这段轨迹作为擦除痕迹追加到**笔刷压到的每个对象**上（一次调用＝一条快照）。
+    /// 没压到任何对象则什么都不做（不空压快照）。痕迹是绝对坐标，随对象 translate 一起挪。
+    pub fn erase_pen(&mut self, points: Vec<(f32, f32)>, width: f32) {
+        let idxs = self.crossed(|o| o.crossed_by_pen(&points, width));
+        if idxs.is_empty() {
+            return;
+        }
+        self.snapshot();
+        for i in idxs {
+            self.objects[i].erased.push(EraseStamp::Pen {
+                points: points.clone(),
+                width,
+            });
+        }
+        self.touch();
+    }
+
+    /// 橡皮矩形：把矩形区作为擦除痕迹追加到压到的每个对象上。
+    pub fn erase_rect(&mut self, a: (f32, f32), b: (f32, f32)) {
+        let idxs = self.crossed(|o| o.crossed_by_rect(a, b));
+        if idxs.is_empty() {
+            return;
+        }
+        self.snapshot();
+        for i in idxs {
+            self.objects[i].erased.push(EraseStamp::Rect { a, b });
+        }
+        self.touch();
+    }
+
+    fn crossed(&self, pred: impl Fn(&AnnoObject) -> bool) -> Vec<usize> {
+        (0..self.objects.len())
+            .filter(|&i| pred(&self.objects[i]))
+            .collect()
+    }
+
+    /// 撤销：弹最近一份快照恢复，当前份压入 redo，重渲染靠 revision 变触发。空栈 false。
+    pub fn undo(&mut self) -> bool {
+        match self.undo.pop() {
+            Some(prev) => {
+                self.redo.push(self.objects.clone());
+                self.objects = prev;
+                self.touch();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 重做：弹 redo 恢复，当前份压回 undo。空栈 false。
+    pub fn redo(&mut self) -> bool {
+        match self.redo.pop() {
+            Some(next) => {
+                self.undo.push(self.objects.clone());
+                self.objects = next;
+                self.touch();
+                true
+            }
+            None => false,
+        }
     }
 }
 
@@ -723,6 +817,124 @@ impl AnnoObject {
             }
         }
     }
+
+    /// 点到该对象"落墨几何"的距离（落在墨上＝0）。橡皮笔刷半径 ≥ 此距离即算压到这一件。
+    /// 只看几何不看 erased（与 REQ-004 命中同口径）。
+    pub fn hit_dist(&self, p: (f32, f32)) -> f32 {
+        match &self.shape {
+            Shape::Rect { a, b, width, .. } => {
+                let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
+                let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+                let d = dist_to_segment(p, (x0, y0), (x1, y0))
+                    .min(dist_to_segment(p, (x1, y0), (x1, y1)))
+                    .min(dist_to_segment(p, (x1, y1), (x0, y1)))
+                    .min(dist_to_segment(p, (x0, y1), (x0, y0)));
+                (d - width / 2.0).max(0.0)
+            }
+            Shape::Line { a, b, width, .. } => (dist_to_segment(p, *a, *b) - width / 2.0).max(0.0),
+            Shape::Arrow {
+                from, to, width, ..
+            } => {
+                let [h1, h2] = arrow_head(*from, *to, *width);
+                let d = dist_to_segment(p, *from, *to)
+                    .min(dist_to_segment(p, *to, h1))
+                    .min(dist_to_segment(p, *to, h2));
+                (d - width / 2.0).max(0.0)
+            }
+            Shape::Pencil { points, width, .. } => {
+                let mut d = f32::INFINITY;
+                if points.len() == 1 {
+                    d = dist_to_segment(p, points[0], points[0]);
+                } else {
+                    for w in points.windows(2) {
+                        d = d.min(dist_to_segment(p, w[0], w[1]));
+                    }
+                }
+                (d - width / 2.0).max(0.0)
+            }
+            Shape::Serial { center, radius, .. } => (dist(p, *center) - radius).max(0.0),
+            Shape::Text {
+                at,
+                text,
+                font_size,
+                ..
+            } => {
+                let w = text.chars().count() as f32 * font_size * 0.6;
+                let (x0, y0, x1, y1) = (at.0, at.1, at.0 + w.max(1.0), at.1 + font_size);
+                dist_to_rect(p, x0, y0, x1, y1)
+            }
+            Shape::Mosaic { a, b, .. } => {
+                let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
+                let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+                dist_to_rect(p, x0, y0, x1, y1)
+            }
+        }
+    }
+
+    /// 对象包围盒（AABB），矩形擦除区是否压到用它粗判。
+    pub fn bbox(&self) -> (f32, f32, f32, f32) {
+        let pts = match &self.shape {
+            Shape::Rect { a, b, .. } | Shape::Line { a, b, .. } | Shape::Mosaic { a, b, .. } => {
+                vec![*a, *b]
+            }
+            Shape::Arrow { from, to, .. } => vec![*from, *to],
+            Shape::Pencil { points, .. } => points.clone(),
+            Shape::Serial { center, radius, .. } => {
+                vec![
+                    (center.0 - radius, center.1 - radius),
+                    (center.0 + radius, center.1 + radius),
+                ]
+            }
+            Shape::Text {
+                at,
+                text,
+                font_size,
+                ..
+            } => {
+                let w = text.chars().count() as f32 * font_size * 0.6;
+                vec![*at, (at.0 + w.max(1.0), at.1 + font_size)]
+            }
+        };
+        let mut x0 = f32::INFINITY;
+        let mut y0 = f32::INFINITY;
+        let mut x1 = f32::NEG_INFINITY;
+        let mut y1 = f32::NEG_INFINITY;
+        for p in pts {
+            x0 = x0.min(p.0);
+            y0 = y0.min(p.1);
+            x1 = x1.max(p.0);
+            y1 = y1.max(p.1);
+        }
+        (x0, y0, x1, y1)
+    }
+
+    /// 画笔橡皮这段轨迹是否压到本对象：任一轨迹点离落墨几何 ≤ 半笔宽。
+    pub fn crossed_by_pen(&self, points: &[(f32, f32)], width: f32) -> bool {
+        let r = width / 2.0;
+        points.iter().any(|&p| self.hit_dist(p) <= r)
+    }
+
+    /// 矩形橡皮区是否压到本对象：AABB 相交。
+    pub fn crossed_by_rect(&self, a: (f32, f32), b: (f32, f32)) -> bool {
+        let (ox0, oy0, ox1, oy1) = self.bbox();
+        let (rx0, rx1) = (a.0.min(b.0), a.0.max(b.0));
+        let (ry0, ry1) = (a.1.min(b.1), a.1.max(b.1));
+        rx0 <= ox1 && rx1 >= ox0 && ry0 <= oy1 && ry1 >= oy0
+    }
+}
+
+/// 两点欧氏距离。
+#[allow(dead_code)]
+fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
+    ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
+}
+
+/// 点到矩形（x0,y0)-(x1,y1) 的距离：在内为 0，否则到最近边/角。
+#[allow(dead_code)]
+fn dist_to_rect(p: (f32, f32), x0: f32, y0: f32, x1: f32, y1: f32) -> f32 {
+    let dx = (x0 - p.0).max(p.0 - x1).max(0.0);
+    let dy = (y0 - p.1).max(p.1 - y1).max(0.0);
+    (dx * dx + dy * dy).sqrt()
 }
 
 /// 按列表序逐件重渲染整层：每件先画几何进临时 tile、再用该件 erased 对 tile 自身
@@ -1241,5 +1453,127 @@ mod tests {
         });
         assert_eq!(ol.revision, 1);
         assert_eq!(ol.objects.len(), 1);
+    }
+
+    /// REQ-003：对象快照撤销/重做——undo 退一份、redo 进一份，空栈 false。
+    #[test]
+    fn object_list_undo_redo_roundtrip() {
+        let mut ol = ObjectList::new();
+        let line = |y| AnnoObject {
+            shape: Shape::Line {
+                a: (2.0, y),
+                b: (60.0, y),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        };
+        ol.push(line(10.0));
+        ol.push(line(20.0));
+        assert_eq!(ol.objects.len(), 2);
+        assert!(ol.undo());
+        assert_eq!(ol.objects.len(), 1, "撤销退掉最近一件");
+        assert!(ol.undo());
+        assert_eq!(ol.objects.len(), 0);
+        assert!(!ol.undo(), "空栈撤销 false");
+        assert!(ol.redo());
+        assert_eq!(ol.objects.len(), 1, "重做补回一件");
+        assert!(ol.redo());
+        assert_eq!(ol.objects.len(), 2);
+        assert!(!ol.redo(), "重做到头 false");
+    }
+
+    /// REQ-003：新一次突变清空 redo 栈（撤到底再画一笔，之前的重做作废）。
+    #[test]
+    fn new_mutation_clears_redo() {
+        let mut ol = ObjectList::new();
+        ol.push(AnnoObject {
+            shape: Shape::Line {
+                a: (2.0, 2.0),
+                b: (8.0, 8.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        });
+        ol.undo();
+        assert!(ol.redo(), "先有可重做的");
+        ol.undo();
+        ol.push(AnnoObject {
+            shape: Shape::Line {
+                a: (3.0, 3.0),
+                b: (9.0, 9.0),
+                width: 2.0,
+                color: RED,
+            },
+            erased: vec![],
+        });
+        assert!(!ol.redo(), "新突变后 redo 应清空");
+    }
+
+    /// REQ-005：橡皮画笔只给压到的对象加擦除痕迹，没压到的不动；序号自增走 push_serial。
+    #[test]
+    fn erase_pen_stamps_only_crossed_objects_and_serial_increments() {
+        let mut ol = ObjectList::new();
+        ol.push(AnnoObject {
+            shape: Shape::Line {
+                a: (10.0, 32.0),
+                b: (54.0, 32.0),
+                width: 4.0,
+                color: RED,
+            },
+            erased: vec![],
+        });
+        ol.push(AnnoObject {
+            shape: Shape::Rect {
+                a: (5.0, 5.0),
+                b: (15.0, 15.0),
+                width: 3.0,
+                color: RED,
+            },
+            erased: vec![],
+        });
+        // 沿那条线左半段擦：只压到线（objects[0]），没压到远处的小框
+        ol.erase_pen(vec![(10.0, 32.0), (30.0, 32.0)], 12.0);
+        assert_eq!(ol.objects[0].erased.len(), 1, "压到的线加了一条擦除痕迹");
+        assert_eq!(ol.objects[1].erased.len(), 0, "没压到的小框不许加");
+        // 擦除可撤销：undo 掉这条 erase
+        assert!(ol.undo());
+        assert_eq!(ol.objects[0].erased.len(), 0, "撤销把擦除痕迹退回");
+
+        // 序号自增：连落两个，号 1、2，next_serial 到 3
+        let mut ol2 = ObjectList::new();
+        ol2.push_serial((20.0, 20.0), 14.0, RED);
+        ol2.push_serial((40.0, 40.0), 14.0, RED);
+        assert_eq!(ol2.next_serial, 3);
+        match &ol2.objects[0].shape {
+            Shape::Serial { number, .. } => assert_eq!(*number, 1),
+            _ => panic!("应是 Serial"),
+        }
+        match &ol2.objects[1].shape {
+            Shape::Serial { number, .. } => assert_eq!(*number, 2),
+            _ => panic!("应是 Serial"),
+        }
+    }
+
+    /// REQ-005：擦除痕迹渲染后，被擦段变透明、没擦段还在（端到端 render 验证 erase_pen 生效）。
+    #[test]
+    fn erase_pen_makes_crossed_segment_transparent_in_render() {
+        let Ok(m) = FileMetrics::open() else { return };
+        let bg = RgbaImage::new(64, 64);
+        let mut ol = ObjectList::new();
+        ol.push(AnnoObject {
+            shape: Shape::Line {
+                a: (10.0, 32.0),
+                b: (54.0, 32.0),
+                width: 4.0,
+                color: RED,
+            },
+            erased: vec![],
+        });
+        ol.erase_pen(vec![(10.0, 32.0), (30.0, 32.0)], 12.0);
+        let layer = render(&ol.objects, &bg, &m);
+        assert_eq!(layer.get_pixel(20, 32)[3], 0, "擦过段透明");
+        assert!(layer.get_pixel(45, 32)[3] > 200, "没擦段还在");
     }
 }
