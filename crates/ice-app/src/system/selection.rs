@@ -1753,17 +1753,17 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
             );
         }
         BarIcon::Pencil => {
-            // 铅笔线稿（对齐 某截图工具 那种一眼认得出）：斜放的笔身 + 削尖的三角头 + 实心笔尖。
-            // 沿主对角线从笔尖(左下)到笔尾(右上)，两条平行长边 + 尾封口 + 锥底分隔线。
+            // 铅笔线稿：斜放、占满图标框、笔身够粗，和箭头/直线那几颗一个视觉分量
+            // （之前太细，跟自家图标不搭）。笔身两长边 + 尾封口 + 削尖三角头 + 锥底分隔 + 实心铅芯。
             let p = |fx: f32, fy: f32| {
                 egui::pos2(
                     rect.min.x + rect.width() * fx,
                     rect.min.y + rect.height() * fy,
                 )
             };
-            let tip = p(0.18, 0.82);
-            let (cone_l, cone_r) = (p(0.385, 0.743), p(0.257, 0.615));
-            let (back_l, back_r) = (p(0.710, 0.418), p(0.582, 0.290));
+            let tip = p(0.14, 0.86);
+            let (cone_l, cone_r) = (p(0.363, 0.793), p(0.207, 0.637));
+            let (back_l, back_r) = (p(0.786, 0.370), p(0.630, 0.214));
             // 笔身两条长边 + 尾封口
             painter.line_segment([cone_l, back_l], stroke);
             painter.line_segment([cone_r, back_r], stroke);
@@ -1773,9 +1773,9 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
             painter.line_segment([cone_r, tip], stroke);
             // 锥底与笔身分隔线
             painter.line_segment([cone_l, cone_r], stroke);
-            // 笔尖：靠近尖端的一小段填实，读得出"削出来的铅芯"
+            // 铅芯：靠近尖端一小段填实
             painter.add(egui::Shape::convex_polygon(
-                vec![tip, p(0.242, 0.797), p(0.203, 0.759)],
+                vec![tip, p(0.218, 0.838), p(0.164, 0.784)],
                 ink,
                 egui::Stroke::NONE,
             ));
@@ -1820,16 +1820,16 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
             painter.rect_stroke(cell(0.0, 1.0), 0.0, stroke, egui::StrokeKind::Inside);
         }
         BarIcon::Eraser => {
-            // 橡皮线稿（对齐 某截图工具）：斜放的一块长方形橡皮，一道斜线分出靠外的橡皮头，
-            // 橡皮头那截填实——一眼是"一块橡皮"，不再是抽象方块。
+            // 橡皮线稿（对齐 某截图工具）：斜放的一块长方形橡皮 + 一道斜线分出靠外的橡皮头（填实），
+            // 底下再加一条横线（某截图工具 那颗橡皮下面有一条擦过的基线，用户 2026-11-18 要）。
             let p = |fx: f32, fy: f32| {
                 egui::pos2(
                     rect.min.x + rect.width() * fx,
                     rect.min.y + rect.height() * fy,
                 )
             };
-            let (a, b, c, d) = (p(0.16, 0.60), p(0.62, 0.86), p(0.84, 0.42), p(0.38, 0.16));
-            let (q1, q2) = (p(0.541, 0.251), p(0.321, 0.691));
+            let (a, b, c, d) = (p(0.18, 0.54), p(0.58, 0.78), p(0.84, 0.42), p(0.44, 0.18));
+            let (q1, q2) = (p(0.58, 0.264), p(0.32, 0.624));
             // 橡皮头（a-d 那一端）填实 + 描边
             painter.add(egui::Shape::convex_polygon(vec![a, d, q1, q2], ink, stroke));
             // 整块橡皮轮廓
@@ -1838,6 +1838,8 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
                 egui::Color32::TRANSPARENT,
                 stroke,
             ));
+            // 底下那条横线
+            painter.line_segment([p(0.16, 0.90), p(0.74, 0.90)], stroke);
         }
         BarIcon::Check => {
             // 两段线，短的那段从左边起头——和 某截图工具 那颗对勾同一个读法
