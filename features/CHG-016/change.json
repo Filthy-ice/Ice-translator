@@ -13,8 +13,8 @@
       "id": "Q-001",
       "blocking": true,
       "question": "橡皮语义：整对象删 vs 部分擦？",
-      "resolution": "部分擦（对象打洞）。先前『整对象删（对齐 某截图工具 eraserReEditing）』是我对 某截图工具 的误判：取证 EditItemRectEraser/EditItemEraserCustom 是擦除图形项、发现-标注行为.md:50『使用画笔拖动或选择矩形区域，即可擦除部分标注（擦的是标注，不是背景）』、eraserReEditing 让橡皮笔画可二次编辑；CHG-014 已批 erase（annotate.rs:253-262）本就是 destination-out 部分擦。用户 2026-11-18 拿 某截图工具 真机截图纠正（箭头擦出缺口、序号擦掉一块、擦除可撤销）。把橡皮做成对象列表里的一种对象（画笔/矩形），渲染时 destination-out 打洞＝兼得部分擦＋可撤销＋可二次编辑。REQ-005 定稿部分擦。",
-      "source": "用户 2026-11-18 真机截图＋原话『某截图工具的明显不是擦除整个标记的对象。而且擦除的部分还能撤销呢』；仓外 某截图工具.strings.txt:9687/20526/20442（EditItemRectEraser/EraserCustom、MarkBar.Eraser.*、eraserReEditing）、发现-标注行为.md:50/100；代码 annotate.rs:253-262（CHG-014 已批 destination-out 部分擦）。本包 spec.md 事实 14/17/18、Q-001/REQ-005。"
+      "resolution": "部分擦，且擦除绑定到被擦对象、随对象移动。先前『整对象删（对齐 某截图工具）』是我对 某截图工具 的误判；131 又误写成『橡皮是独立对象、对全局标注层打洞、洞不随对象移动』。用户 2026-11-18 两次真机验证纠正：① 擦半条箭头/擦掉序号一块都能撤销、被擦对象仍整条可选中拖动（几何没动）；② 拖走被擦箭头，透明缺口跟着箭头挪动、不留在原地。落法：橡皮是工具，把擦除轨迹记进被擦对象各自的相对坐标（对象自带『擦除痕迹』字段），渲染时对该对象自身 destination-out 减 alpha，故擦除随对象平移/变换。与 CHG-014 已批 erase（destination-out 部分擦）一致。REQ-005 定稿。",
+      "source": "用户 2026-11-18 真机两次验证：『某截图工具的明显不是擦除整个标记的对象。而且擦除的部分还能撤销呢』＋擦半条箭头仍能整条选中拖动＋拖走后透明缺口『跟着挪动了』；仓外 发现-标注行为.md:50/100、某截图工具.strings.txt:9687/20526/20442（eraser 两模式＋eraserReEditing，非独立可选对象义）；代码 annotate.rs:253-262（CHG-014 已批 destination-out 部分擦）。本包 spec.md 事实 14/17/18、Q-001/REQ-001/REQ-004/REQ-005。"
     },
     {
       "id": "Q-002",
