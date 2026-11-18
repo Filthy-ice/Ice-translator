@@ -21,7 +21,7 @@
       "environment": "local",
       "required": true,
       "command": ["cargo", "test", "-p", "ice-app"],
-      "note": "对象模型无头：空列表全透明、单件 render==旧落像素、H1 七件落墨工具逐像素相等、序号自增 1 起、文字空白不落、铅笔整段一件；一笔撤逐像素等于落笔前、铅笔三段一笔撤、undo-redo 往返、31 笔栈长 30、新突变清 redo、空栈不动、橡皮删多件一笔撤全回；hit 各类型顶优先、control_points 点数位置、drag_control/move_obj 几何、删选中少一件、改样式 color-width 变；橡皮整框/整条删、烧录旧像素不变；侧车 save-load 往返逐像素逐字段相等、损坏 json 返回 None 不崩、list 只返回 PNG、老化删侧车、clear_all 清空、侧车不被 next_unpinned 选中；按钮表 4/5 顺序文案映射；提交==烧录不新增历史 PNG、在飞 generation 作废、esc 三层；空列表不建 Anno、带对象 displayed==base+render==盘上 PNG、revision 变缓存变、成品折叠、烧录图新建空层、copy_pin 与显示一致"
+      "note": "对象模型无头：空列表全透明、单件 render==旧落像素、H1 七件落墨工具逐像素相等＋橡皮打洞==CHG-014 erase、序号自增 1 起、文字空白不落、铅笔整段一件；一笔撤逐像素等于落笔前、铅笔三段一笔撤、undo-redo 往返、31 笔栈长 30、新突变清 redo、空栈不动、橡皮打洞一笔撤即复现；hit 各类型顶优先、control_points 点数位置、drag_control/move_obj 几何、删选中少一件、改样式 color-width 变；橡皮部分擦擦半条箭头另半条还在、擦序号掉一块其余还在、删橡皮对象标注复现、烧录旧像素不变；侧车 save-load 往返逐像素逐字段相等、损坏 json 返回 None 不崩、list 只返回 PNG、老化删侧车、clear_all 清空、侧车不被 next_unpinned 选中；按钮表 4/5 顺序文案映射；提交==烧录不新增历史 PNG、在飞 generation 作废、esc 三层；空列表不建 Anno、带对象 displayed==base+render==盘上 PNG、revision 变缓存变、成品折叠、烧录图新建空层、copy_pin 与显示一致"
     },
     {
       "id": "V-002",
@@ -80,7 +80,7 @@
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",
       "required": true,
-      "note": "W-16.1：用户真机——遮罩里画几笔按 cmd/ctrl+z 逐笔退、铅笔一整段一笔退、shift+z/ctrl+y 重做；钉住后药丸点「标注」续画、选中上次画的箭头拖端点改向、拖框角改大小、改色板即改选中那笔、Delete 删选中、文字双击再编辑；橡皮整笔删（对齐 某截图工具，旧部分像素擦已改判）；重启后/F2 历史图接着选中编辑（侧车持久化）；对勾/esc 关闭改动还在、F2 再钉出来最新；烧录图新建只删得掉新笔；翻译链不回退。观感手感只有用户眼睛能判，不许拿日志或无头用例冒充。H1 视觉漂移＝停止条件 2、默认路径回退＝3、翻译链被搅＝4、手势打架＝5、侧车损坏崩溃＝7，都回来报"
+      "note": "W-16.1：用户真机——遮罩里画几笔按 cmd/ctrl+z 逐笔退、铅笔一整段一笔退、shift+z/ctrl+y 重做；钉住后药丸点「标注」续画、选中上次画的箭头拖端点改向、拖框角改大小、改色板即改选中那笔、Delete 删选中、文字双击再编辑；橡皮部分擦（擦半条箭头另半条还在、擦掉的能撤销，对齐 某截图工具＋CHG-014 已批 erase）；重启后/F2 历史图接着选中编辑（侧车持久化）；对勾/esc 关闭改动还在、F2 再钉出来最新；烧录图新建擦不掉旧烧录；翻译链不回退。观感手感只有用户眼睛能判，不许拿日志或无头用例冒充。H1 视觉漂移＝停止条件 2、默认路径回退＝3、翻译链被搅＝4、手势打架＝5、侧车损坏崩溃＝7，都回来报"
     }
   ]
 }

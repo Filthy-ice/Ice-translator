@@ -9,7 +9,7 @@ Spec-Hash: UNAPPROVED
 - 仓库：`ice-translator`（分支 main，基线 0a86a9c，橡皮图标 patch128；CHG-014 v0.2 / CHG-015 v0.1 均 IMPLEMENTING）。
 - **架构改判**：标注事实源从"一层像素"（CHG-014 annotate.rs 光栅引擎）换成"一组对象"。像素层降级为**按对象列表重渲染的派生缓存**。CHG-015 的脏矩形前像撤销（T-001/T-002 已落）由对象快照撤销取代。两包已批的**视觉输出与入口承诺**承接，**内部引擎**替换。
 - 涉及文件：
-  - `crates/ice-app/src/system/annotate.rs`（**重写核心**：AnnoObject 枚举 + ObjectList + render 复用既有光栅基元 + 对象快照撤销/重做 + 命中/控制点/橡皮删对象）；
+  - `crates/ice-app/src/system/annotate.rs`（**重写核心**：AnnoObject 枚举 + ObjectList + render 复用既有光栅基元 + 对象快照撤销/重做 + 命中/控制点/橡皮擦除对象打洞）；
   - `crates/ice-app/src/system/anno_store.rs`（**新增**：侧车读写 shots/anno/ 子目录，serde_json + image encode）；
   - `crates/ice-app/src/system/capture.rs`（list 补 is_file 过滤跳子目录；clear_all 补清 anno 子目录；retain/age_shots 侧车同步删）；
   - `crates/ice-app/src/system/selection.rs`（遮罩工具态改建对象；工具条/手势抽公共供编辑器复用）；
@@ -25,9 +25,9 @@ Spec-Hash: UNAPPROVED
 ## REQ-001 实现与验证
 
 **对象模型（annotate.rs）**：
-- `AnnoObject` 枚举（derive Clone/Debug/Serialize/Deserialize/PartialEq）：`Rect{a,b,width,color}`、`Arrow{from,to,width,color}`、`Line{a,b,width,color}`、`Pencil{points:Vec<(f32,f32)>,width,color}`、`Serial{center,radius,number,color}`、`Text{at,text:String,font_size,color}`、`Mosaic{a,b,block}`。坐标物理像素（事实 13），样式存值不是档索引（档索引是工具态运行态，落对象时换成 THICKNESS/BADGE_RADIUS/TEXT_SIZE/PALETTE 的具体值）。
+- `AnnoObject` 枚举（derive Clone/Debug/Serialize/Deserialize/PartialEq）：`Rect{a,b,width,color}`、`Arrow{from,to,width,color}`、`Line{a,b,width,color}`、`Pencil{points:Vec<(f32,f32)>,width,color}`、`Serial{center,radius,number,color}`、`Text{at,text:String,font_size,color}`、`Mosaic{a,b,block}`、`EraserPen{points:Vec<(f32,f32)>,width}`（画笔橡皮，对应 某截图工具 EraserCustom）、`EraserRect{a,b,radius}`（矩形橡皮，对应 RectEraser）。坐标物理像素（事实 13），样式存值不是档索引（档索引是工具态运行态，落对象时换成 THICKNESS/BADGE_RADIUS/TEXT_SIZE/PALETTE 的具体值）。
 - `ObjectList{objects:Vec<AnnoObject>, revision:u64, undo:Vec<Vec<AnnoObject>>, redo:Vec<Vec<AnnoObject>>, next_serial:u32}`——唯一事实源。`next_serial` 序号自增计数（默认 1 起，CHG-014 行为）。
-- `render(objects:&[AnnoObject], background:&RgbaImage, w,h) -> RgbaImage`：新建透明层，**按列表序**遍历对象，每件调既有基元落像素（Rect→四边 paint_segment；Arrow→杆+arrow_head 两斜线；Line→paint_segment；Pencil→逐段 paint_segment；Serial→实心圆 paint_segment+stamp_line 白数字；Text→stamp_line；Mosaic→盒式平均从 background 取色不透明写）。**叠放序=列表序=落笔序**，alpha-over 与旧引擎逐笔落像素同结果（H1）。
+- `render(objects:&[AnnoObject], background:&RgbaImage, w,h) -> RgbaImage`：新建透明层，**按列表序**遍历对象，每件调既有基元落像素（Rect→四边 paint_segment；Arrow→杆+arrow_head 两斜线；Line→paint_segment；Pencil→逐段 paint_segment；Serial→实心圆 paint_segment+stamp_line 白数字；Text→stamp_line；Mosaic→盒式平均从 background 取色不透明写；EraserPen→对已累积标注层逐段 destination-out 减 alpha、EraserRect→矩形区 destination-out，复用 CHG-014 `erase` 原语 for_each_covered_pixel，**只擦标注不擦底图**）。**叠放序=列表序=落笔序**，落墨件 alpha-over 与旧引擎逐笔落像素同结果、橡皮件 destination-out 与旧引擎 erase 同结果（H1 含橡皮）。
 - 像素缓存 `Layer{image:RgbaImage, revision:u64}` 降级为 render 的产物：ObjectList 每次突变后重渲染整层、bump revision。`composite_into` 不变（底图＋缓存按 x0/y0 盖合）。
 - 旧 `Layer` 的 undo_stack/pending/before_image/stroke 那套脏矩形前像**删除**（被 REQ-003 对象快照取代）；八件旧工具方法（rect_stroke/line/arrow/pencil/number_badge/text/mosaic/erase）改为"建对象"入口，落像素逻辑搬进 render。
 
@@ -40,10 +40,10 @@ Spec-Hash: UNAPPROVED
 - 铅笔：一次按下到松开累积 points 建**一个** Pencil 对象（不是每段一个）；
 - 序号：单击建 Serial，number=next_serial++（默认 1 起）；
 - 文字：单击唤起输入，回车/失焦落 Text 对象（空白不落、next_serial 不动）；
-- 橡皮：见 REQ-005（删对象，不建对象）。
+- 橡皮：见 REQ-005（建一个擦除对象，render 时 destination-out 打洞，不删别的对象）。
 - 预览矢量（拖拽时看到的框/箭头）仍不落对象、不入栈，松手才建。
 
-**H1 逐像素回归（硬断言）**：同一组笔画，旧引擎按落笔序逐件落像素 vs 新引擎建对象后 render，**七件落墨工具**（框/箭头/直线/铅笔/序号/文字/马赛克）输出逐像素相等。橡皮语义已改判（REQ-005），不在 H1 比对内，单独测。马赛克 background 取同一份（遮罩=冻结帧、编辑器=底图）。
+**H1 逐像素回归（硬断言）**：同一组笔画，旧引擎按落笔序逐件落像素 vs 新引擎建对象后 render，**七件落墨工具**（框/箭头/直线/铅笔/序号/文字/马赛克）输出逐像素相等，**橡皮部分擦也纳入**（EraserPen/Rect 打洞 == CHG-014 `erase` destination-out，逐像素相等）。马赛克 background 取同一份（遮罩=冻结帧、编辑器=底图）。
 
 **验证**：无头——七件工具各造一组对象，render == 旧引擎落像素（逐像素 assert_eq）；序号自增从 1；文字空白不落；铅笔整段一个对象；无标注（空列表）贴图与今天逐像素一致。
 
@@ -52,11 +52,11 @@ Spec-Hash: UNAPPROVED
 **对象快照撤销/重做（annotate.rs）**：
 - 突变前把 `objects.clone()` 压入 undo（廉价：一组对象，不是像素）；undo 弹栈顶恢复上一份 objects、当前份压 redo、重渲染 bump revision；redo 反之。空栈 undo/redo 返回 false 不动。
 - 上限：undo 条数封 30（对象快照廉价，**不再需要 64MB 字节上限**——那是像素前像约束，对象模型下消失，事实 1 那套删除）。redo 栈在新突变时清空（标准语义）。
-- 一笔=一次突变：单击类一个对象一条；铅笔/橡皮一次拖拽整段算一条（拖拽期间累积，松手才压一次快照）。
+- 一笔=一次突变：单击类一个对象一条；铅笔/橡皮一次拖拽整段算一条（拖拽期间累积，松手才压一次快照）。撤销橡皮＝弹掉那个擦除对象、重渲染，被擦的标注复现。
 - 键接线（selection.rs 遮罩 / pin.rs 编辑器各一处、同一个 ObjectList 方法）：`Key::Z+(command|ctrl)` pressed 非 repeat → undo；`Key::Z+(command|ctrl)+shift` 或 `Key::Y+ctrl` → redo。文字输入框开着时让位 TextEdit 自带撤销（判据与 commit_text_input 同格）。
 - 栈跟着 ObjectList 走：遮罩里画的笔，钉住后编辑器接着撤（ObjectList 所有权转移给 Pin.anno，clone 一份不借遮罩 Arc）。
 
-**验证**：无头——画一笔 undo 后 objects 与渲染逐像素等于落笔前；铅笔拖三段 undo 一次全没；undo 后 redo 恢复；31 笔后 undo 栈长 30；新突变清空 redo；空栈无声不动 revision；橡皮删多对象一笔撤全回。
+**验证**：无头——画一笔 undo 后 objects 与渲染逐像素等于落笔前；铅笔拖三段 undo 一次全没；undo 后 redo 恢复；31 笔后 undo 栈长 30；新突变清空 redo；空栈无声不动 revision；橡皮打洞一笔撤销后擦掉的标注逐像素复现。
 
 ## REQ-004 实现与验证
 
@@ -72,12 +72,14 @@ Spec-Hash: UNAPPROVED
 
 ## REQ-005 实现与验证
 
-**橡皮整对象删（annotate.rs，Q-001 用户已裁）**：
-- `erase_objects(objects, a, b, radius) -> Vec<usize>`：橡皮笔刷段覆盖到的对象（用 hit 的几何距离判，笔刷半径=粗细档换值）整个标记删除。一次按下到松开累积删多个，松手合成**一条**撤销快照（REQ-003 一次撤全回）。
-- 删除=从 objects 移除整件，重渲染后该对象消失。**不做部分像素擦**（对象模型物理边界，用户明确改判旧裁定）。
-- 烧录图新建的空对象层上（REQ-009），橡皮只删得掉新对象（列表里只有新对象），删不掉烧录进底图的旧标注（底图像素不动）。
+**橡皮部分擦（annotate.rs 擦除对象 + render 打洞，Q-001 更正：对齐 某截图工具＋CHG-014 已批行为）**：
+- 橡皮不删别的对象，而是**建一个擦除对象**进列表：`EraserPen{points,width}`（画笔模式，对应 某截图工具 EraserCustom）或 `EraserRect{a,b,radius}`（矩形模式，对应 RectEraser），橡皮宽取粗细档。
+- render 按列表序遍历到橡皮对象时，对**已累积的标注层**做 destination-out 打洞：EraserPen 逐段调 CHG-014 `erase` 原语（for_each_covered_pixel 把 alpha 按覆盖率往下减，减到 0 变透明）、EraserRect 矩形区内同样减 alpha。**擦的是标注像素、不是底图**——洞露出的是 background，底图原样。
+- 一次按下到松开整段橡皮＝一个对象＝一条撤销快照（REQ-003）；撤销弹掉该擦除对象、重渲染，被擦掉的标注逐像素复现（用户点名的"擦除的部分还能撤销"）。
+- 橡皮对象本身可选中/移动/删除（eraserReEditing）：hit 认它、Delete 删它＝恢复它擦掉的内容、拖它＝打洞跟着走。默认列表序渲染、只擦它之前的对象、洞不随被擦对象移动（H3，真机定）。
+- 烧录图新建的空对象层上（REQ-009），橡皮打洞只作用于新画的标注（列表里只有新对象），擦不掉已烧录进底图的旧标注（底图是背景，destination-out 不碰）。
 
-**验证**：无头——橡皮碰框整框删、不碰的不动；碰铅笔整条删；一次拖删多件一笔撤全回；烧录图新建层橡皮擦新对象 alpha 回透明、底图旧烧录像素逐像素不变。
+**验证**：无头——橡皮 EraserPen 擦半条箭头，另半条逐像素还在、被擦段变透明露底图；擦序号擦掉一块其余还在；一次拖打洞撤销后标注逐像素复现；EraserRect 矩形区内擦干净、区外一字不动；打洞结果 == CHG-014 `erase` 同笔迹逐像素相等（H1 含橡皮）；删橡皮对象后它擦掉的标注回来；烧录图新建层底图旧烧录像素逐像素不变。
 
 ## REQ-006 实现与验证
 
@@ -115,7 +117,7 @@ Spec-Hash: UNAPPROVED
 - `displayed()` 优先级 **anno(base+render(objects) 合成) > product > source > file**（事实 6，承接 CHG-015 T-003 停车那套）。anno 档返回 Owned(合成图)；`visual_of` 缓存键带 objects.revision（kind3），对象变即重建纹理。复制/保存已走 displayed，自动一致不开新接缝。
 - 合成用 composite_into 一份份出（显示档每次 revision 变才算一次，不是每帧）。
 - **折叠**：翻译成品回信落 Pin.product 时 anno 置 None（成品已含烧录标注，事实 8）。识别底图 source 回信不折叠（source 是翻译链中间物，显示仍走 anno）。
-- **烧录图新建**：点 Annotate 时 anno 为 None（F2 无侧车的/成品折叠后的/侧车损坏的）→ 取 displayed() 当前像素 clone 为 base、建**空 ObjectList**（尺寸=底图尺寸），Anno 成立。此后与 REQ-008 同路。橡皮/删除只作用新对象（列表里只有新对象），删不掉烧录进底图的旧标注。文档写明边界。
+- **烧录图新建**：点 Annotate 时 anno 为 None（F2 无侧车的/成品折叠后的/侧车损坏的）→ 取 displayed() 当前像素 clone 为 base、建**空 ObjectList**（尺寸=底图尺寸），Anno 成立。此后与 REQ-008 同路。橡皮打洞/删除只作用新对象（列表里只有新对象），擦不掉也删不掉烧录进底图的旧标注（底图是背景）。文档写明边界。
 
 **验证**：无头——空列表确认不建 Anno；带对象确认后 displayed == base+render 且与盘上烧录 PNG 逐像素同；revision 变缓存键变；成品落位折叠 anno；烧录图建空列表后 displayed == 烧录图+新笔；橡皮擦新对象旧烧录像素不变；copy_pin 取到的与显示一致。
 
@@ -129,10 +131,10 @@ Spec-Hash: UNAPPROVED
 - 兼容性：历史 PNG 格式不变（仍烧录 RGBA PNG）；config 不变；旧贴图（无侧车）走 REQ-009 烧录图新建；**新增落盘面 = shots/anno/ 子目录（侧车 json+base.png），用户已批（Q-002）**。
 - 数据影响：编辑提交覆写既有历史 PNG（同路径同文件名）＋同步侧车；7 天/200 张老化与一键清除**同步清侧车**（不留孤儿）。
 - 回滚：本包各任务独立 commit，回滚即 revert 对应提交；anno 字段去掉后 Pin 回到只持 path 现状；侧车子目录可整删（历史 PNG 不受影响）。
-- 改判登记：CHG-014 像素引擎/CHG-015 脏矩形撤销由本包取代（架构改判，批本包即批改判）；CHG-011 Q-006 按钮数（3→4/4→5）docs/07 与本包 spec 写明，合并走查时 revise CHG-011；橡皮部分像素擦→整对象删是用户 2026-11-17 明确改判（Q-001），docs/07 登记。
+- 改判登记：CHG-014 像素引擎/CHG-015 脏矩形撤销由本包取代（架构改判，批本包即批改判）；CHG-011 Q-006 按钮数（3→4/4→5）docs/07 与本包 spec 写明，合并走查时 revise CHG-011；橡皮＝**部分擦（对象打洞）**——先前 spec 写"整对象删"是我对 某截图工具 的**误判**，用户 2026-11-18 真机截图纠正回部分擦，与 CHG-014 已批 `erase` 一致（这是纠错不是改判），docs/07 登记这条更正。
 
 ## 验证层次
 
-- 本地无头：V-001（ice-app 定向：对象引擎/H1 逐像素/撤销重做/命中控制点/橡皮删/侧车往返/按钮表/显示折叠）、V-002（workspace 全量回归）、V-003（clippy）、V-004（依赖零增量）、V-005（scan）、V-006（形状 grep：composite_into 单一定义/exactly_five_actions/list is_file 过滤/侧车子目录）。
-- 业务验收：V-007 / W-16.1 用户真机——遮罩画几笔 cmd/ctrl+z 逐笔退、shift+z 重做；钉住后点「标注」续画、选中上次画的箭头拖端点改向、拖框角改大小、改色板即改选中那笔、Delete 删；橡皮整笔删；重启后/F2 历史图接着选中编辑（侧车）；对勾/esc 关闭改动还在、F2 再钉出来最新；翻译链不回退。观感手感只有用户眼睛能判。
+- 本地无头：V-001（ice-app 定向：对象引擎/H1 逐像素含橡皮/撤销重做/命中控制点/橡皮打洞部分擦/侧车往返/按钮表/显示折叠）、V-002（workspace 全量回归）、V-003（clippy）、V-004（依赖零增量）、V-005（scan）、V-006（形状 grep：composite_into 单一定义/exactly_five_actions/list is_file 过滤/侧车子目录）。
+- 业务验收：V-007 / W-16.1 用户真机——遮罩画几笔 cmd/ctrl+z 逐笔退、shift+z 重做；钉住后点「标注」续画、选中上次画的箭头拖端点改向、拖框角改大小、改色板即改选中那笔、Delete 删；橡皮部分擦（擦半条箭头另半条还在、擦掉的能撤销）；重启后/F2 历史图接着选中编辑（侧车）；对勾/esc 关闭改动还在、F2 再钉出来最新；翻译链不回退。观感手感只有用户眼睛能判。
 - 无沙箱/生产操作；不 push（待批队列纪律）。

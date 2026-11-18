@@ -19,7 +19,7 @@
     },
     {
       "id": "T-003",
-      "title": "对象快照撤销/重做（annotate.rs + selection.rs/pin.rs 键接线）：突变前 objects.clone() 压 undo、undo/redo 弹栈恢复重渲染 bump revision、30 条上限（删 64MB 字节上限）、新突变清空 redo、一笔=一次突变（铅笔/橡皮整段松手压一次）、Cmd/Ctrl+Z 与 Shift+Z/Ctrl+Y、文字输入开着让位 TextEdit、栈跟 ObjectList 走遮罩→编辑器；无头断言一笔撤逐像素等于落笔前/铅笔三段一笔撤/undo-redo 往返/31 笔栈长 30/新突变清 redo/空栈不动/橡皮删多件一笔撤全回",
+      "title": "对象快照撤销/重做（annotate.rs + selection.rs/pin.rs 键接线）：突变前 objects.clone() 压 undo、undo/redo 弹栈恢复重渲染 bump revision、30 条上限（删 64MB 字节上限）、新突变清空 redo、一笔=一次突变（铅笔/橡皮整段松手压一次）、Cmd/Ctrl+Z 与 Shift+Z/Ctrl+Y、文字输入开着让位 TextEdit、栈跟 ObjectList 走遮罩→编辑器；无头断言一笔撤逐像素等于落笔前/铅笔三段一笔撤/undo-redo 往返/31 笔栈长 30/新突变清 redo/空栈不动/橡皮打洞一笔撤即复现",
       "requirements": ["REQ-003"],
       "repo": "ice-translator",
       "status": "todo",
@@ -43,7 +43,7 @@
     },
     {
       "id": "T-006",
-      "title": "橡皮整对象删（annotate.rs，Q-001 用户已裁改判旧部分像素擦）：erase_objects(objects,a,b,radius) 笔刷段覆盖到的对象整件标记删（hit 几何距离判，半径=粗细档换值）、一次拖删多件松手合成一条撤销快照、删=从 objects 移除整件重渲染消失、不做部分像素擦；烧录图新建空层上只删新对象底图旧烧录像素不动；无头断言碰框整框删不碰不动/碰铅笔整条删/多件一笔撤全回/烧录旧像素逐像素不变",
+      "title": "橡皮部分擦（annotate.rs 擦除对象 + render destination-out 打洞，Q-001 更正：对齐 某截图工具＋CHG-014 已批行为）：建 EraserPen{points,width}/EraserRect{a,b,radius} 擦除对象进列表（画笔/矩形两模式，宽取粗细档）、render 按列表序对标注层减 alpha 打洞（复用 CHG-014 erase 原语）擦标注不擦底图、一次拖＝一个对象＝一条撤销快照撤即复现、橡皮对象本身可选中移动删除（eraserReEditing）；烧录图新建空层上打洞只作用新标注擦不掉烧录旧标注；无头断言擦半条箭头另半条还在/擦序号掉一块其余还在/打洞==CHG-014 erase 逐像素相等/撤销后标注复现/删橡皮对象标注回来/烧录旧像素不变",
       "requirements": ["REQ-005"],
       "repo": "ice-translator",
       "status": "todo",
@@ -75,7 +75,7 @@
     },
     {
       "id": "T-010",
-      "title": "显示优先级＋折叠＋烧录新建（pin.rs displayed/visual_of + state.rs）：displayed 优先级 anno(base+render 合成)>product>source>file 返回 Owned、visual_of 缓存键带 objects.revision（kind3）对象变即重建、合成走 composite_into 一份份出（revision 变才算一次）、成品回信落 product 时 anno 置 None（识别 source 不折叠）、点 Annotate 时 anno 为 None（F2 无侧车/成品折叠后/侧车损坏）取 displayed 像素 clone 为 base 建空 ObjectList 此后同 REQ-008、橡皮删除只作用新对象删不掉烧录旧标注文档写明边界；无头断言空列表不建 Anno/带对象 displayed==base+render==盘上烧录 PNG/revision 变缓存变/成品折叠/烧录图新建空层 displayed==烧录图+新笔/橡皮旧像素不变/copy_pin 与显示一致",
+      "title": "显示优先级＋折叠＋烧录新建（pin.rs displayed/visual_of + state.rs）：displayed 优先级 anno(base+render 合成)>product>source>file 返回 Owned、visual_of 缓存键带 objects.revision（kind3）对象变即重建、合成走 composite_into 一份份出（revision 变才算一次）、成品回信落 product 时 anno 置 None（识别 source 不折叠）、点 Annotate 时 anno 为 None（F2 无侧车/成品折叠后/侧车损坏）取 displayed 像素 clone 为 base 建空 ObjectList 此后同 REQ-008、橡皮打洞/删除只作用新对象擦不掉也删不掉烧录旧标注文档写明边界；无头断言空列表不建 Anno/带对象 displayed==base+render==盘上烧录 PNG/revision 变缓存变/成品折叠/烧录图新建空层 displayed==烧录图+新笔/橡皮打洞旧烧录像素不变/copy_pin 与显示一致",
       "requirements": ["REQ-009"],
       "repo": "ice-translator",
       "status": "todo",
@@ -83,7 +83,7 @@
     },
     {
       "id": "T-011",
-      "title": "文档收口＋静态扫描＋全量回归：docs/06 加 W-16.1 真机走查与无头 TC、docs/07 登记对象模型改判（CHG-014 像素引擎/CHG-015 脏矩形撤销取代）+橡皮部分擦→整对象删（用户 2026-11-17 Q-001）+按钮数 3→4/4→5（CHG-011 Q-006 合并走查 revise）+侧车新增落盘面（Q-002）；cargo test --workspace 全绿（无标注贴图逐手势不变）、clippy -D warnings、cargo tree -p ice-app -e normal 零新增 crate 名（serde_json 既有 workspace）、./sdd scan 过、不新增 config 键（对象列表/编辑态/撤销栈运行态、侧车落盘文件非 config 键）、工具条抽公共后遮罩形状断言全保持、翻译链只动取图优先级+提交重写盘+generation 三处接缝；旧证据并入合并走查一次重录",
+      "title": "文档收口＋静态扫描＋全量回归：docs/06 加 W-16.1 真机走查与无头 TC、docs/07 登记对象模型改判（CHG-014 像素引擎/CHG-015 脏矩形撤销取代）+橡皮更正为部分擦（对象打洞，Q-001 纠错对齐 某截图工具＋CHG-014 已批 erase）+按钮数 3→4/4→5（CHG-011 Q-006 合并走查 revise）+侧车新增落盘面（Q-002）；cargo test --workspace 全绿（无标注贴图逐手势不变）、clippy -D warnings、cargo tree -p ice-app -e normal 零新增 crate 名（serde_json 既有 workspace）、./sdd scan 过、不新增 config 键（对象列表/编辑态/撤销栈运行态、侧车落盘文件非 config 键）、工具条抽公共后遮罩形状断言全保持、翻译链只动取图优先级+提交重写盘+generation 三处接缝；旧证据并入合并走查一次重录",
       "requirements": ["REQ-010"],
       "repo": "ice-translator",
       "status": "todo",

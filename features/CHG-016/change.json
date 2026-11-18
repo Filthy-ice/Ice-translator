@@ -12,9 +12,9 @@
     {
       "id": "Q-001",
       "blocking": true,
-      "question": "橡皮语义：对象模型整对象删（某截图工具 eraserReEditing 对齐）vs 用户 2026-11-17 旧裁定的部分像素擦（擦半条框另半条还在）？两者对单个对象互斥。",
-      "resolution": "整对象删（对齐 某截图工具 eraserReEditing）：橡皮碰到的对象整个删除。用户 2026-11-17 裁定『就按照 某截图工具 的样子来』。对象模型一笔=一对象，部分像素擦（旧裁定）随之作废——这是用户明确改判，非静默。REQ-005 定稿为整对象删。",
-      "source": "用户 2026-11-17 原话『就按照某截图工具的样子来，文件该多建那就多建。』（对 Q-001 橡皮语义的裁定）；本包 spec.md Q-001/REQ-005＋事实 3/14。"
+      "question": "橡皮语义：整对象删 vs 部分擦？",
+      "resolution": "部分擦（对象打洞）。先前『整对象删（对齐 某截图工具 eraserReEditing）』是我对 某截图工具 的误判：取证 EditItemRectEraser/EditItemEraserCustom 是擦除图形项、发现-标注行为.md:50『使用画笔拖动或选择矩形区域，即可擦除部分标注（擦的是标注，不是背景）』、eraserReEditing 让橡皮笔画可二次编辑；CHG-014 已批 erase（annotate.rs:253-262）本就是 destination-out 部分擦。用户 2026-11-18 拿 某截图工具 真机截图纠正（箭头擦出缺口、序号擦掉一块、擦除可撤销）。把橡皮做成对象列表里的一种对象（画笔/矩形），渲染时 destination-out 打洞＝兼得部分擦＋可撤销＋可二次编辑。REQ-005 定稿部分擦。",
+      "source": "用户 2026-11-18 真机截图＋原话『某截图工具的明显不是擦除整个标记的对象。而且擦除的部分还能撤销呢』；仓外 某截图工具.strings.txt:9687/20526/20442（EditItemRectEraser/EraserCustom、MarkBar.Eraser.*、eraserReEditing）、发现-标注行为.md:50/100；代码 annotate.rs:253-262（CHG-014 已批 destination-out 部分擦）。本包 spec.md 事实 14/17/18、Q-001/REQ-005。"
     },
     {
       "id": "Q-002",
