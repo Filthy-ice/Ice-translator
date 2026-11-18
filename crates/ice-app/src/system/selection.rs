@@ -1239,28 +1239,26 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 .fixed_pos(*at)
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| {
-                    // 输入框透明：用户 2026-11-18 反馈"点文字后是个实心暗框，要回车落到
-                    // 透明层才透"。改成输入时就透明——框底透明、只留一圈很淡的边定位，
-                    // TextEdit 自己的底也压成透明，打字时能看见底下的截图（所见即所得）。
+                    // 输入框透明：用户 2026-11-18 二次反馈"点文字后外面一个框、里面提示语还是
+                    // 一个圆角白输入框"。上一版只把我自己那层 Frame 底压透，漏了 TextEdit
+                    // **自己还会按 widget_style 的默认底画一圈白色圆角盒**（noninteractive 那条
+                    // scope 没管到它，实测白盒仍在）。正解是 TextEdit 的 `.background_color(透明)`——
+                    // 直接把它内部那层盒底改成透明，外面只留我这圈很淡的边定位，打字时看得见底图。
                     egui::Frame::NONE
                         .fill(egui::Color32::TRANSPARENT)
                         .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(70)))
                         .inner_margin(egui::Margin::symmetric(8, 4))
                         .corner_radius(egui::CornerRadius::same(6))
                         .show(ui, |ui| {
-                            ui.scope(|ui| {
-                                let v = ui.visuals_mut();
-                                v.widgets.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
-                                v.widgets.noninteractive.weak_bg_fill = egui::Color32::TRANSPARENT;
-                                let edit = egui::TextEdit::singleline(text)
-                                    .id(id.with("edit"))
-                                    .desired_width(180.0)
-                                    .hint_text("输入文字，回车落下去")
-                                    .show(ui);
-                                if !edit.response.has_focus() {
-                                    edit.response.request_focus();
-                                }
-                            });
+                            let edit = egui::TextEdit::singleline(text)
+                                .id(id.with("edit"))
+                                .background_color(egui::Color32::TRANSPARENT)
+                                .desired_width(180.0)
+                                .hint_text("输入文字，回车落下去")
+                                .show(ui);
+                            if !edit.response.has_focus() {
+                                edit.response.request_focus();
+                            }
                         });
                 });
             input_rect = Some(area.response.rect);
