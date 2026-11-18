@@ -1529,12 +1529,11 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
     let stroke = egui::Stroke::new(1.6, ink);
     let painter = ui.painter();
     if active {
-        // 激活中的工具：一圈淡底把它与"还没点"的颗分开
-        painter.rect_filled(
-            rect.expand(3.0),
-            5.0,
-            egui::Color32::from_rgba_premultiplied(255, 255, 255, 30),
-        );
+        // 激活中的工具：一圈淡底把它与"还没点"的颗分开。必须用 from_white_alpha——
+        // 之前写成 from_rgba_premultiplied(255,255,255,30)：预乘 alpha 下色值(255)远大于
+        // alpha(30)不合法，合成时颜色饱和成一整块实心白，把白色图标盖得看不见（用户 2026-11-18
+        // 真机拍照报"选中工具纯白什么都看不到"）。from_white_alpha 才是正确的淡白。
+        painter.rect_filled(rect.expand(3.0), 5.0, egui::Color32::from_white_alpha(30));
     }
     match icon {
         BarIcon::Rect => {
