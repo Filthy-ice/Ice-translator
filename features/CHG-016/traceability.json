@@ -1,81 +1,184 @@
 {
-  "baseline": null,
+  "baseline": {
+    "change": "CHG-016",
+    "version": "v0.1",
+    "spec_hash": "0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2"
+  },
   "design": [
-    { "requirement": "REQ-001", "section": "## REQ-001 实现与验证" },
-    { "requirement": "REQ-002", "section": "## REQ-002 实现与验证" },
-    { "requirement": "REQ-003", "section": "## REQ-003 实现与验证" },
-    { "requirement": "REQ-004", "section": "## REQ-004 实现与验证" },
-    { "requirement": "REQ-005", "section": "## REQ-005 实现与验证" },
-    { "requirement": "REQ-006", "section": "## REQ-006 实现与验证" },
-    { "requirement": "REQ-007", "section": "## REQ-007 实现与验证" },
-    { "requirement": "REQ-008", "section": "## REQ-008 实现与验证" },
-    { "requirement": "REQ-009", "section": "## REQ-009 实现与验证" },
-    { "requirement": "REQ-010", "section": "## REQ-010 实现与验证" }
+    {
+      "requirement": "REQ-001",
+      "section": "## REQ-001 实现与验证"
+    },
+    {
+      "requirement": "REQ-002",
+      "section": "## REQ-002 实现与验证"
+    },
+    {
+      "requirement": "REQ-003",
+      "section": "## REQ-003 实现与验证"
+    },
+    {
+      "requirement": "REQ-004",
+      "section": "## REQ-004 实现与验证"
+    },
+    {
+      "requirement": "REQ-005",
+      "section": "## REQ-005 实现与验证"
+    },
+    {
+      "requirement": "REQ-006",
+      "section": "## REQ-006 实现与验证"
+    },
+    {
+      "requirement": "REQ-007",
+      "section": "## REQ-007 实现与验证"
+    },
+    {
+      "requirement": "REQ-008",
+      "section": "## REQ-008 实现与验证"
+    },
+    {
+      "requirement": "REQ-009",
+      "section": "## REQ-009 实现与验证"
+    },
+    {
+      "requirement": "REQ-010",
+      "section": "## REQ-010 实现与验证"
+    }
   ],
   "verifications": [
     {
       "id": "V-001",
-      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007", "REQ-008", "REQ-009"],
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "required": true,
-      "command": ["cargo", "test", "-p", "ice-app"],
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "ice-app"
+      ],
       "note": "对象模型无头：空列表全透明、单件 render==旧落像素、H1 七件落墨工具逐像素相等＋对象 erased 对自身 tile destination-out==CHG-014 erase、序号自增 1 起、文字空白不落、铅笔整段一件；一笔撤逐像素等于落笔前、铅笔三段一笔撤、undo-redo 往返、31 笔栈长 30、新突变清 redo、空栈不动、橡皮擦除一笔撤即复现；hit 各类型顶优先且只看几何不看 erased（被擦对象仍整条命中）、control_points 点数位置、drag_control/move_obj 几何、move_obj 后 erased 跟着平移、改样式 color-width 变；橡皮部分擦擦半条箭头另半条还在、擦序号掉一块其余还在、拖走被擦对象擦除跟走、划过空白不新增 erased、烧录旧像素不变；侧车 save-load 往返逐像素逐字段相等、损坏 json 返回 None 不崩、list 只返回 PNG、老化删侧车、clear_all 清空、侧车不被 next_unpinned 选中；按钮表 4/5 顺序文案映射；提交==烧录不新增历史 PNG、在飞 generation 作废、esc 三层；空列表不建 Anno、带对象 displayed==base+render==盘上 PNG、revision 变缓存变、成品折叠、烧录图新建空层、copy_pin 与显示一致"
     },
     {
       "id": "V-002",
-      "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007", "REQ-008", "REQ-009", "REQ-010"],
+      "requirements": [
+        "REQ-001",
+        "REQ-002",
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-006",
+        "REQ-007",
+        "REQ-008",
+        "REQ-009",
+        "REQ-010"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "required": true,
-      "command": ["cargo", "test", "--workspace"],
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
       "note": "全量无回归：无标注贴图的显示/复制/保存/翻译/拖动/右键/esc/空格逐项不变；工具条抽公共后遮罩形状断言（写回顺序/像素漏斗/认窗门/对勾最后）全部保持；选框/认窗/冻结/换算/热键/配置/剪贴板一项不许回退；翻译链只动取图优先级+提交重写盘+generation 三处接缝"
     },
     {
       "id": "V-003",
-      "requirements": ["REQ-010"],
+      "requirements": [
+        "REQ-010"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "required": true,
-      "command": ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
       "note": "clippy 全绿（-D warnings）：对象引擎、侧车读写、抽公共的工具条与编辑态接线不许带警告进仓"
     },
     {
       "id": "V-004",
-      "requirements": ["REQ-010"],
+      "requirements": [
+        "REQ-010"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "required": true,
-      "command": ["cargo", "tree", "-p", "ice-app", "-e", "normal"],
+      "command": [
+        "cargo",
+        "tree",
+        "-p",
+        "ice-app",
+        "-e",
+        "normal"
+      ],
       "note": "依赖图零增量：对象用 Vec+既有 image、侧车用既有 workspace serde_json（ice-core 已在图内）、编辑器复用既有工具条，不新增 crate 名；与基线输出逐行相同才算过，多一个名字即停止条件 1"
     },
     {
       "id": "V-005",
-      "requirements": ["REQ-006", "REQ-010"],
+      "requirements": [
+        "REQ-006",
+        "REQ-010"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "required": true,
-      "command": ["./sdd", "scan"],
+      "command": [
+        "./sdd",
+        "scan"
+      ],
       "note": "敏感信息基线扫描：新增落盘面只有 shots/anno/ 子目录（用户截图底图+标注几何，Q-002 已批），不落密钥/译文内容、日志不落用户内容（NFR-3）；scan 通过是隐私口径不漂的下限"
     },
     {
       "id": "V-006",
-      "requirements": ["REQ-001", "REQ-006", "REQ-007"],
+      "requirements": [
+        "REQ-001",
+        "REQ-006",
+        "REQ-007"
+      ],
       "repo": "ice-translator",
       "kind": "VERIFIED_CODE",
       "environment": "local",
       "required": true,
-      "command": ["bash", "-c", "grep -c 'fn composite_into' crates/ice-app/src/system/annotate.rs && grep -n 'exactly_five_actions' crates/ice-app/src/system/pin.rs && grep -n 'is_file' crates/ice-app/src/system/capture.rs && grep -n 'schema_version' crates/ice-app/src/system/anno_store.rs"],
+      "command": [
+        "bash",
+        "-c",
+        "grep -c 'fn composite_into' crates/ice-app/src/system/annotate.rs && grep -n 'exactly_five_actions' crates/ice-app/src/system/pin.rs && grep -n 'is_file' crates/ice-app/src/system/capture.rs && grep -n 'schema_version' crates/ice-app/src/system/anno_store.rs"
+      ],
       "note": "形状核查：合成实现仍只有 annotate.rs 一处定义（fn composite_into 计数=1，调用点可多：裁图/显示/提交三出口都调它，不许第二份合成实现）；按钮表长度断言已改锁五项；capture::list 补 is_file 过滤跳 anno 子目录；侧车模块带 schema_version 字段。四项 grep 全命中才算过"
     },
     {
       "id": "V-007",
-      "requirements": ["REQ-003", "REQ-004", "REQ-005", "REQ-008", "REQ-009"],
+      "requirements": [
+        "REQ-003",
+        "REQ-004",
+        "REQ-005",
+        "REQ-008",
+        "REQ-009"
+      ],
       "repo": "ice-translator",
       "kind": "BUSINESS_CONFIRMED",
       "environment": "business",

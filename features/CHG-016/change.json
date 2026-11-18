@@ -3,7 +3,7 @@
   "id": "CHG-016",
   "title": "标注对象模型：可选中二次编辑、全控制点、跨重启持久化（对齐 某截图工具，取代 CHG-014/015 像素层）",
   "version": "v0.1",
-  "status": "SPEC_REVIEW",
+  "status": "IMPLEMENTING",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -60,8 +60,56 @@
       "at": "2026-11-17T11:32:21+00:00",
       "action": "transition",
       "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-18T02:44:22+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2",
+        "version": "v0.1",
+        "by": "Filthy-ice",
+        "reference": "用户2026-11-18真机两轮验证：橡皮部分擦+擦除随被擦对象移动；某截图工具取证",
+        "at": "2026-11-18T02:44:22+00:00",
+        "snapshot": "approvals/v0.1-0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2.md",
+        "scope": "local-delivery",
+        "context_hash": "d5195664324452d6ea87042b72060b67d791c4d2a1420858a31984f2701b2391",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-18T02:44:57+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-016",
+        "version": "v0.1",
+        "spec_hash": "0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2"
+      }
+    },
+    {
+      "at": "2026-11-18T02:44:57+00:00",
+      "action": "seal-plan",
+      "detail": "5ba6bd4115d802ffb209dd2c19e6a781b0816b04a39027ac60a8cfbdac62c9dd"
+    },
+    {
+      "at": "2026-11-18T02:44:58+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
     }
   ],
-  "approval": null,
-  "plan_hash": null
+  "approval": {
+    "hash": "0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2",
+    "version": "v0.1",
+    "by": "Filthy-ice",
+    "reference": "用户2026-11-18真机两轮验证：橡皮部分擦+擦除随被擦对象移动；某截图工具取证",
+    "at": "2026-11-18T02:44:22+00:00",
+    "snapshot": "approvals/v0.1-0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2.md",
+    "scope": "local-delivery",
+    "context_hash": "d5195664324452d6ea87042b72060b67d791c4d2a1420858a31984f2701b2391",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "5ba6bd4115d802ffb209dd2c19e6a781b0816b04a39027ac60a8cfbdac62c9dd"
 }
