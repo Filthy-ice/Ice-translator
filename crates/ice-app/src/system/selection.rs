@@ -1723,43 +1723,40 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
         // 真机拍照报"选中工具纯白什么都看不到"）。from_white_alpha 才是正确的淡白。
         painter.rect_filled(rect.expand(3.0), 5.0, egui::Color32::from_white_alpha(30));
     }
+    // 统一内容框：所有图标画进同一个居中方框，保证高矮一致、垂直居中（用户 2026-11-18：
+    // 之前各图标占的竖直范围不一样，一排看着高低不齐）。p(fx,fy) 把 0..1 映射进这个公共框。
+    let cbox = egui::Rect::from_center_size(
+        rect.center(),
+        egui::vec2(rect.width() * 0.86, rect.height() * 0.86),
+    );
+    let p = |fx: f32, fy: f32| {
+        egui::pos2(
+            cbox.min.x + cbox.width() * fx,
+            cbox.min.y + cbox.height() * fy,
+        )
+    };
     match icon {
         BarIcon::Rect => {
             // 方框线稿：与它落下去的形状同一个读法
-            painter.rect_stroke(rect.shrink(1.0), 2.0, stroke, egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                egui::Rect::from_min_max(p(0.06, 0.06), p(0.94, 0.94)),
+                2.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
         }
         BarIcon::Arrow => {
             // 斜方向箭头：左下到右上一支杆，尖端两段短线成头
-            let a = egui::pos2(rect.min.x, rect.max.y);
-            let b = egui::pos2(rect.max.x, rect.min.y);
-            painter.line_segment([a, b], stroke);
-            painter.line_segment(
-                [b, egui::pos2(rect.max.x - rect.width() * 0.42, rect.min.y)],
-                stroke,
-            );
-            painter.line_segment(
-                [b, egui::pos2(rect.max.x, rect.min.y + rect.height() * 0.42)],
-                stroke,
-            );
+            painter.line_segment([p(0.10, 0.90), p(0.90, 0.10)], stroke);
+            painter.line_segment([p(0.90, 0.10), p(0.42, 0.10)], stroke);
+            painter.line_segment([p(0.90, 0.10), p(0.90, 0.58)], stroke);
         }
         BarIcon::Line => {
             // 斜方向直线：与箭头同一根杆，没有头
-            painter.line_segment(
-                [
-                    egui::pos2(rect.min.x, rect.max.y),
-                    egui::pos2(rect.max.x, rect.min.y),
-                ],
-                stroke,
-            );
+            painter.line_segment([p(0.10, 0.90), p(0.90, 0.10)], stroke);
         }
         BarIcon::Pencil => {
-            // 铅笔线稿：拉满整幅对角（之前偏短）、笔身够粗，尖头处加一条曲线示意"能随便画"。
-            let p = |fx: f32, fy: f32| {
-                egui::pos2(
-                    rect.min.x + rect.width() * fx,
-                    rect.min.y + rect.height() * fy,
-                )
-            };
+            // 铅笔线稿：拉满公共框对角、笔身够粗（和其它图标同高）。
             let tip = p(0.10, 0.90);
             let (cone_l, cone_r) = (p(0.326, 0.830), p(0.170, 0.674));
             let (back_l, back_r) = (p(0.844, 0.312), p(0.688, 0.156));
@@ -1782,34 +1779,22 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
         BarIcon::Number => {
             // 序号标线稿：一个圆 + 里面两段线画的「1」（竖杆 + 顶部小旗），
             // 与它落下去的实心圆 + 白数字同一个读法。不用字符字形（依赖字体）。
-            painter.circle_stroke(rect.center(), rect.width() * 0.46, stroke);
-            let p = |fx: f32, fy: f32| {
-                egui::pos2(
-                    rect.min.x + rect.width() * fx,
-                    rect.min.y + rect.height() * fy,
-                )
-            };
-            painter.line_segment([p(0.50, 0.30), p(0.50, 0.72)], stroke);
-            painter.line_segment([p(0.38, 0.40), p(0.50, 0.30)], stroke);
+            painter.circle_stroke(cbox.center(), cbox.width() * 0.46, stroke);
+            painter.line_segment([p(0.50, 0.28), p(0.50, 0.72)], stroke);
+            painter.line_segment([p(0.38, 0.40), p(0.50, 0.28)], stroke);
         }
         BarIcon::Text => {
-            // 文字线稿：一个「T」——顶上一横 + 中间一竖
-            let p = |fx: f32, fy: f32| {
-                egui::pos2(
-                    rect.min.x + rect.width() * fx,
-                    rect.min.y + rect.height() * fy,
-                )
-            };
-            painter.line_segment([p(0.22, 0.26), p(0.78, 0.26)], stroke);
-            painter.line_segment([p(0.50, 0.26), p(0.50, 0.78)], stroke);
+            // 文字线稿：一个「T」——顶上一横 + 中间一竖（撑满公共框，和别的同高）
+            painter.line_segment([p(0.16, 0.14), p(0.84, 0.14)], stroke);
+            painter.line_segment([p(0.50, 0.14), p(0.50, 0.86)], stroke);
         }
         BarIcon::Mosaic => {
             // 马赛克线稿：2×2 棋盘格，对角两格实心、两格描边——
             // 与它落下去的"一块一色"像素化同一个读法。
-            let (hw, hh) = (rect.width() / 2.0, rect.height() / 2.0);
+            let (hw, hh) = (cbox.width() / 2.0, cbox.height() / 2.0);
             let cell = |cx: f32, cy: f32| {
                 egui::Rect::from_min_size(
-                    egui::pos2(rect.min.x + cx * hw, rect.min.y + cy * hh),
+                    egui::pos2(cbox.min.x + cx * hw, cbox.min.y + cy * hh),
                     egui::vec2(hw, hh),
                 )
             };
@@ -1819,15 +1804,9 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
             painter.rect_stroke(cell(0.0, 1.0), 0.0, stroke, egui::StrokeKind::Inside);
         }
         BarIcon::Eraser => {
-            // 橡皮线稿：整体放大、白色笔身加长（实心橡皮头缩短、分隔线往尖端挪），底下保留一条横线。
-            let p = |fx: f32, fy: f32| {
-                egui::pos2(
-                    rect.min.x + rect.width() * fx,
-                    rect.min.y + rect.height() * fy,
-                )
-            };
-            let (a, b, c, d) = (p(0.12, 0.56), p(0.56, 0.84), p(0.90, 0.44), p(0.46, 0.14));
-            let (q1, q2) = (p(0.583, 0.224), p(0.243, 0.638));
+            // 橡皮线稿：斜放一块 + 分出橡皮头（填实）+ 底下一条横线（画进公共框，同高）。
+            let (a, b, c, d) = (p(0.10, 0.52), p(0.52, 0.80), p(0.88, 0.42), p(0.46, 0.14));
+            let (q1, q2) = (p(0.60, 0.24), p(0.24, 0.60));
             // 橡皮头（a-d 那一端）填实 + 描边——只占靠尖端一小截，白色笔身更长
             painter.add(egui::Shape::convex_polygon(vec![a, d, q1, q2], ink, stroke));
             // 整块橡皮轮廓
@@ -1836,31 +1815,26 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
                 egui::Color32::TRANSPARENT,
                 stroke,
             ));
-            // 底下那条横线（跟放大后的橡皮同宽）
-            painter.line_segment([p(0.10, 0.92), p(0.80, 0.92)], stroke);
+            // 底下那条横线
+            painter.line_segment([p(0.08, 0.90), p(0.72, 0.90)], stroke);
         }
         BarIcon::Check => {
-            // 两段线，短的那段从左边起头——和 某截图工具 那颗对勾同一个读法
-            let start = egui::pos2(rect.min.x, rect.center().y);
-            let knee = egui::pos2(rect.min.x + rect.width() * 0.35, rect.max.y);
-            let end = egui::pos2(rect.max.x, rect.min.y);
-            // 两段线，短的那段从左边起头——和 某截图工具 那颗对勾同一个读法。
-            // 不用 `Shape::convex_polyline`：0.37 没有它，且折线本来就两处端点。
-            painter.line_segment([start, knee], stroke);
-            painter.line_segment([knee, end], stroke);
+            // 两段线，短的那段从左边起头——和 某截图工具 那颗对勾同一个读法（画进公共框）。
+            painter.line_segment([p(0.10, 0.52), p(0.40, 0.84)], stroke);
+            painter.line_segment([p(0.40, 0.84), p(0.92, 0.14)], stroke);
         }
         BarIcon::Copy => {
             // 两框：后框偏右上、前框偏左下压住它一多半（>50%）；前框先实心填药丸底色再描边，
             // 后框被压部分的线条不透过前框（用户 2026-11-17 v0.2 裁定）。偏移取 0.20、框取 0.72：
             // 重叠率 (1-0.20/0.72)^2 ≈ 0.52 > 0.5，恰好"压住一多半"。
-            let bw = rect.width() * 0.72;
-            let bh = rect.height() * 0.72;
+            let bw = cbox.width() * 0.68;
+            let bh = cbox.height() * 0.68;
             let back = egui::Rect::from_min_size(
-                egui::pos2(rect.min.x + rect.width() * 0.20, rect.min.y),
+                egui::pos2(cbox.min.x + cbox.width() * 0.22, cbox.min.y),
                 egui::vec2(bw, bh),
             );
             let front = egui::Rect::from_min_size(
-                egui::pos2(rect.min.x, rect.min.y + rect.height() * 0.20),
+                egui::pos2(cbox.min.x, cbox.min.y + cbox.height() * 0.22),
                 egui::vec2(bw, bh),
             );
             painter.rect_stroke(back, 3.0, stroke, egui::StrokeKind::Inside);
@@ -1874,32 +1848,12 @@ fn icon_button(ui: &mut egui::Ui, icon: BarIcon, active: bool) -> egui::Response
         BarIcon::Save => {
             // 通用"下载/存到别处"：一支向下箭头（竖杆＋两段斜线成头）＋ 下方一条独立横线，
             // 不再是 U 形盘子（用户 2026-11-17 v0.2 裁定）。横线与箭头不相连。
-            let cx = rect.center().x;
-            let top = egui::pos2(cx, rect.min.y + rect.height() * 0.06);
-            let tip = egui::pos2(cx, rect.min.y + rect.height() * 0.60);
+            let top = p(0.50, 0.06);
+            let tip = p(0.50, 0.62);
             painter.line_segment([top, tip], stroke);
-            painter.line_segment(
-                [
-                    egui::pos2(cx - rect.width() * 0.22, rect.min.y + rect.height() * 0.38),
-                    tip,
-                ],
-                stroke,
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(cx + rect.width() * 0.22, rect.min.y + rect.height() * 0.38),
-                    tip,
-                ],
-                stroke,
-            );
-            let base_y = rect.min.y + rect.height() * 0.88;
-            painter.line_segment(
-                [
-                    egui::pos2(rect.min.x + rect.width() * 0.12, base_y),
-                    egui::pos2(rect.max.x - rect.width() * 0.12, base_y),
-                ],
-                stroke,
-            );
+            painter.line_segment([p(0.28, 0.40), tip], stroke);
+            painter.line_segment([p(0.72, 0.40), tip], stroke);
+            painter.line_segment([p(0.10, 0.88), p(0.90, 0.88)], stroke);
         }
     }
     let tip = match icon {
