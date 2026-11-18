@@ -419,6 +419,73 @@ fn mosaic_paint(
     }
 }
 
+/// 涂抹式马赛克（用户 2026-11-18 要的画笔模式，对齐 某截图工具 画笔马赛克）：画笔轨迹经过的
+/// block 网格方块，用背景的盒式平均填成不透明像素化块。判定"这格被涂到"＝格中心到笔刷折线
+/// 的距离 ≤ 半笔宽 + 半格。方块对齐整幅网格，涂到哪打到哪、可连续涂抹。
+fn mosaic_brush_paint(
+    img: &mut RgbaImage,
+    background: &RgbaImage,
+    points: &[(f32, f32)],
+    width: f32,
+    block: u32,
+) {
+    if points.is_empty() {
+        return;
+    }
+    let b = block.max(1) as i64;
+    let (w, h) = (img.width() as i64, img.height() as i64);
+    let (bw, bh) = (background.width() as i64, background.height() as i64);
+    let reach = width / 2.0 + (b as f32) / 2.0;
+    let covered = |cx: f32, cy: f32| -> bool {
+        if points.len() == 1 {
+            dist((cx, cy), points[0]) <= reach
+        } else {
+            points
+                .windows(2)
+                .any(|pw| dist_to_segment((cx, cy), pw[0], pw[1]) <= reach)
+        }
+    };
+    let mut by = 0;
+    while by < h {
+        let mut bx = 0;
+        while bx < w {
+            let cx = bx as f32 + (b as f32) / 2.0;
+            let cy = by as f32 + (b as f32) / 2.0;
+            if covered(cx, cy) {
+                let (sx0, sy0) = (bx.max(0), by.max(0));
+                let (sx1, sy1) = ((bx + b).min(w).min(bw), (by + b).min(h).min(bh));
+                if sx1 > sx0 && sy1 > sy0 {
+                    let mut sum = [0u64; 3];
+                    let mut n = 0u64;
+                    for y in sy0..sy1 {
+                        for x in sx0..sx1 {
+                            let p = background.get_pixel(x as u32, y as u32);
+                            for c in 0..3 {
+                                sum[c] += p[c] as u64;
+                            }
+                            n += 1;
+                        }
+                    }
+                    let avg = image::Rgba([
+                        (sum[0] / n) as u8,
+                        (sum[1] / n) as u8,
+                        (sum[2] / n) as u8,
+                        255,
+                    ]);
+                    let (dx1, dy1) = ((bx + b).min(w), (by + b).min(h));
+                    for y in sy0..dy1 {
+                        for x in sx0..dx1 {
+                            img.put_pixel(x as u32, y as u32, avg);
+                        }
+                    }
+                }
+            }
+            bx += b;
+        }
+        by += b;
+    }
+}
+
 /// 单行文字落层：序号标的数字与文字工具共用这一条（同一支字体、同一条缺字形纪律）。
 /// 计划只有一行，对齐与字色由调用方定；绘制走 ice-vision 现成的光栅，本模块不另起一套。
 fn stamp_line(
@@ -635,8 +702,8 @@ pub enum Shape {
         color: [u8; 4],
     },
     Mosaic {
-        a: (f32, f32),
-        b: (f32, f32),
+        points: Vec<(f32, f32)>,
+        width: f32,
         block: u32,
     },
 }
@@ -830,9 +897,10 @@ impl AnnoObject {
             }
             Shape::Serial { center, .. } => shift(center),
             Shape::Text { at, .. } => shift(at),
-            Shape::Mosaic { a, b, .. } => {
-                shift(a);
-                shift(b);
+            Shape::Mosaic { points, .. } => {
+                for p in points.iter_mut() {
+                    shift(p);
+                }
             }
         }
         for s in &mut self.erased {
@@ -895,10 +963,16 @@ impl AnnoObject {
                 let (x0, y0, x1, y1) = (at.0, at.1, at.0 + w.max(1.0), at.1 + font_size);
                 dist_to_rect(p, x0, y0, x1, y1)
             }
-            Shape::Mosaic { a, b, .. } => {
-                let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
-                let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
-                dist_to_rect(p, x0, y0, x1, y1)
+            Shape::Mosaic { points, width, .. } => {
+                let mut d = f32::INFINITY;
+                if points.len() == 1 {
+                    d = dist_to_segment(p, points[0], points[0]);
+                } else {
+                    for pw in points.windows(2) {
+                        d = d.min(dist_to_segment(p, pw[0], pw[1]));
+                    }
+                }
+                (d - width / 2.0).max(0.0)
             }
         }
     }
@@ -906,11 +980,9 @@ impl AnnoObject {
     /// 对象包围盒（AABB），矩形擦除区是否压到用它粗判。
     pub fn bbox(&self) -> (f32, f32, f32, f32) {
         let pts = match &self.shape {
-            Shape::Rect { a, b, .. } | Shape::Line { a, b, .. } | Shape::Mosaic { a, b, .. } => {
-                vec![*a, *b]
-            }
+            Shape::Rect { a, b, .. } | Shape::Line { a, b, .. } => vec![*a, *b],
             Shape::Arrow { from, to, .. } => vec![*from, *to],
-            Shape::Pencil { points, .. } => points.clone(),
+            Shape::Pencil { points, .. } | Shape::Mosaic { points, .. } => points.clone(),
             Shape::Serial { center, radius, .. } => {
                 vec![
                     (center.0 - radius, center.1 - radius),
@@ -1077,7 +1149,11 @@ fn paint_shape(img: &mut RgbaImage, shape: &Shape, background: &RgbaImage, metri
             let area = PixelRect::new(at.0, at.1, width.max(1.0), line_h);
             stamp_line(img, area, t, *font_size, Align::Left, *color, metrics);
         }
-        Shape::Mosaic { a, b, block } => mosaic_paint(img, background, *a, *b, *block),
+        Shape::Mosaic {
+            points,
+            width,
+            block,
+        } => mosaic_brush_paint(img, background, points, *width, *block),
     }
 }
 
@@ -1607,5 +1683,30 @@ mod tests {
         let layer = render(&ol.objects, &bg, &m);
         assert_eq!(layer.get_pixel(20, 32)[3], 0, "擦过段透明");
         assert!(layer.get_pixel(45, 32)[3] > 200, "没擦段还在");
+    }
+
+    /// REQ-002：涂抹式马赛克——笔迹经过的方块被背景盒式平均填成不透明，笔迹外透明。
+    #[test]
+    fn brush_mosaic_pixelates_where_the_stroke_passes() {
+        let Ok(m) = FileMetrics::open() else { return };
+        let mut bg = RgbaImage::new(64, 64);
+        for y in 0..64 {
+            for x in 0..64 {
+                let v = if x < 32 { 0 } else { 255 };
+                bg.put_pixel(x, y, image::Rgba([v, v, v, 255]));
+            }
+        }
+        let obj = AnnoObject {
+            shape: Shape::Mosaic {
+                points: vec![(8.0, 20.0), (28.0, 20.0)],
+                width: 8.0,
+                block: 8,
+            },
+            erased: vec![],
+        };
+        let layer = render(&[obj], &bg, &m);
+        assert_eq!(layer.get_pixel(16, 20)[3], 255, "涂到的块必须不透明");
+        assert_eq!(layer.get_pixel(48, 20)[3], 0, "笔迹没到的右侧透明");
+        assert_eq!(layer.get_pixel(16, 60)[3], 0, "笔迹上下方透明");
     }
 }

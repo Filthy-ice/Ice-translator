@@ -680,8 +680,9 @@ struct ToolState {
     thickness_idx: usize,
     /// 色板档（REQ-003）：默认红。马赛克与橡皮不读它（一个取背景色、一个只清 alpha）。
     color_idx: usize,
-    /// 铅笔这一次拖拽累积的点（点空间）：松手建**一个** Pencil 对象（CHG-016 T-002）。
-    pencil_points: Vec<Pos2>,
+    /// 铅笔/马赛克这一次拖拽累积的点（点空间）：松手建**一个** Pencil 或 Mosaic 对象
+    /// （CHG-016 T-002；马赛克 2026-11-18 改涂抹式，与铅笔同走这条累积）。
+    stroke_points: Vec<Pos2>,
     /// 橡皮这一次拖拽累积的轨迹点（点空间）：松手对这些点做一次 erase_pen（一条撤销）。
     erase_points: Vec<Pos2>,
     /// 正在拖动改位置的既有对象下标（CHG-016 T-005）：按下命中已有对象时置上，
@@ -702,7 +703,7 @@ impl Default for ToolState {
             text_input: None,
             thickness_idx: 1,
             color_idx: 0,
-            pencil_points: Vec::new(),
+            stroke_points: Vec::new(),
             erase_points: Vec::new(),
             moving: None,
             move_last: Pos2::ZERO,
@@ -1250,7 +1251,9 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                                 ts.anchor = clamp_pt(here);
                                 ts.last = ts.anchor;
                                 match ts.tool {
-                                    Some(Tool::Pencil) => ts.pencil_points = vec![ts.anchor],
+                                    Some(Tool::Pencil | Tool::Mosaic) => {
+                                        ts.stroke_points = vec![ts.anchor]
+                                    }
                                     Some(Tool::Eraser) => ts.erase_points = vec![ts.anchor],
                                     _ => {}
                                 }
@@ -1275,7 +1278,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                     ts.move_last = to;
                 } else {
                     match ts.tool {
-                        Some(Tool::Pencil) => ts.pencil_points.push(to),
+                        Some(Tool::Pencil | Tool::Mosaic) => ts.stroke_points.push(to),
                         Some(Tool::Eraser) => ts.erase_points.push(to),
                         _ => {}
                     }
@@ -1344,11 +1347,11 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                             }
                             Some(Tool::Pencil) => {
                                 let pts: Vec<(f32, f32)> = ts
-                                    .pencil_points
+                                    .stroke_points
                                     .iter()
                                     .filter_map(|&p| point_to_px(ann_field, p))
                                     .collect();
-                                ts.pencil_points.clear();
+                                ts.stroke_points.clear();
                                 if !pts.is_empty() {
                                     if let Ok(mut ol) = objects.lock() {
                                         ol.push(AnnoObject {
@@ -1376,16 +1379,25 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                                 }
                             }
                             Some(Tool::Mosaic) => {
-                                let block = (MOSAIC_BLOCK_PT * scale).round().max(1.0) as u32;
-                                if let Ok(mut ol) = objects.lock() {
-                                    ol.push(AnnoObject {
-                                        shape: Shape::Mosaic {
-                                            a: pa,
-                                            b: pb,
-                                            block,
-                                        },
-                                        erased: Vec::new(),
-                                    });
+                                // 涂抹式：整段轨迹转物理像素，建一个 Mosaic 对象（brush 轨迹＋块度）。
+                                let pts: Vec<(f32, f32)> = ts
+                                    .stroke_points
+                                    .iter()
+                                    .filter_map(|&p| point_to_px(ann_field, p))
+                                    .collect();
+                                ts.stroke_points.clear();
+                                if !pts.is_empty() {
+                                    let block = (MOSAIC_BLOCK_PT * scale).round().max(1.0) as u32;
+                                    if let Ok(mut ol) = objects.lock() {
+                                        ol.push(AnnoObject {
+                                            shape: Shape::Mosaic {
+                                                points: pts,
+                                                width,
+                                                block,
+                                            },
+                                            erased: Vec::new(),
+                                        });
+                                    }
                                 }
                             }
                             _ => {}
@@ -1439,8 +1451,8 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                     painter.line_segment([here, pos2(h2.0, h2.1)], stroke);
                 }
                 Some(Tool::Pencil) => {
-                    if ts.pencil_points.len() < 2 {
-                        if let Some(&p) = ts.pencil_points.first() {
+                    if ts.stroke_points.len() < 2 {
+                        if let Some(&p) = ts.stroke_points.first() {
                             painter.circle_filled(
                                 p,
                                 THICKNESS[ts.thickness_idx] / 2.0,
@@ -1448,7 +1460,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                             );
                         }
                     } else {
-                        for pair in ts.pencil_points.windows(2) {
+                        for pair in ts.stroke_points.windows(2) {
                             painter.line_segment([pair[0], pair[1]], stroke);
                         }
                     }
@@ -1473,15 +1485,24 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                     }
                 }
                 Some(Tool::Mosaic) => {
-                    // 打码区预览：半透明白底 + 白边，松手落下去的就是这一块
-                    let rect = ann_field.clamp(Rect::from_two_pos(ts.anchor, here));
-                    painter.rect_filled(rect, 0.0, egui::Color32::from_white_alpha(40));
-                    painter.rect_stroke(
-                        rect,
-                        0.0,
-                        egui::Stroke::new(1.0, egui::Color32::WHITE),
-                        egui::StrokeKind::Inside,
+                    // 涂抹式预览：淡白宽线沿笔迹示意"涂到哪打到哪"（不再是方框）。
+                    let mo = egui::Stroke::new(
+                        THICKNESS[ts.thickness_idx] * 3.0,
+                        egui::Color32::from_white_alpha(40),
                     );
+                    if ts.stroke_points.len() < 2 {
+                        if let Some(&p) = ts.stroke_points.first() {
+                            painter.circle_filled(
+                                p,
+                                THICKNESS[ts.thickness_idx] * 1.5,
+                                egui::Color32::from_white_alpha(40),
+                            );
+                        }
+                    } else {
+                        for pair in ts.stroke_points.windows(2) {
+                            painter.line_segment([pair[0], pair[1]], mo);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -2581,7 +2602,7 @@ mod tests {
             text_input: None,
             thickness_idx: 1,
             color_idx: 0,
-            pencil_points: Vec::new(),
+            stroke_points: Vec::new(),
             erase_points: Vec::new(),
             moving: None,
             move_last: pos2(0.0, 0.0),

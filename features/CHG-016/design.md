@@ -25,9 +25,9 @@ Spec-Hash: 0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2
 ## REQ-001 实现与验证
 
 **对象模型（annotate.rs）**：
-- `AnnoObject` 枚举（derive Clone/Debug/Serialize/Deserialize/PartialEq）：`Rect{a,b,width,color}`、`Arrow{from,to,width,color}`、`Line{a,b,width,color}`、`Pencil{points:Vec<(f32,f32)>,width,color}`、`Serial{center,radius,number,color}`、`Text{at,text:String,font_size,color}`、`Mosaic{a,b,block}`——**每件再带一个 `erased:Vec<EraseStamp>` 字段**（橡皮对它划过的轨迹段/矩形，存**对象相对坐标**，默认空；EraseStamp 画笔轨迹/矩形区两型，对应 某截图工具 PathMode）。坐标物理像素（事实 13），样式存值不是档索引（档索引是工具态运行态，落对象时换成 THICKNESS/BADGE_RADIUS/TEXT_SIZE/PALETTE 的具体值）。**橡皮不是独立对象类型**，只是往被划过的对象的 erased 里追加（REQ-005）。
+- `AnnoObject` 枚举（derive Clone/Debug/Serialize/Deserialize/PartialEq）：`Rect{a,b,width,color}`、`Arrow{from,to,width,color}`、`Line{a,b,width,color}`、`Pencil{points:Vec<(f32,f32)>,width,color}`、`Serial{center,radius,number,color}`、`Text{at,text:String,font_size,color}`、`Mosaic{points:Vec<(f32,f32)>,width,block}`（涂抹笔迹，2026-11-18 改）——**每件再带一个 `erased:Vec<EraseStamp>` 字段**（橡皮对它划过的轨迹段/矩形，存**对象相对坐标**，默认空；EraseStamp 画笔轨迹/矩形区两型，对应 某截图工具 PathMode）。坐标物理像素（事实 13），样式存值不是档索引（档索引是工具态运行态，落对象时换成 THICKNESS/BADGE_RADIUS/TEXT_SIZE/PALETTE 的具体值）。**橡皮不是独立对象类型**，只是往被划过的对象的 erased 里追加（REQ-005）。
 - `ObjectList{objects:Vec<AnnoObject>, revision:u64, undo:Vec<Vec<AnnoObject>>, redo:Vec<Vec<AnnoObject>>, next_serial:u32}`——唯一事实源。`next_serial` 序号自增计数（默认 1 起，CHG-014 行为）。
-- `render(objects:&[AnnoObject], background:&RgbaImage, w,h) -> RgbaImage`：新建透明层，**按列表序**遍历对象，每件先把几何画进一个临时 tile（Rect→四边 paint_segment；Arrow→杆+arrow_head 两斜线；Line→paint_segment；Pencil→逐段 paint_segment；Serial→实心圆 paint_segment+stamp_line 白数字；Text→stamp_line；Mosaic→盒式平均从 background 取色不透明写），再用该件的 `erased` 对**这块 tile 自身** destination-out 减 alpha（复用 CHG-014 `erase` 原语 for_each_covered_pixel，**只擦这个对象的像素不擦底图**），最后把 tile 合成进层。**擦除痕迹存在对象相对坐标里，故随对象平移/变换一起走**（事实 18）。**叠放序=列表序=落笔序**，落墨 alpha-over 与旧引擎逐笔落像素同结果、被擦对象的 destination-out 与旧引擎 erase 同结果（H1 含橡皮）。
+- `render(objects:&[AnnoObject], background:&RgbaImage, w,h) -> RgbaImage`：新建透明层，**按列表序**遍历对象，每件先把几何画进一个临时 tile（Rect→四边 paint_segment；Arrow→杆+arrow_head 两斜线；Line→paint_segment；Pencil→逐段 paint_segment；Serial→实心圆 paint_segment+stamp_line 白数字；Text→stamp_line；Mosaic→涂抹笔迹经过的方块用 background 盒式平均不透明写（mosaic_brush_paint）），再用该件的 `erased` 对**这块 tile 自身** destination-out 减 alpha（复用 CHG-014 `erase` 原语 for_each_covered_pixel，**只擦这个对象的像素不擦底图**），最后把 tile 合成进层。**擦除痕迹存在对象相对坐标里，故随对象平移/变换一起走**（事实 18）。**叠放序=列表序=落笔序**，落墨 alpha-over 与旧引擎逐笔落像素同结果、被擦对象的 destination-out 与旧引擎 erase 同结果（H1 含橡皮）。
 - 像素缓存 `Layer{image:RgbaImage, revision:u64}` 降级为 render 的产物：ObjectList 每次突变后重渲染整层、bump revision。`composite_into` 不变（底图＋缓存按 x0/y0 盖合）。
 - 旧 `Layer` 的 undo_stack/pending/before_image/stroke 那套脏矩形前像**删除**（被 REQ-003 对象快照取代）；八件旧工具方法（rect_stroke/line/arrow/pencil/number_badge/text/mosaic/erase）改为"建对象"入口，落像素逻辑搬进 render。
 
@@ -36,7 +36,7 @@ Spec-Hash: 0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2
 ## REQ-002 实现与验证
 
 **八件工具落对象（selection.rs + annotate.rs）**：遮罩工具态手势不再直接调旧落像素方法，改为建 AnnoObject 推进 ObjectList：
-- 框/箭头/直线/马赛克：拖拽松手建一个对象（几何取按下/抬起两点，样式取当前工具态档换值）；
+- 框/箭头/直线：拖拽松手建一个对象（几何取按下/抬起两点，样式取当前工具态档换值）；马赛克：涂抹式（像铅笔，拖拽累积轨迹，松手建一个 Mosaic 笔迹对象，2026-11-18 用户要求）；
 - 铅笔：一次按下到松开累积 points 建**一个** Pencil 对象（不是每段一个）；
 - 序号：单击建 Serial，number=next_serial++（默认 1 起）；
 - 文字：单击唤起输入，回车/失焦落 Text 对象（空白不落、next_serial 不动）；
@@ -61,9 +61,9 @@ Spec-Hash: 0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2
 ## REQ-004 实现与验证
 
 **命中＋选中＋全控制点（annotate.rs 纯几何 + pin.rs 手势）**：
-- `hit(objects, pt) -> Option<usize>`：从顶（列表尾）往下，按类型**几何**距离判命中（线/箭头/铅笔：点到线段距离≤半宽+容差；框：点在边框带内或内部；马赛克：点在区内；序号：点在圆内；文字：点在文字包围盒内）——**只看几何不看 erased 缺口，被擦得发虚的部分仍属该对象、照样整条选中**（事实 18）。返回最顶那个索引。
-- `control_points(obj) -> Vec<(f32,f32)>`：Rect/Mosaic 四角；Arrow/Line 两端点；Pencil/Serial/Text 无改形控制点（整体移动）。
-- `drag_control(obj, idx, delta)`：改对应几何点（框/马赛克拖角改对角、箭头/直线拖端点改向长）；`move_obj(obj, delta)`：整体平移所有几何点（erased 存对象相对坐标故自动跟着走，事实 18）。
+- `hit(objects, pt) -> Option<usize>`：从顶（列表尾）往下，按类型**几何**距离判命中（线/箭头/铅笔/马赛克：点到线段距离≤半宽+容差；框：点在边框带内或内部；序号：点在圆内；文字：点在文字包围盒内）——**只看几何不看 erased 缺口，被擦得发虚的部分仍属该对象、照样整条选中**（事实 18）。返回最顶那个索引。
+- `control_points(obj) -> Vec<(f32,f32)>`：Rect 四角；Arrow/Line 两端点；Pencil/Mosaic/Serial/Text 无改形控制点（整体移动；马赛克是涂抹笔迹、同铅笔）。
+- `drag_control(obj, idx, delta)`：改对应几何点（框拖角改对角、箭头/直线拖端点改向长）；`move_obj(obj, delta)`：整体平移所有几何点（erased 存对象相对坐标故自动跟着走，事实 18）。
 - 手势（pin.rs 编辑器，与遮罩同一互斥规则 H2）：有工具时画层/建对象；**无工具时**点对象→选中（出控制点）、拖控制点→改形、拖对象本体→移动、点空白→取消选中、空白处拖→拖窗（既有 movable）。选中时改粗细档/色板→改该对象样式重渲染（不是只改下一笔默认）。Delete/Backspace→删选中对象（压一条撤销快照）。
 - 控制点选中即常显（Q-004 一档）；控制点命中半径与画法对齐（既有把手那套读法）。
 - 文字再编辑：选中 Text 双击（或选中后按回车）唤起输入框改 text，落对象重渲染。序号改编号：选中 Serial 可改 number。

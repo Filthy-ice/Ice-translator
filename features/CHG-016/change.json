@@ -2,8 +2,8 @@
   "schema_version": 1,
   "id": "CHG-016",
   "title": "标注对象模型：可选中二次编辑、全控制点、跨重启持久化（对齐 某截图工具，取代 CHG-014/015 像素层）",
-  "version": "v0.1",
-  "status": "IMPLEMENTING",
+  "version": "v0.2",
+  "status": "SPEC_REVIEW",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -106,20 +106,13 @@
       "at": "2026-11-18T06:18:14+00:00",
       "action": "task-done",
       "detail": "T-002"
+    },
+    {
+      "at": "2026-11-18T07:04:50+00:00",
+      "action": "revise",
+      "detail": "用户 2026-11-18 要求马赛克由框选式改为涂抹式（某截图工具 画笔马赛克），取代 CHG-014 已批的框选；REQ-002/REQ-004 相应更新，橡皮部分擦结论不变"
     }
   ],
-  "approval": {
-    "hash": "0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2",
-    "version": "v0.1",
-    "by": "Filthy-ice",
-    "reference": "用户2026-11-18真机两轮验证：橡皮部分擦+擦除随被擦对象移动；某截图工具取证",
-    "at": "2026-11-18T02:44:22+00:00",
-    "snapshot": "approvals/v0.1-0162d45dab71a15d7703004377ba211ed109de04b696c3b20ece8a1309afb4e2.md",
-    "scope": "local-delivery",
-    "context_hash": "d5195664324452d6ea87042b72060b67d791c4d2a1420858a31984f2701b2391",
-    "branches": {
-      "ice-translator": "main"
-    }
-  },
-  "plan_hash": "5ba6bd4115d802ffb209dd2c19e6a781b0816b04a39027ac60a8cfbdac62c9dd"
+  "approval": null,
+  "plan_hash": null
 }
