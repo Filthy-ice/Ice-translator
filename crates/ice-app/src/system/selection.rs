@@ -1137,20 +1137,28 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 .fixed_pos(*at)
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| {
+                    // 输入框透明：用户 2026-11-18 反馈"点文字后是个实心暗框，要回车落到
+                    // 透明层才透"。改成输入时就透明——框底透明、只留一圈很淡的边定位，
+                    // TextEdit 自己的底也压成透明，打字时能看见底下的截图（所见即所得）。
                     egui::Frame::NONE
-                        .fill(egui::Color32::from_rgba_premultiplied(28, 28, 30, 235))
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::WHITE))
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(70)))
                         .inner_margin(egui::Margin::symmetric(8, 4))
                         .corner_radius(egui::CornerRadius::same(6))
                         .show(ui, |ui| {
-                            let edit = egui::TextEdit::singleline(text)
-                                .id(id.with("edit"))
-                                .desired_width(180.0)
-                                .hint_text("输入文字，回车落下去")
-                                .show(ui);
-                            if !edit.response.has_focus() {
-                                edit.response.request_focus();
-                            }
+                            ui.scope(|ui| {
+                                let v = ui.visuals_mut();
+                                v.widgets.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
+                                v.widgets.noninteractive.weak_bg_fill = egui::Color32::TRANSPARENT;
+                                let edit = egui::TextEdit::singleline(text)
+                                    .id(id.with("edit"))
+                                    .desired_width(180.0)
+                                    .hint_text("输入文字，回车落下去")
+                                    .show(ui);
+                                if !edit.response.has_focus() {
+                                    edit.response.request_focus();
+                                }
+                            });
                         });
                 });
             input_rect = Some(area.response.rect);
