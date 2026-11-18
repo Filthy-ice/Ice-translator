@@ -10,8 +10,8 @@
 //!    两处各除一次或都忘了除的现场：贴图大一倍、文字层整体错位。
 
 use crate::system::annotate::{
-    BADGE_RADIUS, Layer, MOSAIC_BLOCK_PT, PALETTE, PALETTE_NAMES, TEXT_SIZE, THICKNESS,
-    THICKNESS_NAMES,
+    AnnoObject, BADGE_RADIUS, MOSAIC_BLOCK_PT, ObjectList, PALETTE, PALETTE_NAMES, Shape,
+    TEXT_SIZE, THICKNESS, THICKNESS_NAMES, render,
 };
 use crate::system::bar::{self, GAP};
 use crate::system::wake_root;
@@ -570,53 +570,59 @@ fn ann_key(display: u8) -> Id {
 /// **存在根上下文的 data 里**：遮罩子窗画它、主窗确认时裁它，两边读的是同一份 `Arc`。
 /// 不绕帧回传——贴图那条已经验证过，状态绕主窗一圈必闪，多子窗还会串格。
 /// 每屏永远只有一格：新一轮原地顶掉旧的，不随轮数攒（一层就是几十 MB）。
-pub fn annotation_layer(
+pub fn annotation_objects(
     ctx: &egui::Context,
     display: u8,
     frozen_id: u64,
-    px: (u32, u32),
-) -> std::sync::Arc<std::sync::Mutex<Layer>> {
+) -> std::sync::Arc<std::sync::Mutex<ObjectList>> {
     let key = ann_key(display);
     ctx.data_mut(|d| {
-        if let Some((old_gen, layer)) =
-            d.get_temp::<(u64, std::sync::Arc<std::sync::Mutex<Layer>>)>(key)
+        if let Some((old_gen, objects)) =
+            d.get_temp::<(u64, std::sync::Arc<std::sync::Mutex<ObjectList>>)>(key)
         {
             if old_gen == frozen_id {
-                return layer;
+                return objects;
             }
         }
-        let fresh = std::sync::Arc::new(std::sync::Mutex::new(Layer::new(px.0, px.1)));
+        let fresh = std::sync::Arc::new(std::sync::Mutex::new(ObjectList::new()));
         d.insert_temp(key, (frozen_id, fresh.clone()));
         fresh
     })
 }
 
-/// 标注层的显示纹理：**落一笔才重传一次**（缓存认 frozen_id + 层的 revision）。
-/// 一笔没落（revision 0）返回 None——不传纹理也不画，保证没动工具时与现状逐像素同。
+/// 标注的显示纹理：**对象列表一变就重传一次**（缓存认 frozen_id + revision）。
+/// 一件没画（revision 0）返回 None——不传纹理也不画，保证没动工具时与现状逐像素同。
+/// 走对象引擎 `render`：逐件画几何＋对自身擦除痕迹减 alpha（H1 与旧像素同源）。
 fn annotation_texture(
     child: &egui::Context,
     display: u8,
     frozen_id: u64,
-    layer: &std::sync::Arc<std::sync::Mutex<Layer>>,
+    objects: &std::sync::Arc<std::sync::Mutex<ObjectList>>,
+    background: &image::RgbaImage,
 ) -> Option<egui::TextureId> {
-    let guard = layer.lock().ok()?;
-    if guard.revision == 0 {
+    let guard = objects.lock().ok()?;
+    let rev = guard.revision;
+    if rev == 0 {
         return None;
     }
     let key = Id::NULL.with("ice-selection.ann-tex").with(display);
     if let Some((old_gen, old_rev, old)) =
         child.data(|d| d.get_temp::<(u64, u64, egui::TextureHandle)>(key))
     {
-        if old_gen == frozen_id && old_rev == guard.revision {
+        if old_gen == frozen_id && old_rev == rev {
             return Some(old.id());
         }
     }
-    let (w, h) = (guard.image.width(), guard.image.height());
-    let image =
-        egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], guard.image.as_raw());
+    let Ok(metrics) = FileMetrics::open() else {
+        return None;
+    };
+    let image0 = render(&guard.objects, background, &metrics);
+    drop(guard);
+    let (w, h) = (image0.width(), image0.height());
+    let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], image0.as_raw());
     let texture = child.load_texture("ice-selection.ann", image, egui::TextureOptions::LINEAR);
     let id = texture.id();
-    child.data_mut(|d| d.insert_temp(key, (frozen_id, guard.revision, texture)));
+    child.data_mut(|d| d.insert_temp(key, (frozen_id, rev, texture)));
     Some(id)
 }
 
@@ -674,6 +680,15 @@ struct ToolState {
     thickness_idx: usize,
     /// 色板档（REQ-003）：默认红。马赛克与橡皮不读它（一个取背景色、一个只清 alpha）。
     color_idx: usize,
+    /// 铅笔这一次拖拽累积的点（点空间）：松手建**一个** Pencil 对象（CHG-016 T-002）。
+    pencil_points: Vec<Pos2>,
+    /// 橡皮这一次拖拽累积的轨迹点（点空间）：松手对这些点做一次 erase_pen（一条撤销）。
+    erase_points: Vec<Pos2>,
+    /// 正在拖动改位置的既有对象下标（CHG-016 T-005）：按下命中已有对象时置上，
+    /// 拖到哪挪到哪，松手清空。`None` = 不在拖既有对象（那就是在画新的）。
+    moving: Option<usize>,
+    /// 拖动既有对象时上一帧的落点（点空间），用来算每帧位移。
+    move_last: Pos2,
 }
 
 impl Default for ToolState {
@@ -687,6 +702,10 @@ impl Default for ToolState {
             text_input: None,
             thickness_idx: 1,
             color_idx: 0,
+            pencil_points: Vec::new(),
+            erase_points: Vec::new(),
+            moving: None,
+            move_last: Pos2::ZERO,
         }
     }
 }
@@ -710,11 +729,10 @@ fn point_to_px(field: Field, p: Pos2) -> Option<(f32, f32)> {
     Some((r.x, r.y))
 }
 
-/// 序号标落一笔：点换像素 → 实心圆 + 白数字，**落成才自增**。
-/// 字体读不出只 warn、不落不增（错误文字里没有用户内容，NFR-3）。
+/// 序号标落一件：点换像素 → 建 Serial 对象（号取对象列表的 next_serial 并自增，默认 1 起）。
 fn stamp_number(
-    ts: &mut ToolState,
-    layer: &std::sync::Arc<std::sync::Mutex<Layer>>,
+    ts: &ToolState,
+    objects: &std::sync::Arc<std::sync::Mutex<ObjectList>>,
     field: Field,
     at: Pos2,
 ) {
@@ -722,55 +740,48 @@ fn stamp_number(
     let Some(center) = point_to_px(field, at) else {
         return;
     };
-    let Ok(metrics) = FileMetrics::open() else {
-        tracing::warn!("序号标：本机字体读不出，这一笔没落");
-        return;
-    };
-    if let Ok(mut l) = layer.lock() {
-        l.number_badge(
+    if let Ok(mut ol) = objects.lock() {
+        ol.push_serial(
             center,
             BADGE_RADIUS[ts.thickness_idx] * scale,
-            ts.next_number,
             PALETTE[ts.color_idx],
-            &metrics,
         );
-        ts.next_number += 1;
     }
 }
 
-/// 把开着的那条文字输入落层：取走 → 空白不落 → 点换像素 → 本机字体光栅。
-/// 回车、command+c、点输入框外、切工具、确认三颗都走这一条——落完输入即关，
-/// 不许出现"框还在、字已经落了"的第二份状态。字体读不出只 warn（NFR-3）。
+/// 把开着的那条文字输入落成 Text 对象：取走 → 空白不落 → 点换像素 → 存文本与字号。
+/// 字体读不出只 warn（NFR-3）。
 fn commit_text_input(
     ts: &mut ToolState,
-    layer: &std::sync::Arc<std::sync::Mutex<Layer>>,
+    objects: &std::sync::Arc<std::sync::Mutex<ObjectList>>,
     field: Field,
 ) {
     let Some((at, text)) = ts.text_input.take() else {
         return;
     };
-    if text.trim().is_empty() {
+    let text = text.trim();
+    if text.is_empty() {
         return;
     }
     let Some(scale) = field.scale() else { return };
     let Some(p) = point_to_px(field, at) else {
         return;
     };
-    let Ok(metrics) = FileMetrics::open() else {
+    if FileMetrics::open().is_err() {
         tracing::warn!("文字标注：本机字体读不出，这一条没落");
         return;
-    };
-    if let Ok(mut l) = layer.lock() {
-        let missing = l.text(
-            p,
-            &text,
-            TEXT_SIZE[ts.thickness_idx] * scale,
-            PALETTE[ts.color_idx],
-            &metrics,
-        );
-        if missing > 0 {
-            tracing::warn!(missing, "文字标注：有字符本机字体画不出");
-        }
+    }
+    let owned = text.to_string();
+    if let Ok(mut ol) = objects.lock() {
+        ol.push(AnnoObject {
+            shape: Shape::Text {
+                at: p,
+                text: owned,
+                font_size: TEXT_SIZE[ts.thickness_idx] * scale,
+                color: PALETTE[ts.color_idx],
+            },
+            erased: Vec::new(),
+        });
     }
 }
 
@@ -900,7 +911,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         // 标注层与工具态：都按 (屏, 轮号) 存取，与选区那格同形（D-42：新一轮读空白）。
         // 层从根上下文取——确认时主窗拿的是同一份 Arc，不绕帧回传。
         let ann_field = Field::new(Rect::from_min_size(Pos2::ZERO, points), px);
-        let layer = annotation_layer(&root, display, frozen_id, (px.x as u32, px.y as u32));
+        let objects = annotation_objects(&root, display, frozen_id);
         let mut ts = ui.ctx().data(|d| load_tool_state(d, display, frozen_id));
         let tool_before = ts.clone();
         let here = ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO);
@@ -968,7 +979,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
 
         // 标注层盖在压暗与选区之上：笔迹是用户画的内容，不被暗档乘色。
         // 空层不传纹理也不画——没动工具时这一扇与现状逐像素同（REQ-001）。
-        if let Some(tex) = annotation_texture(&child, display, frozen_id, &layer) {
+        if let Some(tex) = annotation_texture(&child, display, frozen_id, &objects, &frame) {
             ui.painter().image(
                 tex,
                 full,
@@ -1011,7 +1022,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                     } => {
                         // 输入开着：回车 = 把这条字落层，不是确认遮罩
                         if ts.text_input.is_some() {
-                            commit_text_input(&mut ts, &layer, ann_field);
+                            commit_text_input(&mut ts, &objects, ann_field);
                             None
                         } else {
                             next.confirm();
@@ -1032,7 +1043,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                         && next.rect.is_some() =>
                     {
                         // 复制的是落完字的成品：开着的输入先落层
-                        commit_text_input(&mut ts, &layer, ann_field);
+                        commit_text_input(&mut ts, &objects, ann_field);
                         next.rect.map(|rect| MaskOut::ConfirmCopy { display, rect })
                     }
                     _ => None,
@@ -1044,7 +1055,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
         // 没框就留着这个请求（下一次有框再兑现），主窗那侧在新轮开始时清掉，不跨轮误触。
         if confirm_requested(&child) && next.rect.is_some() {
             clear_confirm_request(&child);
-            commit_text_input(&mut ts, &layer, ann_field);
+            commit_text_input(&mut ts, &objects, ann_field);
             next.confirm();
             if let Some(rect) = next.rect {
                 keys.push(MaskOut::Confirm { display, rect });
@@ -1076,10 +1087,42 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 )
             })
         });
-        if undo_pressed && ts.text_input.is_none() {
-            if let Ok(mut l) = layer.lock() {
-                if l.undo() {
-                    child.request_repaint();
+        // 重做（CHG-016 REQ-003 / Q-003）：command+shift+z 或 ctrl+y 补回最近撤掉的一笔。
+        let redo_pressed = child.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        key: egui::Key::Z,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } if (modifiers.command || modifiers.ctrl) && modifiers.shift
+                ) || matches!(
+                    e,
+                    egui::Event::Key {
+                        key: egui::Key::Y,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } if modifiers.ctrl && !modifiers.shift
+                )
+            })
+        });
+        if ts.text_input.is_none() {
+            if undo_pressed {
+                if let Ok(mut ol) = objects.lock() {
+                    if ol.undo() {
+                        child.request_repaint();
+                    }
+                }
+            } else if redo_pressed {
+                if let Ok(mut ol) = objects.lock() {
+                    if ol.redo() {
+                        child.request_repaint();
+                    }
                 }
             }
         }
@@ -1162,9 +1205,10 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 changed = true;
             }
         } else {
-            // 工具态：手势只动画笔，**不碰 next.rect**（互斥的另一半）。框/箭头/直线/马赛克
-            // 拖的时候画矢量预览、松手落层；铅笔/橡皮拖到哪画到哪，每帧落一小段；
-            // 序号/文字是单击工具，不进拖拽态。落层只改层 + 叫醒自己，不推意图、不叫主窗。
+            // 工具态：手势只动画笔，**不碰 next.rect**（互斥的另一半）。八件工具松手/单击
+            // 建一个对象推进 ObjectList（CHG-016 T-002，取代旧"直接落像素"）。按下先命中测试：
+            // 点落在已有对象上就抓起来拖（T-005 移动，一次拖动＝一条撤销），落在空白才画新的。
+            // 只改对象列表 + 叫醒自己，不推意图、不叫主窗。
             let clamp_pt = |p: Pos2| {
                 pos2(
                     p.x.clamp(ann_field.bounds.min.x, ann_field.bounds.max.x),
@@ -1180,54 +1224,60 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                     // 输入开着：落在框外那一下 = 确认这条输入，这一下不起新手势；
                     // 落在框里交给 TextEdit（挪光标），不动工具态。
                     if !rect.contains(here) {
-                        commit_text_input(&mut ts, &layer, ann_field);
+                        commit_text_input(&mut ts, &objects, ann_field);
                     }
                 } else {
                     match ts.tool {
                         Some(Tool::Number) => {
-                            stamp_number(&mut ts, &layer, ann_field, clamp_pt(here));
+                            stamp_number(&ts, &objects, ann_field, clamp_pt(here));
                         }
                         Some(Tool::Text) => {
                             // 上一条还没确认的先落，再在这一下的位置开新的
-                            commit_text_input(&mut ts, &layer, ann_field);
+                            commit_text_input(&mut ts, &objects, ann_field);
                             ts.text_input = Some((clamp_pt(here), String::new()));
                         }
                         _ => {
-                            ts.anchor = clamp_pt(here);
-                            ts.last = ts.anchor;
-                            ts.dragging = true;
-                            // 铅笔/橡皮按下 = 起一段拖拽：此后各段前像累积，松手整段算一条撤销
-                            if matches!(ts.tool, Some(Tool::Pencil | Tool::Eraser)) {
-                                if let Ok(mut l) = layer.lock() {
-                                    l.begin_stroke();
+                            // 先试命中已有对象：命中就抓起来拖（begin_move 压一条撤销快照）。
+                            let hit = point_to_px(ann_field, clamp_pt(here))
+                                .and_then(|pt| objects.lock().ok().and_then(|ol| ol.hit(pt, 8.0)));
+                            if let Some(idx) = hit {
+                                if let Ok(mut ol) = objects.lock() {
+                                    ol.begin_move();
+                                }
+                                ts.moving = Some(idx);
+                                ts.move_last = clamp_pt(here);
+                            } else {
+                                ts.anchor = clamp_pt(here);
+                                ts.last = ts.anchor;
+                                match ts.tool {
+                                    Some(Tool::Pencil) => ts.pencil_points = vec![ts.anchor],
+                                    Some(Tool::Eraser) => ts.erase_points = vec![ts.anchor],
+                                    _ => {}
                                 }
                             }
+                            ts.dragging = true;
                         }
                     }
                 }
             }
-            // 铅笔/橡皮：连续落层。点→物理像素与裁剪走同一个漏斗（point_to_px），Retina 上不会差一倍。
+            // 拖拽中：抓着的既有对象→逐帧平移；铅笔/橡皮→累积点。
             if ts.dragging && ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
                 let to = clamp_pt(here);
-                if let (Some(a), Some(b)) =
-                    (point_to_px(ann_field, ts.last), point_to_px(ann_field, to))
-                {
-                    if let Some(scale) = ann_field.scale() {
-                        if let Ok(mut l) = layer.lock() {
-                            match ts.tool {
-                                Some(Tool::Pencil) => {
-                                    l.pencil(
-                                        &[a, b],
-                                        THICKNESS[ts.thickness_idx] * scale,
-                                        PALETTE[ts.color_idx],
-                                    );
-                                }
-                                Some(Tool::Eraser) => {
-                                    l.erase(a, b, THICKNESS[ts.thickness_idx] * scale * 3.0);
-                                }
-                                _ => {}
-                            }
+                if let Some(idx) = ts.moving {
+                    if let (Some(a), Some(b)) = (
+                        point_to_px(ann_field, ts.move_last),
+                        point_to_px(ann_field, to),
+                    ) {
+                        if let Ok(mut ol) = objects.lock() {
+                            ol.move_object(idx, b.0 - a.0, b.1 - a.1);
                         }
+                    }
+                    ts.move_last = to;
+                } else {
+                    match ts.tool {
+                        Some(Tool::Pencil) => ts.pencil_points.push(to),
+                        Some(Tool::Eraser) => ts.erase_points.push(to),
+                        _ => {}
                     }
                 }
                 ts.last = to;
@@ -1236,51 +1286,115 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                 ts.dragging = false;
                 let a = ts.anchor;
                 let b = clamp_pt(here);
-                if let (Some(pa), Some(pb)) = (point_to_px(ann_field, a), point_to_px(ann_field, b))
+                if ts.moving.take().is_some() {
+                    // 拖动既有对象收口：位置已逐帧改好、begin_move 已压快照，这里只收尾。
+                } else if let (Some(pa), Some(pb)) =
+                    (point_to_px(ann_field, a), point_to_px(ann_field, b))
                 {
                     if let Some(scale) = ann_field.scale() {
-                        if let Ok(mut l) = layer.lock() {
-                            let width = THICKNESS[ts.thickness_idx] * scale;
-                            let color = PALETTE[ts.color_idx];
-                            match ts.tool {
-                                Some(Tool::Rect) => {
-                                    let rect = ann_field.clamp(Rect::from_two_pos(a, b));
-                                    if rect.width() > 0.0 && rect.height() > 0.0 {
-                                        if let Some(px_rect) = ann_field.to_pixels(rect) {
-                                            l.rect_stroke(
-                                                (px_rect.x, px_rect.y),
-                                                (px_rect.x + px_rect.w, px_rect.y + px_rect.h),
-                                                width,
-                                                color,
-                                            );
+                        let width = THICKNESS[ts.thickness_idx] * scale;
+                        let color = PALETTE[ts.color_idx];
+                        match ts.tool {
+                            Some(Tool::Rect) => {
+                                let rect = ann_field.clamp(Rect::from_two_pos(a, b));
+                                if rect.width() > 0.0 && rect.height() > 0.0 {
+                                    if let Some(px_rect) = ann_field.to_pixels(rect) {
+                                        if let Ok(mut ol) = objects.lock() {
+                                            ol.push(AnnoObject {
+                                                shape: Shape::Rect {
+                                                    a: (px_rect.x, px_rect.y),
+                                                    b: (
+                                                        px_rect.x + px_rect.w,
+                                                        px_rect.y + px_rect.h,
+                                                    ),
+                                                    width,
+                                                    color,
+                                                },
+                                                erased: Vec::new(),
+                                            });
                                         }
                                     }
                                 }
-                                Some(Tool::Line) => l.line(pa, pb, width, color),
-                                Some(Tool::Arrow) => l.arrow(pa, pb, width, color),
-                                // 铅笔/橡皮拖的过程中已经落完；单击没拖也要落一个点
-                                Some(Tool::Pencil) => l.pencil(&[pa], width, color),
-                                Some(Tool::Eraser) => l.erase(pa, pa, width * 3.0),
-                                Some(Tool::Mosaic) => {
-                                    let block = (MOSAIC_BLOCK_PT * scale).round().max(1.0) as u32;
-                                    l.mosaic(&frame, pa, pb, block);
-                                }
-                                _ => {}
                             }
+                            Some(Tool::Line) => {
+                                if let Ok(mut ol) = objects.lock() {
+                                    ol.push(AnnoObject {
+                                        shape: Shape::Line {
+                                            a: pa,
+                                            b: pb,
+                                            width,
+                                            color,
+                                        },
+                                        erased: Vec::new(),
+                                    });
+                                }
+                            }
+                            Some(Tool::Arrow) => {
+                                if let Ok(mut ol) = objects.lock() {
+                                    ol.push(AnnoObject {
+                                        shape: Shape::Arrow {
+                                            from: pa,
+                                            to: pb,
+                                            width,
+                                            color,
+                                        },
+                                        erased: Vec::new(),
+                                    });
+                                }
+                            }
+                            Some(Tool::Pencil) => {
+                                let pts: Vec<(f32, f32)> = ts
+                                    .pencil_points
+                                    .iter()
+                                    .filter_map(|&p| point_to_px(ann_field, p))
+                                    .collect();
+                                ts.pencil_points.clear();
+                                if !pts.is_empty() {
+                                    if let Ok(mut ol) = objects.lock() {
+                                        ol.push(AnnoObject {
+                                            shape: Shape::Pencil {
+                                                points: pts,
+                                                width,
+                                                color,
+                                            },
+                                            erased: Vec::new(),
+                                        });
+                                    }
+                                }
+                            }
+                            Some(Tool::Eraser) => {
+                                let pts: Vec<(f32, f32)> = ts
+                                    .erase_points
+                                    .iter()
+                                    .filter_map(|&p| point_to_px(ann_field, p))
+                                    .collect();
+                                ts.erase_points.clear();
+                                if !pts.is_empty() {
+                                    if let Ok(mut ol) = objects.lock() {
+                                        ol.erase_pen(pts, width * 3.0);
+                                    }
+                                }
+                            }
+                            Some(Tool::Mosaic) => {
+                                let block = (MOSAIC_BLOCK_PT * scale).round().max(1.0) as u32;
+                                if let Ok(mut ol) = objects.lock() {
+                                    ol.push(AnnoObject {
+                                        shape: Shape::Mosaic {
+                                            a: pa,
+                                            b: pb,
+                                            block,
+                                        },
+                                        erased: Vec::new(),
+                                    });
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
             }
             if ts.dragging {
                 child.request_repaint();
-            }
-        }
-        // 拖拽收口（CHG-015 REQ-001）：不在拖拽态就把铅笔/橡皮累积的各段前像合成一条入栈。
-        // 放在手势派发**之后**——松手那一帧的最后一笔已经落完，收口才罩得住整段；
-        // esc 退工具那一路把 dragging 置回 false 也从这里收口。pending 为空时是空操作。
-        if !ts.dragging {
-            if let Ok(mut l) = layer.lock() {
-                l.end_stroke();
             }
         }
         if changed {
@@ -1296,8 +1410,9 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
             // 每帧把它叫醒一次正是 D-31~D-35 那一族。要它醒的只有"推进槽里的那一刻"。
         }
         // 拖动中的矢量预览：与落层同一份几何、同一个色，松手落下去的就是看到的那个。
-        // 铅笔/橡皮是连续落层，不需要预览（画出来的就是层本身）。
-        if ts.dragging {
+        // 抓着重画对象（ts.moving 有值）时不画新形状预览；铅笔/橡皮改成"累积后建对象"，
+        // 不再实时落像素，所以这里补上它们的拖拽预览（铅笔=累积折线，橡皮=淡白擦痕）。
+        if ts.dragging && ts.moving.is_none() {
             let c = PALETTE[ts.color_idx];
             let stroke = egui::Stroke::new(
                 THICKNESS[ts.thickness_idx],
@@ -1322,6 +1437,40 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                     );
                     painter.line_segment([here, pos2(h1.0, h1.1)], stroke);
                     painter.line_segment([here, pos2(h2.0, h2.1)], stroke);
+                }
+                Some(Tool::Pencil) => {
+                    if ts.pencil_points.len() < 2 {
+                        if let Some(&p) = ts.pencil_points.first() {
+                            painter.circle_filled(
+                                p,
+                                THICKNESS[ts.thickness_idx] / 2.0,
+                                egui::Color32::from_rgb(c[0], c[1], c[2]),
+                            );
+                        }
+                    } else {
+                        for pair in ts.pencil_points.windows(2) {
+                            painter.line_segment([pair[0], pair[1]], stroke);
+                        }
+                    }
+                }
+                Some(Tool::Eraser) => {
+                    let er = egui::Stroke::new(
+                        THICKNESS[ts.thickness_idx] * 3.0,
+                        egui::Color32::from_white_alpha(60),
+                    );
+                    if ts.erase_points.len() < 2 {
+                        if let Some(&p) = ts.erase_points.first() {
+                            painter.circle_filled(
+                                p,
+                                THICKNESS[ts.thickness_idx] * 1.5,
+                                egui::Color32::from_white_alpha(60),
+                            );
+                        }
+                    } else {
+                        for pair in ts.erase_points.windows(2) {
+                            painter.line_segment([pair[0], pair[1]], er);
+                        }
+                    }
                 }
                 Some(Tool::Mosaic) => {
                     // 打码区预览：半透明白底 + 白边，松手落下去的就是这一块
@@ -1379,7 +1528,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                                         // 工具开关只改这一扇窗自己的运行态：不推意图、不叫主窗
                                         // （推意图的出口只有确认三颗，形状核查盯死三个）。
                                         // 开着的文字输入先落层，不许跟着切换丢字。
-                                        commit_text_input(&mut ts, &layer, ann_field);
+                                        commit_text_input(&mut ts, &objects, ann_field);
                                         ts.tool = if ts.tool == Some(t) { None } else { Some(t) };
                                         ts.dragging = false;
                                         continue;
@@ -1399,7 +1548,7 @@ pub fn show(ctx: &egui::Context, screen: &MaskScreen) {
                                         _ => continue,
                                     };
                                     // 成品里需要包含正在输入的那条字
-                                    commit_text_input(&mut ts, &layer, ann_field);
+                                    commit_text_input(&mut ts, &objects, ann_field);
                                     if let Ok(mut queue) = slot.lock() {
                                         queue.push(out);
                                     }
@@ -2387,29 +2536,35 @@ mod tests {
         );
     }
 
-    /// **标注层按 (屏, 轮号) 存取**：同轮同一份（遮罩画的与主窗裁的是同一张），
-    /// 换轮全新透明层（D-42 同形），换屏不借。拿真存储走一遍，不抄读法。
+    /// **标注对象列表按 (屏, 轮号) 存取**：同轮同一份（遮罩画的与主窗裁的是同一张），
+    /// 换轮全新空列表（D-42 同形），换屏不借。拿真存储走一遍，不抄读法。
     #[test]
-    fn the_annotation_layer_is_per_screen_and_per_round() {
+    fn the_annotation_objects_is_per_screen_and_per_round() {
         let ctx = egui::Context::default();
-        let a = annotation_layer(&ctx, 1, 10, (64, 64));
-        a.lock()
-            .unwrap()
-            .line((0.0, 0.0), (10.0, 10.0), 2.0, PALETTE[0]);
-        let same = annotation_layer(&ctx, 1, 10, (64, 64));
+        let a = annotation_objects(&ctx, 1, 10);
+        a.lock().unwrap().push(AnnoObject {
+            shape: Shape::Line {
+                a: (0.0, 0.0),
+                b: (10.0, 10.0),
+                width: 2.0,
+                color: PALETTE[0],
+            },
+            erased: Vec::new(),
+        });
+        let same = annotation_objects(&ctx, 1, 10);
         assert!(
             std::sync::Arc::ptr_eq(&a, &same),
             "同轮必须取到同一份：主窗确认时裁的就是遮罩画的那张"
         );
         assert!(same.lock().unwrap().revision > 0);
-        let fresh = annotation_layer(&ctx, 1, 11, (64, 64));
-        assert!(!std::sync::Arc::ptr_eq(&a, &fresh), "换轮换新层");
-        assert_eq!(fresh.lock().unwrap().revision, 0, "新层必须一笔没有");
-        let other = annotation_layer(&ctx, 2, 10, (64, 64));
+        let fresh = annotation_objects(&ctx, 1, 11);
+        assert!(!std::sync::Arc::ptr_eq(&a, &fresh), "换轮换一份新对象列表");
+        assert_eq!(fresh.lock().unwrap().revision, 0, "新列表必须一件没有");
+        let other = annotation_objects(&ctx, 2, 10);
         assert_eq!(
             other.lock().unwrap().revision,
             0,
-            "另一块屏不许借这一扇的层"
+            "另一块屏不许借这一扇的列表"
         );
     }
 
@@ -2426,6 +2581,10 @@ mod tests {
             text_input: None,
             thickness_idx: 1,
             color_idx: 0,
+            pencil_points: Vec::new(),
+            erase_points: Vec::new(),
+            moving: None,
+            move_last: pos2(0.0, 0.0),
         };
         map.insert_temp(tool_key(1), (10_u64, ts));
         assert_eq!(load_tool_state(&map, 1, 10).tool, Some(Tool::Rect));
@@ -2620,23 +2779,23 @@ mod tests {
             Rect::from_min_max(pos2(0.0, 0.0), pos2(200.0, 100.0)),
             vec2(200.0, 100.0),
         );
-        let layer = std::sync::Arc::new(std::sync::Mutex::new(Layer::new(200, 100)));
+        let objects = std::sync::Arc::new(std::sync::Mutex::new(ObjectList::new()));
         let mut ts = ToolState {
             tool: Some(Tool::Text),
             text_input: Some((pos2(10.0, 10.0), "你好".to_string())),
             ..ToolState::default()
         };
-        commit_text_input(&mut ts, &layer, field);
+        commit_text_input(&mut ts, &objects, field);
         assert!(ts.text_input.is_none(), "落完输入必须关掉");
-        assert_eq!(layer.lock().unwrap().revision, 1, "落一笔加一");
+        assert_eq!(objects.lock().unwrap().revision, 1, "落一件加一");
         let mut ts2 = ToolState {
             tool: Some(Tool::Text),
             text_input: Some((pos2(10.0, 10.0), "   ".to_string())),
             ..ToolState::default()
         };
-        commit_text_input(&mut ts2, &layer, field);
+        commit_text_input(&mut ts2, &objects, field);
         assert!(ts2.text_input.is_none(), "空白也要关输入");
-        assert_eq!(layer.lock().unwrap().revision, 1, "空白不许落层");
+        assert_eq!(objects.lock().unwrap().revision, 1, "空白不许落层");
     }
 
     /// **形状核查：工具手势全走 point_to_px 漏斗**，不许再有点坐标直喂层函数的旁路

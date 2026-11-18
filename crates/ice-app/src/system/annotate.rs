@@ -41,8 +41,11 @@ pub const PALETTE: [[u8; 4]; 6] = [
 /// 色板六色的下拉文案，与 [`PALETTE`] 同序、红在最前（REQ-003）。
 pub const PALETTE_NAMES: [&str; 6] = ["红", "黄", "蓝", "绿", "白", "黑"];
 
-/// 撤销前像的一块**整数像素**矩形（层内坐标：左上角 + 宽高）。annotate 不碰 egui，
-/// 不用 egui::Rect；落层包围盒夹到层内、按整像素抄前像，撤销时逐像素贴回。
+// ── 旧像素引擎（CHG-016 T-002 起 app 已改走对象路径，不再调用这一套）───────────
+// 暂留作两件事：① H1 逐像素回归的比对参照（render == 旧引擎落像素）；② 真机若报对象
+// 路径有缺陷，可立刻退回接回这条老路（"新码留在仓里不接线"那条纪律）。用户确认对象路径
+// 无误后，在 T-011 收口时连同其专属测试一并删除。在此之前标 allow(dead_code) 不参与 app 构建。
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PxRect {
     pub x: u32,
@@ -51,6 +54,7 @@ pub struct PxRect {
     pub h: u32,
 }
 
+#[allow(dead_code)]
 impl PxRect {
     fn bytes(self) -> usize {
         self.w as usize * self.h as usize * 4
@@ -59,11 +63,13 @@ impl PxRect {
 
 /// 一笔撤销的前像集合（REQ-001）。单击类工具一个 part；铅笔/橡皮一次拖拽累积多个 part
 /// （每段落像素前先抄该段包围盒的前像），松手时整段算一条入栈。
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct UndoEntry {
     pub parts: Vec<(PxRect, RgbaImage)>,
 }
 
+#[allow(dead_code)]
 impl UndoEntry {
     fn bytes(&self) -> usize {
         self.parts.iter().map(|(r, _)| r.bytes()).sum()
@@ -73,11 +79,13 @@ impl UndoEntry {
 /// 撤销栈双上限（REQ-001 / Q-003）：条数封 30、总字节封 64MB，超限从栈首丢最旧。
 /// 一块 4K 整层约 33MB，整层快照 30 步就是 1GB 扛不住——所以只抄脏矩形前像，不快照整层。
 pub const MAX_UNDO_ENTRIES: usize = 30;
+#[allow(dead_code)]
 pub const MAX_UNDO_BYTES: usize = 64 * 1024 * 1024;
 
 /// 一层标注。`revision` 每落一笔加一：显示侧拿它判"要不要重传纹理"（照定格纹理那套缓存读法）。
 /// 可克隆：确认截图时把层的所有权（像素＋撤销栈）clone 一份交给贴图（CHG-015 REQ-002），
 /// 不借遮罩那扇随确认即清的 Arc。
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Layer {
     pub image: RgbaImage,
@@ -89,6 +97,7 @@ pub struct Layer {
     pending: Option<Vec<(PxRect, RgbaImage)>>,
 }
 
+#[allow(dead_code)]
 impl Layer {
     pub fn new(width: u32, height: u32) -> Self {
         Self {
@@ -545,6 +554,7 @@ fn dist_to_segment(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
 
 /// 一条线段（半径 radius 的圆头笔刷）落像素的包围盒，与 [`for_each_covered_pixel`] 的
 /// 遍历范围同式（min−radius−1 .. max+radius+1），撤销前像照这块抄，一个像素不漏。
+#[allow(dead_code)]
 fn segment_bounds(a: (f32, f32), b: (f32, f32), radius: f32) -> (f32, f32, f32, f32) {
     (
         a.0.min(b.0) - radius - 1.0,
@@ -555,6 +565,7 @@ fn segment_bounds(a: (f32, f32), b: (f32, f32), radius: f32) -> (f32, f32, f32, 
 }
 
 /// 一串点（铅笔折线）的包围盒：各点极值外扩半宽 + 一格。空串给一个零盒（不落像素）。
+#[allow(dead_code)]
 fn points_bounds(points: &[(f32, f32)], half: f32) -> (f32, f32, f32, f32) {
     let Some(first) = points.first() else {
         return (0.0, 0.0, 0.0, 0.0);
@@ -766,6 +777,27 @@ impl ObjectList {
                 true
             }
             None => false,
+        }
+    }
+
+    /// 命中测试：从顶（列表尾）往下找第一个"点到落墨几何距离 ≤ tol"的对象，返回下标。
+    /// 只看几何不看 erased（被擦处仍可选中，事实 18）。
+    pub fn hit(&self, pt: (f32, f32), tol: f32) -> Option<usize> {
+        (0..self.objects.len())
+            .rev()
+            .find(|&i| self.objects[i].hit_dist(pt) <= tol)
+    }
+
+    /// 开始拖动一个既有对象：先压一份快照（一次拖动＝一条撤销）；随后 move_object 逐帧挪不再压。
+    pub fn begin_move(&mut self) {
+        self.snapshot();
+    }
+
+    /// 逐帧平移下标 idx 的对象（含其擦除痕迹一起走），bump revision。下标越界不动。
+    pub fn move_object(&mut self, idx: usize, dx: f32, dy: f32) {
+        if let Some(o) = self.objects.get_mut(idx) {
+            o.translate(dx, dy);
+            self.touch();
         }
     }
 }

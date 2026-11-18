@@ -372,6 +372,36 @@ pub enum PinHint {
     DoneThisRun,
 }
 
+/// 一张贴图"还没烧录到底图上"的那份标注（CHG-015 REQ-002）。
+///
+/// 确认截图时若画过标注，除了照旧把层烧进裁图存盘，再多留这一格：`base` 是**未烧录**的裁图，
+/// `layer` 是层的所有权转移（clone 一份像素＋撤销栈，不借遮罩那扇随确认即清的 Arc）。
+/// 显示＝底图＋层合成，复制/保存走同一份，于是"钉住后接着编辑"才有得编辑。
+///
+/// `x0/y0`：裁区在**整屏**冻结帧里的左上角（物理像素）。层是整屏尺寸、底图是选区那一小块，
+/// 合成必须按这个偏移取层像素（`composite_into` 的 x0/y0），否则标注会错位。
+/// 烧录图新建层（REQ-005）时底图与层同尺寸，偏移为 (0,0)。
+#[derive(Debug, Clone)]
+pub struct Anno {
+    pub base: image::RgbaImage,
+    /// 对象列表是**裁区相对坐标**（交接时从整屏坐标平移过），底图就是那块裁区。
+    pub objects: crate::system::annotate::ObjectList,
+}
+
+impl Anno {
+    /// 底图＋对象列表渲染出的标注层合成出一份（显示/复制/保存共用）。
+    /// 对象是裁区相对坐标、底图是裁区，故 `render` 用底图当背景、合成偏移 (0,0)。
+    /// 合成实现永远只有 `composite_into` 一处。字体读不出退回只显底图（罕见，不崩）。
+    pub fn composite(&self) -> image::RgbaImage {
+        let mut img = self.base.clone();
+        if let Ok(metrics) = ice_vision::paint::FileMetrics::open() {
+            let ann = crate::system::annotate::render(&self.objects.objects, &self.base, &metrics);
+            crate::system::annotate::composite_into(&mut img, &ann, 0, 0);
+        }
+        img
+    }
+}
+
 /// 一张钉在屏幕上的图。
 ///
 /// **状态层只存"它存在、它现在在做什么"**：窗口的建/销、几何、带子开合都在 `system::pin`，
@@ -417,6 +447,9 @@ pub struct Pin {
     pub compose_in_flight: Option<RequestId>,
     /// 成品。有它就显示它（REQ-003「原地替换」），没有就显示 `source`。
     pub product: Option<Composed>,
+    /// 未烧录的底图＋标注层（CHG-015 REQ-002）。显示优先级最高（anno > product > source > file）；
+    /// 翻译成品落位时折叠成 `None`（成品已含烧录标注）。`None` = 这张没有可续编辑的标注。
+    pub anno: Option<Anno>,
     /// 译文落好了、等着合成那一版成品。翻译回信里置真，派发后清。
     ///
     /// 为什么要一格"欠着合成"而不是让回信直接派：`apply_outcome` 只做状态，发任务是帧循环
@@ -465,6 +498,7 @@ impl Pin {
             failed_blocks: Vec::new(),
             compose_in_flight: None,
             product: None,
+            anno: None,
             compose_due: false,
             selected: Vec::new(),
         }
@@ -1182,7 +1216,7 @@ impl AppState {
     }
 
     /// 钉住遮罩里确认的那一张（走的是与老流程同一条 `pin_from_history`，不开第二条钉图路）
-    pub fn pin_confirmed_capture(&mut self, path: PathBuf) -> RequestId {
+    pub fn pin_confirmed_capture(&mut self, path: PathBuf, anno: Option<Anno>) -> RequestId {
         // 「原地」那一格在这里兑现：确认这一刻选区在哪，钉出来就在那儿。
         // 换算只在这一处：那块屏的全局原点 + 选区在那块屏里的左上角。
         // 先算再清 `capture`——清完就没有这份几何了。
@@ -1195,7 +1229,12 @@ impl AppState {
             ))
         });
         self.capture = None;
-        self.pin_from_history(path, at)
+        let id = self.pin_from_history(path, at);
+        // 画过标注才留这一格（层非空由调用方判）；空层不建 Anno，回到只持 path 的现状。
+        if let Some(pin) = self.pins.iter_mut().find(|p| p.id == id) {
+            pin.anno = anno;
+        }
+        id
     }
 
     /// 用掉一帧原生重下的配额。成为键盘窗之后提前收手，不再骚扰窗口服务器。
@@ -1226,6 +1265,16 @@ impl AppState {
         &self,
         annotation: Option<&image::RgbaImage>,
     ) -> Option<image::RgbaImage> {
+        let (mut cropped, x, y) = self.crop_base()?;
+        if let Some(layer) = annotation {
+            crate::system::annotate::composite_into(&mut cropped, layer, x, y);
+        }
+        Some(cropped)
+    }
+
+    /// 裁出**未烧录**的底图＋它在整屏冻结帧里的左上角（物理像素）。换算只在这一处
+    /// （`Field::to_pixels`）：`crop_selection` 与 `anno_from_capture` 都经它，偏移不会各算各的。
+    fn crop_base(&self) -> Option<(image::RgbaImage, u32, u32)> {
         let capture = self.capture.as_ref()?;
         let frame = capture.frames.get(capture.screen)?;
         let field = frame.field();
@@ -1239,7 +1288,7 @@ impl AppState {
         if x >= width || y >= height {
             return None;
         }
-        let mut cropped = image::imageops::crop_imm(
+        let cropped = image::imageops::crop_imm(
             frame.image.as_ref(),
             x,
             y,
@@ -1247,10 +1296,26 @@ impl AppState {
             h.min(height - y),
         )
         .to_image();
-        if let Some(layer) = annotation {
-            crate::system::annotate::composite_into(&mut cropped, layer, x, y);
+        Some((cropped, x, y))
+    }
+
+    /// 确认时若画过标注，建一格"未烧录底图＋对象列表"交给贴图（CHG-016 对象模型）。
+    /// 遮罩对象是整屏坐标，交接时平移到**裁区相对**（减裁区左上角 x0/y0），与底图同尺寸。
+    /// 列表 clone 一份（含快照），不借遮罩那扇随确认即清的 Arc。裁不出底图则 `None`。
+    /// **空列表不建 Anno**（修订号 0 = 没动过工具）：回到只持 path 的现状，不留一份空底图。
+    pub fn anno_from_capture(&self, objects: &crate::system::annotate::ObjectList) -> Option<Anno> {
+        if objects.revision == 0 {
+            return None;
         }
-        Some(cropped)
+        let (base, x0, y0) = self.crop_base()?;
+        let mut objs = objects.clone();
+        for o in &mut objs.objects {
+            o.translate(-(x0 as f32), -(y0 as f32));
+        }
+        Some(Anno {
+            base,
+            objects: objs,
+        })
     }
 
     /// 遮罩收尾：**两种终点都不留像素在内存里**（那东西一块屏就是几十 MB）。
@@ -1661,7 +1726,12 @@ impl AppState {
         }
         target.compose_in_flight = None;
         match result {
-            Ok(composed) => target.product = Some(composed),
+            Ok(composed) => {
+                target.product = Some(composed);
+                // 成品已含烧录标注，未烧录那格就此折叠（CHG-015 REQ-002 事实 12）；
+                // 识别底图回信不折叠——source 只是翻译链中间物，显示仍走 anno。
+                target.anno = None;
+            }
             // 画砸了：屏上还是原来那张，失败原因挂在这张的翻译段旁边那一格
             Err(err) => {
                 target.translate_stage = TranslateStage::Done {
@@ -2378,7 +2448,7 @@ mod tests {
             ),
         );
 
-        let id = st.pin_confirmed_capture(PathBuf::from("/tmp/x.png"));
+        let id = st.pin_confirmed_capture(PathBuf::from("/tmp/x.png"), None);
         let pin = st.pins.iter().find(|p| p.id == id).expect("钉完就在集合里");
         assert_eq!(
             pin.at,
@@ -2421,7 +2491,7 @@ mod tests {
         assert_eq!(st.capture_stage, CaptureStage::Cancelled);
 
         // 同一批像素不能既被取消又被钉住
-        st.pin_confirmed_capture(PathBuf::from("/tmp/x.png"));
+        st.pin_confirmed_capture(PathBuf::from("/tmp/x.png"), None);
         assert_eq!(st.pins.len(), 1);
     }
 
@@ -2601,6 +2671,116 @@ mod tests {
             "选区外那道笔迹不许进裁图，无笔迹处与不带层逐像素同"
         );
         assert_eq!(cut.get_pixel(399, 299), plain.get_pixel(399, 299));
+    }
+
+    /// CHG-015 REQ-002：造一扇"冻上整屏＋选区 (200,200)..(600,500)＋层里画一道选区内笔迹"
+    /// 的遮罩，供 anno 各用例复用。选区物理像素 400×300、裁区左上角 (200,200)。
+    fn annotated_capture() -> (AppState, crate::system::annotate::ObjectList) {
+        let mut st = capture_state();
+        st.submit_capture(two_screens()).expect("该发得出");
+        st.apply_frozen(
+            1,
+            vec![Freeze {
+                display: 1,
+                points: Vec2::new(1000.0, 800.0),
+                appkit: Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0)),
+                origin: Pos2::ZERO,
+                image: Arc::new(image::RgbaImage::from_pixel(
+                    3840,
+                    2160,
+                    image::Rgba([5, 6, 7, 255]),
+                )),
+            }],
+        );
+        let field = st.capture.as_ref().unwrap().field().unwrap();
+        let mut sel = crate::system::selection::Selection::fresh();
+        sel.press(&field, Pos2::new(100.0, 100.0), 10.0);
+        sel.drag(&field, Pos2::new(300.0, 250.0));
+        sel.release(&field, Pos2::new(300.0, 250.0));
+        st.apply_selection(0, sel);
+        let mut objects = crate::system::annotate::ObjectList::new();
+        objects.push(crate::system::annotate::AnnoObject {
+            shape: crate::system::annotate::Shape::Line {
+                a: (250.0, 300.0),
+                b: (550.0, 300.0),
+                width: 6.0,
+                color: [220, 40, 40, 255],
+            },
+            erased: Vec::new(),
+        });
+        (st, objects)
+    }
+
+    /// anno 持**未烧录**底图＋裁区相对对象列表：底图与不带对象裁图逐像素同，修订号带过来。
+    #[test]
+    fn anno_keeps_the_unburned_base_and_transfers_revision() {
+        let (st, objects) = annotated_capture();
+        let anno = st.anno_from_capture(&objects).expect("画过就该建得出");
+        let plain = st.crop_selection(None).expect("不带对象裁得出");
+        assert_eq!(anno.base.as_raw(), plain.as_raw(), "底图必须是未烧录那一份");
+        assert_eq!(
+            anno.objects.revision, objects.revision,
+            "对象所有权转移带修订号"
+        );
+        assert_eq!(anno.objects.objects.len(), 1, "一件线对象交接过来");
+    }
+
+    /// 显示档合成（底图＋裁区相对对象 render）与确认时烧录进裁图的那一份（整屏对象 render 后裁）
+    /// **逐像素同**——屏上看到的＝存盘的，且证明裁区相对交接没把对象挪错位。
+    #[test]
+    fn anno_composite_equals_the_burned_crop_pixel_exact() {
+        let Ok(metrics) = ice_vision::paint::FileMetrics::open() else {
+            return;
+        };
+        let (st, objects) = annotated_capture();
+        let anno = st.anno_from_capture(&objects).expect("该建得出");
+        let cap = st.capture.as_ref().unwrap();
+        let frame = cap.frames.get(cap.screen).unwrap().image.clone();
+        let ann_full = crate::system::annotate::render(&objects.objects, &frame, &metrics);
+        let burned = st.crop_selection(Some(&ann_full)).expect("带对象裁得出");
+        assert_eq!(anno.composite().as_raw(), burned.as_raw());
+    }
+
+    /// 空列表（没动过工具，修订号 0）不建 Anno——回到只持 path 的现状，不留空底图。
+    #[test]
+    fn an_empty_object_list_builds_no_anno() {
+        let (st, _objects) = annotated_capture();
+        let empty = crate::system::annotate::ObjectList::new();
+        assert_eq!(empty.revision, 0);
+        assert!(st.anno_from_capture(&empty).is_none());
+    }
+
+    /// 显示优先级：anno > 成品 > 底图。三格都在时屏上必须是 anno 合成那一份。
+    #[test]
+    fn displayed_prefers_anno_over_product_and_source() {
+        let (st, objects) = annotated_capture();
+        let anno = st.anno_from_capture(&objects).expect("该建得出");
+        let mut pin = Pin::for_test(1, PathBuf::from("/tmp/history/pin.png"));
+        let (admitted, _doc) = pixels_and_doc(60, 40);
+        pin.source = Some(admitted);
+        pin.product = Some(a_composed(1));
+        pin.anno = Some(anno.clone());
+        let shown = crate::system::pin::displayed(&pin).expect("屏上得有图");
+        assert_eq!(shown.image().as_raw(), anno.composite().as_raw());
+        assert_eq!(
+            shown.image().width(),
+            400,
+            "anno 档是选区尺寸，不是成品那 4×4"
+        );
+    }
+
+    /// 翻译成品落位即折叠 anno（成品已含烧录标注）；识别底图回信不折叠由 source 不动保证。
+    #[test]
+    fn a_landed_product_folds_the_anno() {
+        let (st, objects) = annotated_capture();
+        let anno = st.anno_from_capture(&objects).expect("该建得出");
+        let mut st = st;
+        let pin = recognized_pin(&mut st);
+        st.pins[0].anno = Some(anno);
+        st.pins[0].compose_in_flight = Some(7);
+        assert!(st.apply_pin_composed(pin, 7, Ok(a_composed(1))));
+        assert!(st.pins[0].anno.is_none(), "成品落位 anno 必须折叠");
+        assert!(st.pins[0].product.is_some());
     }
 
     /// 一块屏都没冻上：那是失败，**不是用户取消**（静默抓屏没有"取消"这一档）。

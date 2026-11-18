@@ -329,18 +329,26 @@ struct Visual {
     texture: egui::TextureHandle,
     /// PNG 的像素尺寸（点由它除以 ppp 得到，见 [`pin_layout`]）
     px: Vec2,
-    /// 缓存的是哪一格：0=原图文件、1=识别带回来的底图、2=成品。换了格就要重建纹理
+    /// 缓存的是哪一格：0=原图文件、1=识别带回来的底图、2=成品、3=未烧录标注（底图＋层）。
+    /// 换了格就要重建纹理
     kind: u8,
+    /// `kind == 3` 时层的修订号：画一笔 revision 变就要重传纹理（CHG-015 REQ-002）。
+    /// 其余格恒 0。
+    revision: u64,
     /// `kind == 0` 时是哪一个文件（换文件要重建）
     source: PathBuf,
 }
 
 /// 这张贴图**此刻屏上显示的是哪一份像素**。
 ///
-/// 顺序是死的：成品优先（原地替换之后屏上就是它），其次识别带回的底图，最后才读文件。
-/// 复制与保存 MUST 用同一份——一边显示译文版、一边把原图交出去，用户下一步粘到别处的
-/// 东西和他刚看到的对不上，那比报错更糟。
+/// 顺序是死的：**未烧录标注（底图＋层合成）最优先**（CHG-015 REQ-002：钉住后接着编辑，
+/// 屏上就得是"底图＋当前层"），其次成品（原地替换之后屏上就是它），再次识别带回的底图，
+/// 最后才读文件。复制与保存 MUST 用同一份——一边显示译文版、一边把原图交出去，用户下一步
+/// 粘到别处的东西和他刚看到的对不上，那比报错更糟。
 pub fn displayed(pin: &crate::state::Pin) -> Option<Display<'_>> {
+    if let Some(anno) = pin.anno.as_ref() {
+        return Some(Display::Owned(anno.composite()));
+    }
     if let Some(product) = pin.product.as_ref() {
         return Some(Display::Owned(product.image.clone()));
     }
@@ -398,17 +406,20 @@ fn size_key(id: u64) -> Id {
 /// 解不开就返回 `None`：这一帧**什么都不画**，而不是画一块白——白块会被当成"图坏过"，
 /// 而贴图的存在与否由状态层说了算，这里画不出来也不该把那张从状态里抹掉。
 fn visual_of(ctx: &egui::Context, pin: &crate::state::Pin) -> Option<Visual> {
-    // 换了来源（原图 → 底图 → 成品）就要重建纹理，所以来源本身是缓存键的一部分
-    let kind = if pin.product.is_some() {
-        2
+    // 换了来源（原图 → 底图 → 成品 → 未烧录标注）就要重建纹理，所以来源本身是缓存键的一部分。
+    // 标注档（kind 3）还要带上层修订号：画一笔 revision 变就重传，否则屏上停在旧那一笔。
+    let (kind, revision) = if let Some(anno) = pin.anno.as_ref() {
+        (3, anno.objects.revision)
+    } else if pin.product.is_some() {
+        (2, 0)
     } else if pin.source.is_some() {
-        1
+        (1, 0)
     } else {
-        0
+        (0, 0)
     };
     let cached = ctx.data_mut(|d| d.get_temp::<Visual>(visual_key(pin.id)));
     if let Some(visual) = cached {
-        if visual.kind == kind && visual.source == pin.path {
+        if visual.kind == kind && visual.source == pin.path && visual.revision == revision {
             return Some(visual);
         }
     }
@@ -429,6 +440,7 @@ fn visual_of(ctx: &egui::Context, pin: &crate::state::Pin) -> Option<Visual> {
         texture,
         px,
         kind,
+        revision,
         source: pin.path.clone(),
     };
     ctx.data_mut(|d| d.insert_temp(visual_key(pin.id), visual.clone()));

@@ -1559,22 +1559,49 @@ impl IceApp {
     /// 裁不出来就说那一句并关掉遮罩——留一扇截不出东西的遮罩在屏上比一次失败更糟。
     fn confirm_capture(&mut self, ctx: &egui::Context) -> Option<std::path::PathBuf> {
         let dir = self.shots_dir.clone()?;
-        // 标注层从根上下文那格取——与遮罩画的是同一份 Arc，不绕帧回传。
-        // 没动过工具就是空层，合成等于不合成（裁图与先前逐像素同）。
-        let layer = self.state.capture.as_ref().and_then(|capture| {
+        // 标注对象列表从根上下文那格取——与遮罩画的是同一份 Arc，不绕帧回传。
+        // 没动过工具就是空列表，合成等于不合成（裁图与先前逐像素同）。
+        let objects = self.state.capture.as_ref().and_then(|capture| {
             let frame = capture.frames.get(capture.screen)?;
-            Some(crate::system::selection::annotation_layer(
+            Some(crate::system::selection::annotation_objects(
                 ctx,
                 frame.display,
                 capture.frozen_id,
-                (frame.image.width(), frame.image.height()),
             ))
         });
-        let locked = layer.as_ref().and_then(|l| l.lock().ok());
-        let Some(image) = self.state.crop_selection(locked.as_ref().map(|g| &g.image)) else {
+        // 有标注才把整屏对象渲染成一张标注层（供裁图烧录，走同一个 render，H1 逐像素同）；
+        // 顺带把对象列表取出来交接给贴图（裁区相对在 anno_from_capture 里换算）。
+        let (ann_image, anno_objects) = {
+            let guard = objects.as_ref().and_then(|o| o.lock().ok());
+            match guard {
+                Some(g) if g.revision > 0 => {
+                    let bg = self
+                        .state
+                        .capture
+                        .as_ref()
+                        .and_then(|c| c.frames.get(c.screen))
+                        .map(|f| &f.image);
+                    let rendered = match (bg, ice_vision::paint::FileMetrics::open()) {
+                        (Some(b), Ok(m)) => {
+                            Some(crate::system::annotate::render(&g.objects, b, &m))
+                        }
+                        _ => None,
+                    };
+                    (rendered, Some(g.clone()))
+                }
+                _ => (None, None),
+            }
+        };
+        let Some(image) = self.state.crop_selection(ann_image.as_ref()) else {
             tracing::warn!("确认时裁不出图：遮罩没收到选区（拖动没进来的话就是这一格）");
             return None;
         };
+        // 画过标注才多留一格"未烧录底图＋对象列表"，供钉住后接着编辑（CHG-016）。
+        // 空列表不建由 anno_from_capture 自己判；必须在 pin_confirmed_capture 清掉 capture
+        // 之前取——裁区几何只活在遮罩开着这段时间。
+        let anno = anno_objects
+            .as_ref()
+            .and_then(|objs| self.state.anno_from_capture(objs));
         let seq = self.state.capture_seq + 1;
         match capture::save_shot(&dir, &image, seq) {
             Ok(path) => {
@@ -1582,7 +1609,7 @@ impl IceApp {
                 // 确认即收尾：像素从状态里撤掉、遮罩那几扇窗跟着关，再走 CHG-009 那条钉图链
                 // （REQ-104）。**「对勾」与「固定」是同一件事**（用户 2026-11-09 晚原话），
                 // 确认这一刻就钉上，不留"已确认还没钉"那一格（上限已去掉，钉图必成）
-                self.state.pin_confirmed_capture(path.clone());
+                self.state.pin_confirmed_capture(path.clone(), anno);
                 self.age_shots();
                 Some(path)
             }
@@ -5276,14 +5303,26 @@ mod tests {
             egui::Rect::from_min_max(egui::pos2(2.0, 3.0), egui::pos2(22.0, 18.0))
         ));
 
-        // 确认前往这一轮的标注层落一笔（选区物理像素 (2,3)..(22,18) 内一条红线）：
+        // 确认前往这一轮的标注对象列表落一件（选区物理像素 (2,3)..(22,18) 内一条红线）：
         // 三出口都走 confirm_capture 这一条路，落盘的图必须带上它（REQ-001 接线）。
+        // 烧录走 render（含文字/序号需本机字体），字体读不出的机器上跳过这一条。
+        let Ok(_m) = ice_vision::paint::FileMetrics::open() else {
+            return;
+        };
         let ctx = egui::Context::default();
-        let layer = crate::system::selection::annotation_layer(&ctx, 1, 1, (40, 30));
-        layer
+        let objects = crate::system::selection::annotation_objects(&ctx, 1, 1);
+        objects
             .lock()
             .unwrap()
-            .line((5.0, 10.0), (20.0, 10.0), 3.0, [220, 40, 40, 255]);
+            .push(crate::system::annotate::AnnoObject {
+                shape: crate::system::annotate::Shape::Line {
+                    a: (5.0, 10.0),
+                    b: (20.0, 10.0),
+                    width: 3.0,
+                    color: [220, 40, 40, 255],
+                },
+                erased: Vec::new(),
+            });
         let path = app.confirm_capture(&ctx).expect("确认该裁得出一张");
         assert!(path.exists(), "确认之前不许落盘，确认之后必须落盘");
         let saved = image::open(&path).expect("落盘的该读得回").to_rgba8();

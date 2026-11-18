@@ -24,8 +24,10 @@
         "REQ-002"
       ],
       "repo": "ice-translator",
-      "status": "todo",
-      "code_refs": []
+      "status": "done",
+      "code_refs": [
+        "crates/ice-app/src/system/annotate.rs"
+      ]
     },
     {
       "id": "T-003",
