@@ -3,7 +3,7 @@
   "id": "CHG-016",
   "title": "标注对象模型：可选中二次编辑、全控制点、跨重启持久化（对齐 某截图工具，取代 CHG-014/015 像素层）",
   "version": "v0.2",
-  "status": "IMPLEMENTING",
+  "status": "SPEC_REVIEW",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -152,20 +152,13 @@
       "at": "2026-11-18T10:00:07+00:00",
       "action": "task-done",
       "detail": "T-004"
+    },
+    {
+      "at": "2026-11-19T01:45:47+00:00",
+      "action": "SPEC_DEVIATION",
+      "detail": "公开仓脱敏：spec 文本里的竞品名与'第三方/研究'措辞改为中性，语义未变，重锚批准哈希"
     }
   ],
-  "approval": {
-    "hash": "ad080bea546cf52a6a2fb3606a690e144d40cc5f800b8790ea332758ab8873ae",
-    "version": "v0.2",
-    "by": "Filthy-ice",
-    "reference": "用户2026-11-18：橡皮部分擦随对象移动＋马赛克改涂抹＋笔刷光标圈",
-    "at": "2026-11-18T08:55:47+00:00",
-    "snapshot": "approvals/v0.2-ad080bea546cf52a6a2fb3606a690e144d40cc5f800b8790ea332758ab8873ae.md",
-    "scope": "local-delivery",
-    "context_hash": "d5195664324452d6ea87042b72060b67d791c4d2a1420858a31984f2701b2391",
-    "branches": {
-      "ice-translator": "main"
-    }
-  },
-  "plan_hash": "d52b716674c42a760ce45d02f3fbb0ecd5ac42ae5be75a6aefb0d687d244255b"
+  "approval": null,
+  "plan_hash": null
 }

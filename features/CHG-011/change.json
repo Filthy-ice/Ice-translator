@@ -3,7 +3,7 @@
   "id": "CHG-011",
   "title": "贴图收尾：带子改浮空药丸 + 首用提示（以后不再提示）",
   "version": "v0.1",
-  "status": "IMPLEMENTING",
+  "status": "SPEC_REVIEW",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -188,20 +188,13 @@
         "verification": "V-008",
         "result": "passed"
       }
+    },
+    {
+      "at": "2026-11-19T01:46:36+00:00",
+      "action": "SPEC_DEVIATION",
+      "detail": "公开仓脱敏：竞品名与'第三方/研究'措辞改中性，语义未变，重锚批准哈希"
     }
   ],
-  "approval": {
-    "hash": "b96416c677dad0355940d9c636edca045404efb93b40338e0a9525297e6d61f6",
-    "version": "v0.1",
-    "by": "你",
-    "reference": "2026-11-10 原话：按钮的框也很丑，应该做成平时只有字，鼠标移上去整体变淡浮起",
-    "at": "2026-11-10T03:27:10+00:00",
-    "snapshot": "approvals/v0.1-b96416c677dad0355940d9c636edca045404efb93b40338e0a9525297e6d61f6.md",
-    "scope": "local-delivery",
-    "context_hash": "001a5d33f095acfdce932efb17750b246f0c260ecd0d8ba9ff410be912149a52",
-    "branches": {
-      "ice-translator": "main"
-    }
-  },
-  "plan_hash": "69b18d4acb9bafc3c14fb6493726b17d9b0173fa1e6993182730bc9c4bcdc954"
+  "approval": null,
+  "plan_hash": null
 }

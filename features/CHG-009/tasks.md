@@ -1,6 +1,6 @@
 Change: CHG-009
 Version: v0.6
-Spec-Hash: 890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f
+Spec-Hash: UNAPPROVED
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [ ] T-001 真机取证只剩一条：**H9**（Retina 缩放换算——本机上下两块屏都不是 HiDPI，量不出这条，需要他接一块内置屏或高 DPI 外接）。**H6 已于 2026-11-06 上午由他在机器前按完并闭合（V-020）**：六轮共 48 次派发命中（`⌃⌥` 系列 15、`⌃⌥⌘` 系列 6 与另两轮共 8、裸 `F1/F2/F3` 各 7 = 21、停摆态两组各 1），全部落在 `GetEventDispatcherTarget()` 那份 handler（装在 app target 的那份一次都没收到，事实 36），默认那三把裸键按得响（事实 39）⇒ **H6 那一格从"待证"改成"已证 + 写法定死"**，剩下的只是真应用里的 W-5.1 手感复核（探针不是真应用）。 | ice-translator | REQ-002, REQ-006, REQ-010

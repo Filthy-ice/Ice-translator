@@ -3,7 +3,7 @@
   "id": "CHG-010",
   "title": "自绘截图选区层：先冻结整屏、再拖可调选框、确认后钉住",
   "version": "v0.5",
-  "status": "IMPLEMENTING",
+  "status": "SPEC_REVIEW",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -681,20 +681,13 @@
         "verification": "V-005",
         "result": "passed"
       }
+    },
+    {
+      "at": "2026-11-19T01:46:36+00:00",
+      "action": "SPEC_DEVIATION",
+      "detail": "公开仓脱敏：竞品名与'第三方/研究'措辞改中性，语义未变，重锚批准哈希"
     }
   ],
-  "approval": {
-    "hash": "a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16",
-    "version": "v0.5",
-    "by": "filthy-ice",
-    "reference": "会话 2026-11-09：认窗+esc 两句改判已按原话写入",
-    "at": "2026-11-09T03:37:52+00:00",
-    "snapshot": "approvals/v0.5-a17322e2ac3d254dc148b9dd625c7d7e499215870ea45872cad7611459c1be16.md",
-    "scope": "local-delivery",
-    "context_hash": "c8a2979fd992e457cab16f6b534b813bdeb5a8f30f8940a39683c2c44af1fbfd",
-    "branches": {
-      "ice-translator": "main"
-    }
-  },
-  "plan_hash": "2952e339fec008eb0098c02ded4637c177d7dd0bf9500d342b18ffcb429252e7"
+  "approval": null,
+  "plan_hash": null
 }

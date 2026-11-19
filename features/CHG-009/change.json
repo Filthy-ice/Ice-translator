@@ -3,7 +3,7 @@
   "id": "CHG-009",
   "title": "区域截图与钉屏贴图（FR-2.10 扩体）：框选 → 钉住 → 点一下才译",
   "version": "v0.6",
-  "status": "IMPLEMENTING",
+  "status": "SPEC_REVIEW",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -518,20 +518,13 @@
         "verification": "V-007",
         "result": "passed"
       }
+    },
+    {
+      "at": "2026-11-19T01:46:36+00:00",
+      "action": "SPEC_DEVIATION",
+      "detail": "公开仓脱敏：竞品名与'第三方/研究'措辞改中性，语义未变，重锚批准哈希"
     }
   ],
-  "approval": {
-    "hash": "890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f",
-    "version": "v0.6",
-    "by": "filthy-ice",
-    "reference": "2026-11-06 Qoder Desktop 会话：用户看过待批 33/34 后批准 CHG-009@v0.6（热键族 48 次派发证毕、handler 落点与回调叫循环定死、打包按他的顺序延后）",
-    "at": "2026-11-06T03:50:10+00:00",
-    "snapshot": "approvals/v0.6-890b9cbffdd4202a56e9f20d1e5ce2e9c33454cc45ce59d269c023051a26137f.md",
-    "scope": "local-delivery",
-    "context_hash": "7f28f80273a46342ecec3e344ac14a70cd77a31e19044be8b44f19bd9251bb25",
-    "branches": {
-      "ice-translator": "main"
-    }
-  },
-  "plan_hash": "6edab3b844c6de380c6e165de2f89e6cac2659a9a6985d67332c1ed58ad03081"
+  "approval": null,
+  "plan_hash": null
 }

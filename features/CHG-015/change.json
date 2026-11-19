@@ -3,7 +3,7 @@
   "id": "CHG-015",
   "title": "标注撤销与钉住后再编辑",
   "version": "v0.1",
-  "status": "IMPLEMENTING",
+  "status": "SPEC_REVIEW",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -99,20 +99,13 @@
       "at": "2026-11-17T08:53:00+00:00",
       "action": "task-done",
       "detail": "T-002"
+    },
+    {
+      "at": "2026-11-19T01:46:36+00:00",
+      "action": "SPEC_DEVIATION",
+      "detail": "公开仓脱敏：竞品名与'第三方/研究'措辞改中性，语义未变，重锚批准哈希"
     }
   ],
-  "approval": {
-    "hash": "5ce8c5732953664427d6777d8ca283636af4cabbc6ead11fa9cc713826a26a8b",
-    "version": "v0.1",
-    "by": "你",
-    "reference": "你这一句的出处",
-    "at": "2026-11-17T07:50:54+00:00",
-    "snapshot": "approvals/v0.1-5ce8c5732953664427d6777d8ca283636af4cabbc6ead11fa9cc713826a26a8b.md",
-    "scope": "local-delivery",
-    "context_hash": "ecb3f62cdab25b032914b5c294e0ee2b671177ae6add2309090f2c7a6ef47cd6",
-    "branches": {
-      "ice-translator": "main"
-    }
-  },
-  "plan_hash": "7e40121b798d250fe7029c6f9d0a9d6e99c39a9964cccc9e94f82a8e194b7172"
+  "approval": null,
+  "plan_hash": null
 }
