@@ -3,7 +3,7 @@
   "id": "CHG-016",
   "title": "标注对象模型：可选中二次编辑、全控制点、跨重启持久化（对齐 某截图工具，取代 CHG-014/015 像素层）",
   "version": "v0.2",
-  "status": "SPEC_REVIEW",
+  "status": "APPROVED",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -157,8 +157,37 @@
       "at": "2026-11-19T01:45:47+00:00",
       "action": "SPEC_DEVIATION",
       "detail": "公开仓脱敏：spec 文本里的竞品名与'第三方/研究'措辞改为中性，语义未变，重锚批准哈希"
+    },
+    {
+      "at": "2026-11-19T01:57:26+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "80b0479f8b401dc96a83af44c9f2d3d50fd9a65585bed6287e6f97ef24ebf346",
+        "version": "v0.2",
+        "by": "Filthy-ice",
+        "reference": "脱敏重锚",
+        "at": "2026-11-19T01:57:26+00:00",
+        "snapshot": "approvals/v0.2-80b0479f8b401dc96a83af44c9f2d3d50fd9a65585bed6287e6f97ef24ebf346.md",
+        "scope": "local-delivery",
+        "context_hash": "f8d60ab6ede4e554bc8300c9b3737a039332aed414657e3561fda84973f04022",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
     }
   ],
-  "approval": null,
+  "approval": {
+    "hash": "80b0479f8b401dc96a83af44c9f2d3d50fd9a65585bed6287e6f97ef24ebf346",
+    "version": "v0.2",
+    "by": "Filthy-ice",
+    "reference": "脱敏重锚",
+    "at": "2026-11-19T01:57:26+00:00",
+    "snapshot": "approvals/v0.2-80b0479f8b401dc96a83af44c9f2d3d50fd9a65585bed6287e6f97ef24ebf346.md",
+    "scope": "local-delivery",
+    "context_hash": "f8d60ab6ede4e554bc8300c9b3737a039332aed414657e3561fda84973f04022",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
   "plan_hash": null
 }

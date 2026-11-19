@@ -1,6 +1,6 @@
 Change: CHG-015
 Version: v0.1
-Spec-Hash: UNAPPROVED
+Spec-Hash: ac7c69999e971ee5f3cbcc613df42e632e783b47f2f115541dcd2eeef9b3286f
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [x] T-001 annotate.rs 撤销栈：UndoEntry 脏矩形前像（单击一 part、拖拽整段累积）、落层统一先抄前像、undo() 逐像素贴回 bump revision、30 条+64MB 双上限丢最旧；无头断言恢复逐像素精确（H1）、铅笔三段一笔撤、橡皮擦痕可撤、双上限、空栈不动 | ice-translator | REQ-001

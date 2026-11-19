@@ -3,7 +3,7 @@
   "id": "CHG-009",
   "title": "区域截图与钉屏贴图（FR-2.10 扩体）：框选 → 钉住 → 点一下才译",
   "version": "v0.6",
-  "status": "SPEC_REVIEW",
+  "status": "APPROVED",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -523,8 +523,37 @@
       "at": "2026-11-19T01:46:36+00:00",
       "action": "SPEC_DEVIATION",
       "detail": "公开仓脱敏：竞品名与'第三方/研究'措辞改中性，语义未变，重锚批准哈希"
+    },
+    {
+      "at": "2026-11-19T01:57:27+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "f08b72302fcf9864297894202527d308da8addce1b8615ca3906a6912c447a01",
+        "version": "v0.6",
+        "by": "Filthy-ice",
+        "reference": "脱敏重锚",
+        "at": "2026-11-19T01:57:27+00:00",
+        "snapshot": "approvals/v0.6-f08b72302fcf9864297894202527d308da8addce1b8615ca3906a6912c447a01.md",
+        "scope": "local-delivery",
+        "context_hash": "66cac82fa52529d3a8505c1719ff85114d0c7bab558eed450ede449910d479a7",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
     }
   ],
-  "approval": null,
+  "approval": {
+    "hash": "f08b72302fcf9864297894202527d308da8addce1b8615ca3906a6912c447a01",
+    "version": "v0.6",
+    "by": "Filthy-ice",
+    "reference": "脱敏重锚",
+    "at": "2026-11-19T01:57:27+00:00",
+    "snapshot": "approvals/v0.6-f08b72302fcf9864297894202527d308da8addce1b8615ca3906a6912c447a01.md",
+    "scope": "local-delivery",
+    "context_hash": "66cac82fa52529d3a8505c1719ff85114d0c7bab558eed450ede449910d479a7",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
   "plan_hash": null
 }

@@ -3,7 +3,7 @@
   "id": "CHG-015",
   "title": "标注撤销与钉住后再编辑",
   "version": "v0.1",
-  "status": "SPEC_REVIEW",
+  "status": "APPROVED",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -104,8 +104,37 @@
       "at": "2026-11-19T01:46:36+00:00",
       "action": "SPEC_DEVIATION",
       "detail": "公开仓脱敏：竞品名与'第三方/研究'措辞改中性，语义未变，重锚批准哈希"
+    },
+    {
+      "at": "2026-11-19T01:57:29+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "ac7c69999e971ee5f3cbcc613df42e632e783b47f2f115541dcd2eeef9b3286f",
+        "version": "v0.1",
+        "by": "Filthy-ice",
+        "reference": "脱敏重锚",
+        "at": "2026-11-19T01:57:29+00:00",
+        "snapshot": "approvals/v0.1-ac7c69999e971ee5f3cbcc613df42e632e783b47f2f115541dcd2eeef9b3286f.md",
+        "scope": "local-delivery",
+        "context_hash": "ecb3f62cdab25b032914b5c294e0ee2b671177ae6add2309090f2c7a6ef47cd6",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
     }
   ],
-  "approval": null,
+  "approval": {
+    "hash": "ac7c69999e971ee5f3cbcc613df42e632e783b47f2f115541dcd2eeef9b3286f",
+    "version": "v0.1",
+    "by": "Filthy-ice",
+    "reference": "脱敏重锚",
+    "at": "2026-11-19T01:57:29+00:00",
+    "snapshot": "approvals/v0.1-ac7c69999e971ee5f3cbcc613df42e632e783b47f2f115541dcd2eeef9b3286f.md",
+    "scope": "local-delivery",
+    "context_hash": "ecb3f62cdab25b032914b5c294e0ee2b671177ae6add2309090f2c7a6ef47cd6",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
   "plan_hash": null
 }

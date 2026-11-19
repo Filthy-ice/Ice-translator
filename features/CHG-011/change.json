@@ -3,7 +3,7 @@
   "id": "CHG-011",
   "title": "贴图收尾：带子改浮空药丸 + 首用提示（以后不再提示）",
   "version": "v0.1",
-  "status": "SPEC_REVIEW",
+  "status": "APPROVED",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -193,8 +193,37 @@
       "at": "2026-11-19T01:46:36+00:00",
       "action": "SPEC_DEVIATION",
       "detail": "公开仓脱敏：竞品名与'第三方/研究'措辞改中性，语义未变，重锚批准哈希"
+    },
+    {
+      "at": "2026-11-19T01:57:29+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "e2567d90c527d1f2b27a33bc5ace190793e3f5661779587b5b613779d3915873",
+        "version": "v0.1",
+        "by": "Filthy-ice",
+        "reference": "脱敏重锚",
+        "at": "2026-11-19T01:57:29+00:00",
+        "snapshot": "approvals/v0.1-e2567d90c527d1f2b27a33bc5ace190793e3f5661779587b5b613779d3915873.md",
+        "scope": "local-delivery",
+        "context_hash": "39d7cf7d89ec2717414042a812014e368d7ccd68f7e319cf72dc731620ef509c",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
     }
   ],
-  "approval": null,
+  "approval": {
+    "hash": "e2567d90c527d1f2b27a33bc5ace190793e3f5661779587b5b613779d3915873",
+    "version": "v0.1",
+    "by": "Filthy-ice",
+    "reference": "脱敏重锚",
+    "at": "2026-11-19T01:57:29+00:00",
+    "snapshot": "approvals/v0.1-e2567d90c527d1f2b27a33bc5ace190793e3f5661779587b5b613779d3915873.md",
+    "scope": "local-delivery",
+    "context_hash": "39d7cf7d89ec2717414042a812014e368d7ccd68f7e319cf72dc731620ef509c",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
   "plan_hash": null
 }

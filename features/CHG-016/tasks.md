@@ -1,6 +1,6 @@
 Change: CHG-016
 Version: v0.2
-Spec-Hash: UNAPPROVED
+Spec-Hash: 80b0479f8b401dc96a83af44c9f2d3d50fd9a65585bed6287e6f97ef24ebf346
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [x] T-001 annotate.rs 对象引擎骨架：AnnoObject 枚举（Rect/Arrow/Line/Pencil/Serial/Text/Mosaic，每件带 erased:Vec<EraseStamp> 对象相对坐标擦除痕迹，derive Clone/Debug/Serialize/Deserialize/PartialEq）+ ObjectList{objects,revision,undo,redo,next_serial} 唯一事实源 + render(objects,background,w,h) 按列表序逐件画几何进 tile→用该件 erased 对自身 destination-out 减 alpha→合成，复用既有光栅基元；Layer 降级为 render 派生缓存（image+revision），删旧脏矩形前像那套（undo_stack/pending/before_image/stroke）；composite_into 不动；无头断言空列表全透明、单件 render==旧落像素、带 erased 件擦除随对象平移、合成单一定义、坐标物理像素 | ice-translator | REQ-001
