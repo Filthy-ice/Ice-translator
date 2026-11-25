@@ -34,6 +34,8 @@
 //! 铺满命令本身不慢——日志实测从下发到几何落位 4ms，慢的全在这段等待里。所以 [`hand_over`] 是两件事：
 //! 记一笔 + `request_repaint()`，与 `super::panel` 那条面板回调末尾同一纪律（"没有这条就没人来读"）。
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))] // 双击标题栏（NSWindow 那一套），Linux 档没有等价入口；纯函数（`title_band`/`in_band`）仍被测试覆盖
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// 带子两端各留的余量（pt）：贴着红绿灯边沿的那几像素不算"标题栏中间"。

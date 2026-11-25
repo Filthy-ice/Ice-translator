@@ -1,0 +1,7 @@
+T-014 门户另存为（2026-11-25 23:0x，用户在场，人工点"取消"）
+- SaveFile 受理：/org/freedesktop/portal/desktop/request/1_231/icesave56096
+- parent_window="x11:0xe004ee"（真实主窗）→ 对话框与主窗关联成功
+- 用户点取消 → 收到 Response: code=1，keys=["uris"]，uris=[]
+- 修正上一轮结论：不是"门户不回信"，而是旧探针从没让对话框真正结束（Request.Close/Esc 未生效）
+- 实现：portal::save_file(parent, name) → SaveReply{Picked|Cancelled|Unreachable|Failed}；
+  panel::request_save 在线程里调用，回信进既有 Reply 通道；parent 由 window_x11::parent_window() 提供

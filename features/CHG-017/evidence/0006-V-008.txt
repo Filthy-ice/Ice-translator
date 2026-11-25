@@ -1,0 +1,10 @@
+T-014 / V-008 Linux 侧状态（2026-11-25 真机，无 GUI 交互）
+1) 截图→定格→框选→钉住→确认：已通（用户实测 + 日志 画面已冻结 screens=1）
+2) 复制图片：arboard 走 X11 协议（日志 WARN 回退那一行），可用
+3) 另存为（门户 FileChooser.SaveFile）：
+   - 调用受理，返回请求路径 /org/freedesktop/portal/desktop/request/1_195/iceprobe1
+   - parent_window="" → xdg-desktop-portal-gnome 报 Failed to associate portal window with parent window
+   - parent_window="x11:0xe002dd" → 关联成功
+   - 之后用户关闭或 Request.Close，均收不到 org.freedesktop.portal.Request.Response（同一订阅在 Screenshot 上正常）
+   - handle_token 只许 [A-Za-z_][A-Za-z0-9_]*，带 '-' 被拒：Error.InvalidArgument: Invalid token
+结论：面板这一格保留 Unavailable；下一轮用 gdbus 手工对话定位 Response 的发出方与路径

@@ -25,7 +25,13 @@ use std::sync::OnceLock;
 
 use ab_glyph_rasterizer::{Rasterizer, point};
 use ice_core::document::PixelRect;
+#[cfg(not(target_os = "linux"))]
 use ice_core::font::{GOTHIC_PATH, HEITI_PATH, HEITI_SC_FACE_INDEX};
+#[cfg(target_os = "linux")]
+use ice_core::font::{
+    LINUX_CJK_CANDIDATES, LINUX_LATIN_PATH, LINUX_MISSING_HINT, LINUX_MONO_FAMILY_WORD,
+    LINUX_SC_FAMILY_SUFFIX,
+};
 use image::{Rgba, RgbaImage};
 use owned_ttf_parser::{Face, GlyphId, OutlineBuilder};
 
@@ -44,16 +50,121 @@ const FEATHER_PX: i64 = 1;
 
 /// 主字体字节。读不到就存空表，让 `Face::parse` 自然失败、在 [`FileMetrics::open`] 一处出口报成
 /// `VisionError::Font`；`OnceLock` 只填一次，所以磁盘故障不会被每个块重试一遍。
+#[cfg(not(target_os = "linux"))]
 static HEITI_BYTES: OnceLock<Vec<u8>> = OnceLock::new();
 /// 后备字体字节。**读不到不是错误**：少一支字体只是"某些字符没人能画"，计数照实报。
+#[cfg(not(target_os = "linux"))]
 static GOTHIC_BYTES: OnceLock<Vec<u8>> = OnceLock::new();
 
+#[cfg(not(target_os = "linux"))]
 fn heiti_bytes() -> &'static [u8] {
     HEITI_BYTES.get_or_init(|| std::fs::read(HEITI_PATH).unwrap_or_default())
 }
 
+#[cfg(not(target_os = "linux"))]
 fn gothic_bytes() -> &'static [u8] {
     GOTHIC_BYTES.get_or_init(|| std::fs::read(GOTHIC_PATH).unwrap_or_default())
+}
+
+/// Linux 侧的主字体：哪一支文件的第几面（CHG-017 REQ-008）。
+///
+/// 与 mac 那两行的差别只在**面号是选出来的**：`ice_core::font::HEITI_SC_FACE_INDEX` 是
+/// 一个能钉死的常量，因为苹果那支的面序稳定；Noto 的 `.ttc` 把 JP/KR/SC/TC/HK 装在同一份文件里
+/// （本机实测 Regular 与 Bold 都是第 2 面 = `Noto Sans CJK SC`，第 0 面 = JP），面序属于发行版
+/// 打包而不是字体规范，钉死就等于赌。所以这里缓存的是"选面之后"那一条结果。
+#[cfg(target_os = "linux")]
+struct Resolved {
+    path: &'static str,
+    bytes: Vec<u8>,
+    face: u32,
+}
+
+#[cfg(target_os = "linux")]
+static PRIMARY_BYTES: OnceLock<Option<Resolved>> = OnceLock::new();
+/// 后备拉丁字体字节。同 mac 的 `GOTHIC_BYTES`：**读不到不是错误**，只是覆盖面变窄。
+#[cfg(target_os = "linux")]
+static LATIN_BYTES: OnceLock<Vec<u8>> = OnceLock::new();
+
+#[cfg(target_os = "linux")]
+fn latin_bytes() -> &'static [u8] {
+    LATIN_BYTES.get_or_init(|| std::fs::read(LINUX_LATIN_PATH).unwrap_or_default())
+}
+
+/// 主字体的 `(字节, 面号, 路径)`；`None` 表示这台机器一支候选都没有或都解析不出面。
+///
+/// 只在第一次合成时扫一遍盘（`OnceLock`），之后每支贴图免费——与 mac 那条"磁盘故障不会被
+/// 每个块重试一遍"是同一个理由。
+#[cfg(target_os = "linux")]
+fn primary_font() -> Option<(&'static [u8], u32, &'static str)> {
+    let resolved = PRIMARY_BYTES
+        .get_or_init(|| {
+            LINUX_CJK_CANDIDATES.iter().find_map(|&path| {
+                let bytes = std::fs::read(path).ok()?;
+                let face = pick_primary_face(&bytes)?;
+                Some(Resolved { path, bytes, face })
+            })
+        })
+        .as_ref()?;
+    Some((&resolved.bytes[..], resolved.face, resolved.path))
+}
+
+/// 这一支文件里该用第几面。逐面试，**第一个合格的面**就是答案（单面字体天然落在 0）。
+///
+/// 公开给界面侧（`ice-app::fonts`）复用：egui 的 `FontData` 与自绘度量必须落在**同一面的**
+/// 同一支字体上，否则屏幕上看到的字与量出来的框宽是两件事——这正是 `ice_core::font` 模块头
+/// 那条纪律的 Linux 版本。
+#[cfg(target_os = "linux")]
+pub fn pick_primary_face(bytes: &[u8]) -> Option<u32> {
+    // 上限只是防"文件尾部塞了几十张表"把启动拖住：真字体到 `Err` 就停（Noto 是 8 面）
+    (0..MAX_FONT_FACES).find(|&index| face_is_primary(bytes, index))
+}
+
+/// 面数上限：本机 Noto 的两个 `.ttc` 各 8 面（`cjk_face_probe` 实测），留一倍余量。
+#[cfg(target_os = "linux")]
+const MAX_FONT_FACES: u32 = 16;
+
+#[cfg(target_os = "linux")]
+fn face_is_primary(bytes: &[u8], index: u32) -> bool {
+    let Ok(face) = Face::parse(bytes, index) else {
+        return false;
+    };
+    match family_name(&face) {
+        // 带地区后缀的面：只认简体（`Noto Sans CJK JP` 也覆盖全部常用简体字，选错不崩、
+        // 不缺字，只是"直/骨/门"写成日式——与 mac 那次"第 0 面是繁体"完全同型的坑）
+        Some(name) if carries_region_marker(&name) => is_simplified_family(&name),
+        // 没有地区后缀（`Droid Sans Fallback` 这种单面 fallback）：能画汉字就认
+        Some(_) => face.glyph_index('译').is_some(),
+        None => false,
+    }
+}
+
+/// name 表里的家族名：优先 16（preferred family），退回 1（family）。
+#[cfg(target_os = "linux")]
+fn family_name(face: &Face<'_>) -> Option<String> {
+    for preferred in [16u16, 1] {
+        for name in face.names().into_iter() {
+            if name.name_id == preferred {
+                return name.to_string();
+            }
+        }
+    }
+    None
+}
+
+/// 族名里带这些地区后缀之一，说明这支字体是**分面**卖的，必须选对那一面
+#[cfg(target_os = "linux")]
+const REGION_MARKERS: &[&str] = &["JP", "KR", "SC", "TC", "HK"];
+
+#[cfg(target_os = "linux")]
+fn carries_region_marker(name: &str) -> bool {
+    REGION_MARKERS.iter().any(|suffix| name.ends_with(suffix))
+}
+
+/// 简体中文面：**后缀是 SC 且不是等宽面**（`Noto Sans Mono CJK SC` 的拉丁是等宽的，
+/// 拿它度量正文会把整行英文拉宽）。**纯字符串判定**，所以这两条拒绝都测得到。
+#[cfg(target_os = "linux")]
+fn is_simplified_family(name: &str) -> bool {
+    !name.contains(LINUX_MONO_FAMILY_WORD) && name.trim().ends_with(LINUX_SC_FAMILY_SUFFIX)
 }
 
 /// 解析一支字体的一面。错误文字里只有路径与面号，没有任何用户内容（NFR-3）。
@@ -63,6 +174,10 @@ fn face_from<'a>(bytes: &'a [u8], index: u32, path: &str) -> VisionResult<Face<'
 }
 
 /// 真字体那把尺子，实现 [`typeset::Metrics`]。一次合成开一个实例，实例内不重复解析。
+///
+/// 字段名沿用 mac 那两支字体的名字；Linux 上它们装的是"现选出的简体面 / 纯拉丁后备"
+/// （见 `open()`）。改名为 `primary`/`fallback` 会连带动到本模块十几处 mac 已验收的取值路径，
+/// 而 CHG-017 的平台边界是"mac 分支逐字不动"，所以这里留名字、在这里说明对应关系。
 pub struct FileMetrics {
     heiti: Face<'static>,
     gothic: Option<Face<'static>>,
@@ -71,11 +186,25 @@ pub struct FileMetrics {
 impl FileMetrics {
     /// 打开本机字体。主字体读不到或 face 号对不上 → `VisionError::Font`（不 panic，也不静默换一支）。
     ///
-    /// 后备读不到只让 `gothic` 为空——那是覆盖面变窄，不是不能工作。
+    /// 后备读不到只让 `gothic` 为空——那是覆盖面变窄，不是不能工作。Linux 那一条（CHG-017
+    /// REQ-008）唯一的差别是面号来自 [`primary_font`] 的现选，以及候选全落空时报的是
+    /// **可行动**的那句话（"装 fonts-noto-cjk"），而不是把 `VisionError::Font` 冒在链中间让用户猜。
     pub fn open() -> VisionResult<FileMetrics> {
-        let heiti = face_from(heiti_bytes(), HEITI_SC_FACE_INDEX, HEITI_PATH)?;
-        let gothic = face_from(gothic_bytes(), 0, GOTHIC_PATH).ok();
-        Ok(FileMetrics { heiti, gothic })
+        #[cfg(not(target_os = "linux"))]
+        {
+            let heiti = face_from(heiti_bytes(), HEITI_SC_FACE_INDEX, HEITI_PATH)?;
+            let gothic = face_from(gothic_bytes(), 0, GOTHIC_PATH).ok();
+            Ok(FileMetrics { heiti, gothic })
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let Some((bytes, face, path)) = primary_font() else {
+                return Err(VisionError::Font(LINUX_MISSING_HINT.to_string()));
+            };
+            let heiti = face_from(bytes, face, path)?;
+            let gothic = face_from(latin_bytes(), 0, LINUX_LATIN_PATH).ok();
+            Ok(FileMetrics { heiti, gothic })
+        }
     }
 
     /// 这个字由哪一面画、字形号是多少；`None` 就是"两支本机字体都没有这个字"。
@@ -611,6 +740,165 @@ mod tests {
         let mut untouched = Rgba([7, 7, 7, 0]);
         blend(&mut untouched, WHITE, 0.0);
         assert_eq!(untouched, Rgba([7, 7, 7, 0]));
+    }
+
+    /// Linux 的选面规则（CHG-017 REQ-008）。族名用本机 `cjk_face_probe` 的实测原文，
+    /// 不是编出来的样例：`NotoSansCJK-Regular.ttc` 八面里第 0/1/2/3/4 面是 JP/KR/SC/TC/HK，
+    /// 第 5~7 面是等宽版
+    #[cfg(target_os = "linux")]
+    mod noto {
+        use super::*;
+
+        /// 分面字体只认简体那一面。JP 面**同样覆盖全部常用简体字**，选错不崩、不缺字，
+        /// 只是"直/骨/门"写成日式——与 mac 那次"第 0 面是繁体"是同一种无声错误
+        #[test]
+        fn only_the_simplified_face_of_a_regional_font_qualifies() {
+            assert!(is_simplified_family("Noto Sans CJK SC"));
+            for wrong in [
+                "Noto Sans CJK JP",
+                "Noto Sans CJK KR",
+                "Noto Sans CJK TC",
+                "Noto Sans CJK HK",
+            ] {
+                assert!(!is_simplified_family(wrong), "{wrong} 不该被当成简体面");
+            }
+        }
+
+        /// 等宽面不做正文主字体：它的拉丁是等宽的，`typeset` 量出来的行宽会比实际排版宽，
+        /// 回填框就会整体错位一格
+        #[test]
+        fn the_monospace_face_never_becomes_the_primary() {
+            assert!(!is_simplified_family("Noto Sans Mono CJK SC"));
+            assert!(carries_region_marker("Noto Sans Mono CJK SC"));
+        }
+
+        /// 没有地区后缀的单面字体（`Droid Sans Fallback`）不该被后缀规则挡在门外——
+        /// 它是某些旧桌面上唯一的中文字体
+        #[test]
+        fn a_font_without_region_suffix_is_judged_by_its_glyphs_not_its_name() {
+            assert!(!carries_region_marker("Droid Sans Fallback"));
+            assert!(carries_region_marker("Noto Sans CJK SC"));
+        }
+
+        /// 真盘上的候选：选出来的那一面**名字必须是 SC**。这条是"面号不钉死"这件事的
+        /// 唯一防线——改成 `(path, 0)` 的写法在本机不会崩，只会悄悄用 JP 面画字
+        #[test]
+        fn the_face_it_picks_on_this_machine_is_the_simplified_one() {
+            let Some(path) = LINUX_CJK_CANDIDATES
+                .iter()
+                .find(|p| std::fs::read(p).is_ok())
+                .copied()
+            else {
+                eprintln!(
+                    "本机一个候选中文字体都没有，跳过（这条由 open_reports_a_missing_font_actionably 覆盖）"
+                );
+                return;
+            };
+            let bytes = std::fs::read(path).unwrap();
+            let index = pick_primary_face(&bytes).expect("可读的候选必须选得出一面");
+            let face = Face::parse(&bytes, index).unwrap();
+            let name = family_name(&face).expect("选中的面必须有族名");
+            assert!(
+                name.ends_with(LINUX_SC_FAMILY_SUFFIX) || !carries_region_marker(&name),
+                "{path} 第 {index} 面是 {name}，不是简体中文面"
+            );
+            assert!(face.glyph_index('译').is_some(), "{name} 画不出「译」");
+        }
+
+        /// 本机装了 fonts-noto-cjk 时 `open()` 必须成功，且全角字的推进宽度等于 em——
+        /// 这条把"字体确实被解析成可用尺子"钉在真机上，而不只是"没报错"
+        #[test]
+        fn the_local_font_measures_a_han_glyph_as_one_em() {
+            let Ok(metrics) = FileMetrics::open() else {
+                eprintln!("本机无中文字体：{LINUX_MISSING_HINT}");
+                return;
+            };
+            let one = metrics.text_width("译", 20.0);
+            assert!(
+                (one - 20.0).abs() < 1.0,
+                "全角字推进宽度应约等于 em，实测 {one}"
+            );
+            assert!(metrics.text_width("hello", 20.0) > 0.0, "拉丁一个都没量到");
+            assert!(metrics.line_height(20.0) >= 20.0);
+        }
+
+        /// 候选全落空时报的是那句可行动的话。用一条指向不存在文件的假路径没法测真分支，
+        /// 所以这条只在**本机确实没有候选**时断言文案，有字体时反向断言 `open()` 不报错
+        #[test]
+        fn a_missing_font_names_the_package_to_install() {
+            if LINUX_CJK_CANDIDATES
+                .iter()
+                .any(|p| std::fs::read(p).is_ok())
+            {
+                assert!(FileMetrics::open().is_ok());
+            } else {
+                let text = match FileMetrics::open() {
+                    Ok(_) => panic!("没有字体却开了成功"),
+                    Err(err) => format!("{err}"),
+                };
+                assert!(
+                    text.contains("fonts-noto-cjk"),
+                    "报错没给可行动的下一步：{text}"
+                );
+            }
+        }
+
+        /// REQ-008 那一格的正面证据：Linux 上贴图绘制不再是"必死"。字体解析出来之后还要
+        /// 真把一个汉字画到像素上——只测 `open()` 成功，测不到面号选对与栅格化跑通这两步
+        #[test]
+        fn a_han_glyph_is_painted_on_the_local_font() {
+            let Ok(metrics) = FileMetrics::open() else {
+                eprintln!("本机无中文字体，跳过：{LINUX_MISSING_HINT}");
+                return;
+            };
+            let mut image = canvas(60, 30, DARK);
+            let before = image.clone();
+            let plan = one_line(
+                "译",
+                PixelRect::new(0.0, 0.0, 200.0, 25.0),
+                PlanKind::InPlace,
+            );
+            assert_eq!(
+                draw_text(&mut image, &plan, &metrics),
+                0,
+                "本机字体画不出「译」"
+            );
+            assert!(
+                changed(&image, &before) > 0,
+                "open() 通了却一个字都没画出来，等于面号选错"
+            );
+        }
+
+        /// 缺字形不画豆腐块（ADR-003 的像素侧）：两支字体都没有的码位只交出一个计数，
+        /// 不占整格位置。mac 侧同名纪律在 `mod heiti` 里，这一条是 Linux 侧的对应物
+        #[test]
+        fn an_unassigned_codepoint_is_counted_not_painted() {
+            let Ok(metrics) = FileMetrics::open() else {
+                eprintln!("本机无中文字体，跳过：{LINUX_MISSING_HINT}");
+                return;
+            };
+            let mut plain = canvas(60, 30, DARK);
+            draw_text(
+                &mut plain,
+                &one_line(
+                    "a",
+                    PixelRect::new(0.0, 0.0, 200.0, 25.0),
+                    PlanKind::InPlace,
+                ),
+                &metrics,
+            );
+            let mut with_missing = canvas(60, 30, DARK);
+            let plan = one_line(
+                &format!("a{NO_GLYPH}"),
+                PixelRect::new(0.0, 0.0, 200.0, 25.0),
+                PlanKind::InPlace,
+            );
+            assert_eq!(
+                draw_text(&mut with_missing, &plan, &metrics),
+                1,
+                "没分配的码位没被计数，说明缺字形判定在 Linux 上失真"
+            );
+        }
     }
 
     /// 只有 mac 编译面一定有那两支字体；Linux 上 `open()` 会如实报 `Font`，字形的事测不了（NFR-7 只承诺 S 档）

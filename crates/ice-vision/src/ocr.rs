@@ -1,11 +1,17 @@
-use ice_core::document::{OcrDocument, TextBlock};
+// `TextBlock` 只在 mac 那条 `recognize_with_rows` 里出现（非 mac 的识别入口直接返回不支持），
+// 所以它是平台门内的导入：留成公共导入就是 Linux/Windows 编译面上的 unused import
+use ice_core::document::OcrDocument;
+#[cfg(target_os = "macos")]
+use ice_core::document::TextBlock;
 use image::RgbaImage;
 
 use crate::error::VisionResult;
 // 只有非 mac 那条分支用到具体错误类型，mac 上识别失败由 `vision_sys` 自己带出来。
 #[cfg(not(target_os = "macos"))]
 use crate::error::VisionError;
-use crate::layout::{MergeParams, RowObservation, merge_rows};
+use crate::layout::RowObservation;
+#[cfg(target_os = "macos")]
+use crate::layout::{MergeParams, merge_rows};
 
 /// 边长上限：任一边超过这个数就先等比缩小再识别（REQ-001）。
 ///

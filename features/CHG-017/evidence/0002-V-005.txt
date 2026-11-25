@@ -1,0 +1,5 @@
+请求已发出，等待门户回信（最多 90 秒，含授权框）: /org/freedesktop/portal/desktop/request/1_224/t
+结论: response=0（0 成功 / 1 用户取消 / 其它失败）
+  文件在（0 字节）但解不开: No such file or directory (os error 2)
+  临时文件没能删掉（No such file or directory (os error 2)），请手动清理
+EXIT=0

@@ -254,6 +254,29 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 | 字体 | **界面正文不再走系统解析**（2026-10-28 变更 H）：`fonts::install` 在建窗闭包里把 `/System/Library/Fonts/STHeiti Medium.ttc` 读进内存、`ctx.set_fonts` 装成 `Proportional` 族第 0 位，中文才落到黑体-简上。三条不显然的约束：① 这个 `.ttc` 有两面，**第 1 面才是黑体-简**（第 0 面是黑体-繁，两面都覆盖常用简体字，选错不崩不缺字，只有肉眼看得出）；② `Monospace` 族里黑体排在 Hack **之后**，否则对照页的拉丁列不再等宽；③ `set_fonts` 是整体替换，只在启动调一次（每帧调会把字形图集作废），eframe 的 `egui_system_font_provider` 仍挂在 provider 上兜底生僻字（它排在我们的清单之后）。代价：55MB 字体常驻内存（`FontData` 没有文件映射入口）。文件读不到就什么都不做、中文回落系统解析并记一条 debug——不能因为缺字体让界面空白 | Windows / Linux 无这一份文件：`install` 返回 `false`，沿用 eframe 的系统字体回退；真要跨平台一致需自带字体文件，v1 不覆盖 |
 | 应用形态 | 需打包 `.app` 才有 Dock 图标与正常生命周期 | 直接 exe |
 
+### 8.1 Linux 档（CHG-017，2026-11-25 真机推进）——上表"Windows / Linux"那一列的现状
+
+上表那一列写的是**当年静态核查**的结论，2026-11-25 这一轮把 Linux（GNOME 50 + XWayland）真机跑过一遍，
+现状按主题记在这里；下面每一条都带实测出处，未做的写明未做：
+
+| 主题 | Linux 档现状（2026-11-25） |
+|---|---|
+| 后端与启动 | 桌面入口与自启项都以 `env WAYLAND_DISPLAY=` 启动 → winit 用 X11（XWayland），wgpu 仍走 Vulkan（真机日志 `linux::x11::window` + 4 个适配器）。档位判定在 `system::backend`，设置页有一行"图形后端：…" |
+| 屏幕可用区 | `system::screen::probe()` 的 Linux 分支：RandR 1.5 + `_NET_WORKAREA`（本机实测 1 块虚拟屏 2560×1440、workarea `[0,32,2560,1349]`），换算回 AppKit 口径，`flip/select/union/fallback_area` 一行未改；带 1 秒缓存（帧循环调用，不每帧建 X 连接） |
+| 区域截图·取图 | 门户 `org.freedesktop.portal.Screenshot`（`system::portal`），读完即删；**连接与订阅是进程级常驻**——按次建连接会在第二张起永远收不到回信（2026-11-25 真机缺陷，已修） |
+| 遮罩 | `cover_display` 用 `_NET_WM_STATE_FULLSCREEN|ABOVE` 真盖住整屏并让顶栏让位，`focus()` 激活并读回 `_NET_ACTIVE_WINDOW`/`GetInputFocus`，`step_back()` 把焦点还给进来之前那扇窗（由本进程自己记） |
+| 全局热键 | `XGrabKey`（四组锁掩码 + `cookie.check()` 判 BadAccess），命中只写同一个 `PENDING`。本机实测 F1/F2/F3 都抓得到；**XTEST 注入的按键触发不了被动抓取**，所以自动化测试验不了这一格，只有真人按键算数 |
+| 置顶 / 停靠 | 置顶沿用 egui `always_on_top`（winit X11 → `_NET_WM_STATE_ABOVE`）；停靠落点 X11 可设，但 Mutter 可能夹回工作区（同上表） |
+| 半透明 | `alpha::set` 写 `_NET_WM_WINDOW_OPACITY` 并读回；**但 wgpu 的 X11 表面本机不支持透明合成**（启动日志 `Transparent window … does not support CompositeAlphaMode`），所以观感上不生效——如实记着，不当成功 |
+| 托盘 | 已实现（T-012，`system::tray_sni`）：手写 `org.kde.StatusNotifierItem` + `com.canonical.dbusmenu`，注册到 `org.kde.StatusNotifierWatcher`；图标 = 主题名 `ice-translator` + 22×22 ARGB32 位图；菜单五项与 `tray::menu_titles` 一致，点选只写同一个 `PENDING`（`pump_tray` 不改）。真机：日志 `托盘这一档定下来了 next=Available`，watcher 列表可见 `org.kde.StatusNotifierItem-<pid>-1`。**注意**：第一版把 D-Bus 连接留在 `spawn()` 里，函数退出即释放名字（日志 Available 但菜单栏无图标），现在连接由 `Tray` 持有到进程结束 |
+| 原生文件面板 | 走门户 `FileChooser.SaveFile`（`portal::save_file` + `panel::request_save`）：`parent_window` 必须是真实 `x11:0x…`（空串后端报 Failed to associate），`handle_token` 不许带 `-`。真机：用户点"取消" → `code=1`、`uris=[]`（V-008 转 passed；上一轮 failed 是探针没让对话框结束的误判） |
+| OCR | 按用户 2026-11-24 定"这一轮不做 OCR"：`native_ocr_supported()` 仍恒 `cfg!(macos)`，贴图出来不带文字/译文 |
+| 字体 | `fonts::install` 在 Linux 读 `NotoSansCJK-Regular.ttc` 并按 name 表选 SC 面（`ice_vision::paint::pick_primary_face`，与自绘度量同一选面规则）；`ice_core::font` 的 mac 常量一字未动 |
+| 单实例 | 锁文件在 Linux 多写一行**进程启动时刻**（`/proc/<pid>/stat` 第 22 字段）。只写 PID 会被复用骗：2026-11-25 真机上锁里写着 5712，而 5712 已是 GNOME 的 `gsd-usb-protection`，新版被"已在运行"挡在门外却没有窗口。旧版一行锁按进程名（`/proc/<pid>/comm`）兜底 |
+| 钥匙串 / 剪贴板 | Secret Service 实机应答（启动即读回 Key）；arboard 在 X11 进程里回退 X11 协议（日志有 WARN，正常） |
+| 关窗 / 唤回 | 与 mac 同一条 `mode::hide`/`reveal`：托盘 `Available` → `Visible(false)` + 托盘图标唤回；Linux 的 `set_policy` 是空操作但返回 `true`（没有 Dock 磁贴，不存在"切不过去"），否则会打一条属于 mac 的假警告 |
+| 图标安装（Linux 打包面） | 两张图各司其职（与 mac 的 Dock/菜单栏同构）：`hicolor/<16…512>/apps/ice-translator.png`（从 `assets/icon/icon-1024.png` 缩放）给启动器/任务栏；`hicolor/scalable/apps/ice-translator-symbolic.svg` 给托盘（名字以 `-symbolic` 结尾，GNOME 按面板前景色上色）。**两个坑**：GTK 不认 `1024x1024` 这种非标准尺寸目录（只认 16/24/32/48/64/128/256/512）→ 任务栏空白；符号图放 `hicolor/symbolic/apps/` 也查不到 → 托盘显示 `…` 兜底 |
+
 ## 9. 常见故障
 
 | 症状 | 原因 | 处理 |

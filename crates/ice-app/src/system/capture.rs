@@ -48,16 +48,48 @@ pub struct Capability {
 }
 
 /// 这台机器的四格能力。**唯一判定处**：视图里出现 `#[cfg(target_os)]` 就是缺陷。
+///
+/// 四格分两种性质，这条区分是 CHG-017 实测后定下的，不是随手写的：
+///
+/// - **`capture` 是"这个构建里有没有编译进来的实现"**——编译期就能定。它被截图门
+///   （`state.rs:1329` 与 `:3211`）直接读来灰按钮，而 mac 早就是同一语义：
+///   `/usr/sbin/screencapture` 不在、屏幕录制权限没给，这一格照样 `true`，失败留给运行期的
+///   [`Failure`] 去说。把 Linux 这格改成"探测当前会话"会让同一批单测在无 X 的机器上变灰，
+///   那是把环境依赖引进状态机，不是把能力做真。
+/// - **`pin` 与 `hotkey` 是"这个会话做不做得到"**——它们没有别的读者，只喂设置页与
+///   调用点的取舍，所以按 [`backend::Tier`] 现算：X11 档做得到，Wayland 原生档做不到。
+///   谎报的代价就是 `global_hotkeys.rs` 文件头那条最难查的症状：设置页显示成功、按下去没反应。
 pub fn capability() -> Capability {
+    capability_of(crate::system::backend::current())
+}
+
+/// 档位 → 四格。**纯函数**，所以每一档都能被无头断言（真探测只在 [`capability`] 那一处）。
+///
+/// 两列来源不同，不要揉成一个表达式：`capture`/`ocr` 取决于**这个构建里编译进来了什么**
+/// （编译期常量，三台机器上跑同一段代码得到的值不同），`pin`/`hotkey` 取决于**这一档会话
+/// 做不做得到**（`tier` 参数）。所以给 `Tier::Mac` 传进来的结果就是 mac 构建上本来会得到的结果
+/// ——这条等价性正是 [`tests::the_foreign_tiers_keep_their_pre_port_values`] 要钉住的。
+pub fn capability_of(tier: crate::system::backend::Tier) -> Capability {
+    use crate::system::backend::Tier;
     Capability {
-        capture: cfg!(target_os = "macos"),
-        // 贴图窗用的 API（`show_viewport_deferred` + `with_always_on_top`）在 X11 有效；
-        // Wayland 下置顶与定位都由合成器决定，本包不假装能做（NFR-7 那格记的是"受阻"）。
-        pin: cfg!(target_os = "macos") || cfg!(target_os = "windows"),
-        hotkey: cfg!(target_os = "macos") || cfg!(target_os = "windows"),
+        // Linux 这一格的口径见模块头 D-2：门户那条实现（T-002）编译进本包，故按真声明；
+        // 门户在运行期缺席/拒授权仍走 [`Failure`]，不在这一格撒谎
+        capture: CAPTURE_COMPILED,
+        pin: matches!(tier, Tier::Mac | Tier::Windows | Tier::X11),
+        hotkey: matches!(tier, Tier::Mac | Tier::Windows | Tier::X11),
         ocr: ice_vision::native_ocr_supported(),
     }
 }
+
+/// 「截图这件事在本构建里有没有编译进来的实现」。mac 是 `/usr/sbin/screencapture`，
+/// Linux 是 xdg-desktop-portal 的 `Screenshot`（T-007，真机读数见 V-005）；
+/// Windows 本包不承诺（非目标表），保持 `aa6c050` 的 false。
+#[cfg(target_os = "macos")]
+const CAPTURE_COMPILED: bool = true;
+#[cfg(target_os = "linux")]
+const CAPTURE_COMPILED: bool = true;
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+const CAPTURE_COMPILED: bool = false;
 
 /// 失败的那几类，只到"类别"为止——具体 stderr 与路径 SHALL NOT 往界面和日志里传
 /// （REQ-008 那条边界：截图内容留在盘上已经是有意的例外，文案再带上文件名就是第二份暴露）。
@@ -130,6 +162,7 @@ pub fn target_path(dir: &Path, pid: u32, seq: u64, epoch_secs: u64) -> PathBuf {
 
 /// 交给交互层的参数：`-i` 框选、`-x` 不出快门声、`-o` 不带窗口阴影、`-t png` 定格式，
 /// 末尾那个位置参数是**我们指定的落盘路径**（事实 1，`screencapture -h` 原文）。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn tool_args(path: &Path) -> Vec<String> {
     vec![
         "-i".into(),
@@ -206,14 +239,38 @@ pub fn grab_screen(dir: &Path, seq: u64, display: u8) -> Outcome {
     classify_grab(&path, output.status.success(), &stderr)
 }
 
-/// 非 mac：同签名，恒 `Unsupported`（与 [`capture`] 一条形状，不写第二套）。
-#[cfg(not(target_os = "macos"))]
+/// 非 mac 非 Linux：同签名，恒 `Unsupported`（与 [`capture`] 一条形状，不写第二套）。
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn grab_screen(_dir: &Path, _seq: u64, _display: u8) -> Outcome {
     Outcome::Unsupported
 }
 
+/// Linux 档（CHG-017 T-007，design D-6）：抓屏走 xdg-desktop-portal 的 `Screenshot`。
+///
+/// 形状由本机实测决定（V-005）：非交互调用回 `response=0`，端到端约 0.5 秒，`uri` 是
+/// **percent-encoded 的 `file://`**，而 GNOME 的实现把图落在**用户自己的 `图片/` 目录**里。
+/// 那是别人家的目录，所以这里做的是"搬进我们那格临时目录、门户那份立刻消失"，而不是就地读：
+/// 调用方（`jobs::grab_one`）拿到路径后还要再解一次像素，读到之前就删等于什么都没拿到。
+///
+/// `display` 在 Linux 这一档只有 1 成立：XWayland 把桌面并集报成一整块虚拟屏
+/// （design D-9 的实测），门户回来的也永远是那一整块。点名第二块屏时**宁可报缺屏**——
+/// 把同一张并集图当作两块屏的画面，正是 REQ-003 里"留黑块"的同族症状。
+#[cfg(target_os = "linux")]
+pub fn grab_screen(dir: &Path, seq: u64, display: u8) -> Outcome {
+    let path = target_path(dir, std::process::id(), now_secs(), seq);
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        tracing::warn!("截图目录建不起来：{e}");
+        return Outcome::Failed(Failure::Unwritable);
+    }
+    if display > 1 {
+        return Outcome::Failed(Failure::NoPixels);
+    }
+    settle(portal::screenshot(false), &path, false)
+}
+
 /// 静默抓屏的参数。**序号 1 起是系统的读法**（`-D1` = 主屏），传 0 会被当成"没点名"，
 /// 所以这里先夹一次，免得序号从 0 起时永远抓回主屏而第二块屏的画面被当成错误。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn grab_args(path: &Path, display: u8) -> Vec<String> {
     vec![
         "-x".into(),
@@ -268,10 +325,74 @@ pub fn capture(dir: &Path, seq: u64) -> Outcome {
     classify(&path, output.status.success(), &stderr)
 }
 
-/// 非 mac：同签名，恒 `Unsupported`——**不写第二套形状**（REQ-009 的编译面纪律）。
-#[cfg(not(target_os = "macos"))]
+/// 非 mac 非 Linux：同签名，恒 `Unsupported`——**不写第二套形状**（REQ-009 的编译面纪律）。
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn capture(_dir: &Path, _seq: u64) -> Outcome {
     Outcome::Unsupported
+}
+
+/// Linux 档的"框选"：门户的 `interactive=true`，也就是系统自己的选区 UI 画完那一帧。
+///
+/// 生产里这条链已经不被派发（`state::submit_capture` 只出 `Job::Freeze`，框选由我们的遮罩做，
+/// REQ-003），保留同签名只为公共位形状不变。**它不是我们的遮罩**：门户弹的是桌面环境自己的
+/// 取图界面，选区、快门、落盘全归它，我们只拿回一张图。
+#[cfg(target_os = "linux")]
+pub fn capture(dir: &Path, seq: u64) -> Outcome {
+    let path = target_path(dir, std::process::id(), now_secs(), seq);
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        tracing::warn!("截图目录建不起来：{e}");
+        return Outcome::Failed(Failure::Unwritable);
+    }
+    settle(portal::screenshot(true), &path, true)
+}
+
+/// 门户回信 → 既有结局。**判定不另起一套**：图到手后仍走 [`classify`] / [`classify_grab`]
+/// （"文件在且解得开"才算成功那一格），变的只是那份文件得先搬进我们指定的落点。
+///
+/// 两条链对"用户放弃"的读法不同，正是 `classify` 与 `classify_grab` 分成两条的原因：
+/// 静默抓屏不等用户画，所以那里没有取消这一格（文件没来就是失败）。
+#[cfg(target_os = "linux")]
+use crate::system::portal;
+
+#[cfg(target_os = "linux")]
+fn settle(reply: portal::Reply, path: &Path, interactive: bool) -> Outcome {
+    match reply {
+        portal::Reply::Image(src) => {
+            if !relocate(&src, path) {
+                return Outcome::Failed(Failure::Unwritable);
+            }
+            if interactive {
+                classify(path, true, "")
+            } else {
+                classify_grab(path, true, "")
+            }
+        }
+        portal::Reply::Cancelled if interactive => Outcome::Cancelled,
+        portal::Reply::Cancelled => Outcome::Failed(Failure::NoPixels),
+        // 门户不在（会话总线连不上、服务没注册、调用本身报错）＝那件工具这台机器上没有
+        portal::Reply::Unreachable => Outcome::Failed(Failure::ToolMissing),
+        portal::Reply::NoPixels => Outcome::Failed(Failure::NoPixels),
+    }
+}
+
+/// 把门户落的那张图搬进我们指定的落点，并保证**门户那一份不再存在**。返回 false = 搬不动。
+///
+/// `rename` 优先（同盘不复制，`~/图片` → `~/.local/share/…` 通常就走这条）；跨设备时它会失败，
+/// 退回"复制后删原件"。删不掉只记一条 warn 而不改判成功——落点里那张是真的，
+/// 而多留一份在用户目录里是可恢复的脏，把已经到手的图判成失败是不可恢复的谎。
+#[cfg(target_os = "linux")]
+fn relocate(src: &Path, dst: &Path) -> bool {
+    if std::fs::rename(src, dst).is_ok() {
+        return true;
+    }
+    if std::fs::copy(src, dst).is_err() {
+        std::fs::remove_file(src).ok();
+        return false;
+    }
+    if let Err(e) = std::fs::remove_file(src) {
+        tracing::warn!("门户那份截图删不掉：{e}");
+    }
+    true
 }
 
 /// 把一张**内存里的图**写进历史目录，并按双上限老化。**这是"确认之后才落盘"的唯一入口**
@@ -592,7 +713,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // 一个不可能存在的屏序号：真跑一次，看它落成什么
         let outcome = grab_screen(dir.path(), 1, 99);
-        if cfg!(target_os = "macos") {
+        // 两个有实现的档位共用这一条纪律；Linux 侧序号越界根本不会去敲门户（早退），
+        // 所以这条断言在 headless 测试里跑的是同一条判定
+        if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
             assert!(
                 !matches!(outcome, Outcome::Cancelled),
                 "静默抓屏报出取消就是判据用错了地方"
@@ -719,15 +842,67 @@ mod tests {
         assert_ne!(s, Outcome::Failed(Failure::Unknown).explain().unwrap());
     }
 
-    /// 能力判定只有一处，而且四格互不相同——**截图与识别在 mac 都真，Linux 全假**，
-    /// 这条断言锁的是"这一处真的在按动作分档"，不是把 `cfg!` 抄了四遍。
+    /// 能力判定只有一处，而且四格互不相同。
+    ///
+    /// 这条断言原先写作"mac 全真、非 mac 全假"（那时非 mac 就是没有实现）。CHG-017 之后
+    /// Linux 有了门户那条实现，"非 mac 不该报能截"就不再是事实——所以按 Q-4 定的口径改成
+    /// **两档断言**（不是加 `#[cfg]` 跳测）：`capture` 是编译期声明，`pin`/`hotkey` 是会话档位。
+    /// 这条差异同时记进 `docs/07-acceptance.md`。
     #[test]
     fn the_capability_answer_is_per_action_not_a_single_flag() {
-        let c = capability();
+        use crate::system::backend::Tier;
         if cfg!(target_os = "macos") {
+            let c = capability();
             assert!(c.capture && c.pin && c.hotkey && c.ocr);
+        } else if cfg!(target_os = "linux") {
+            let x11 = capability_of(Tier::X11);
+            assert!(
+                x11.capture && x11.pin && x11.hotkey && !x11.ocr,
+                "X11 档：截图、贴图、全局热键都该真，识别仍不做（本轮边界）"
+            );
+            let wayland = capability_of(Tier::WaylandNative);
+            assert!(
+                wayland.capture && !wayland.pin && !wayland.hotkey,
+                "Wayland 原生档：截得下来，但置顶与全局键不许谎报"
+            );
+            assert!(!capability_of(Tier::NoBackend).pin);
+            // 截图那一格是声明而不是探测：它喂的是截图门，探测会把环境依赖带进状态机
+            assert!(capability_of(Tier::NoBackend).capture);
         } else {
-            assert!(!c.capture, "非 mac 不该报\"能截\"");
+            assert!(!capability().capture, "Windows 这一侧仍没有框选实现");
+        }
+    }
+
+    /// 平台边界的回归锁（REQ-012）：把 foreign 档位喂进同一张表，`pin`/`hotkey` 两格仍与
+    /// `aa6c050` 的字面常量逐项相等——本包只准给 Linux 加分支，这条就是那条硬约束的机器证明。
+    ///
+    /// `capture` 与 `ocr` **不在这条的断言范围**：它们是编译期那一列（[`CAPTURE_COMPILED`]——
+    /// 这个构建里到底编译进来了哪条截图实现），在 Linux 构建上查 `Tier::Mac` 也变不出一条
+    /// mac 的实现来。这一列的"没动别的平台"由 `cfg` 分支本身与 mac 侧
+    /// `cargo check --target aarch64-apple-darwin` / `cargo test` 的实测结果钉（evidence V-003）。
+    #[test]
+    fn the_foreign_tiers_keep_their_pre_port_pin_and_hotkey() {
+        use crate::system::backend::Tier;
+        for tier in [Tier::Mac, Tier::Windows] {
+            let cap = capability_of(tier);
+            assert!(
+                cap.pin && cap.hotkey,
+                "{tier:?} 那两格被本包改成了按会话探测"
+            );
+        }
+        // 编译期那一列不许被档位带跑：带跑等于 Linux 上重新声明了别的平台的截图能力
+        for tier in [
+            Tier::Mac,
+            Tier::Windows,
+            Tier::X11,
+            Tier::WaylandNative,
+            Tier::NoBackend,
+        ] {
+            assert_eq!(
+                capability_of(tier).capture,
+                CAPTURE_COMPILED,
+                "capture 那一格随档位变了，它该只随构建变"
+            );
         }
     }
 
@@ -739,8 +914,9 @@ mod tests {
         let blocked = dir.path().join("a-file").join("sub");
         std::fs::File::create(dir.path().join("a-file")).unwrap(); // 父是个普通文件
         let outcome = capture(&blocked, 1);
-        // mac 上会真的建不起来；非 mac 恒 Unsupported（这一格不在本包验收面）
-        if cfg!(target_os = "macos") {
+        // mac 与 Linux 都在发起之前就判得出"这目录写不了"（Linux 侧建目录先于敲门户，
+        // 一条命令都不必发出去）；只有本构建没有取图实现的那一侧才是 Unsupported
+        if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
             assert_eq!(outcome, Outcome::Failed(Failure::Unwritable));
         } else {
             assert_eq!(outcome, Outcome::Unsupported);
@@ -958,5 +1134,117 @@ mod tests {
             found[0].mtime > 1_700_000_000,
             "mtime 读成 0 就等于把它当最老的删"
         );
+    }
+
+    // ---- 门户取图的落点判定（CHG-017 T-007，Linux 档）----
+    // 这四条都不进 D-Bus：交进来的就是"门户已经回了什么"，测的是我们那格判定。
+    // 真机那一次读数在 V-005（response、URI 形态、尺寸、耗时），两者不可互替。
+
+    /// 图到手：搬进我们指定的落点，门户那份不再存在（REQ-002"读完即释放"）。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_portal_frame_lands_in_our_directory_and_leaves_no_copy_behind() {
+        let portal_dir = tempfile::tempdir().unwrap();
+        let ours = tempfile::tempdir().unwrap();
+        let src = portal_dir.path().join("图片").join("Screenshot-5.png");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        image::RgbaImage::from_pixel(3, 2, image::Rgba([9, 9, 9, 255]))
+            .save(&src)
+            .unwrap();
+        let dst = target_path(ours.path(), 7, 1, 2);
+
+        let outcome = settle(portal::Reply::Image(src.clone()), &dst, false);
+        assert_eq!(
+            outcome,
+            Outcome::Captured(dst.clone()),
+            "到手的图被判成了别的"
+        );
+        assert!(dst.exists(), "落点不是我们指定的那一个");
+        assert!(!src.exists(), "门户那份还在用户目录里");
+    }
+
+    /// 搬不动＝写不下那一档，**不许读成"用户取消"**：读成取消就是界面一句"你没截"，
+    /// 而真实情况是我们的目录有问题。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_frame_we_cannot_move_is_unwritable_and_still_releases_the_original() {
+        let portal_dir = tempfile::tempdir().unwrap();
+        let src = portal_dir.path().join("Screenshot-6.png");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]))
+            .save(&src)
+            .unwrap();
+        // 落点的父目录不存在（且中间是个文件）：rename 与 copy 都到不了那里
+        let blocker = portal_dir.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let dst = blocker.join("nope").join("7-1-2.png");
+
+        let outcome = settle(portal::Reply::Image(src.clone()), &dst, false);
+        assert_eq!(outcome, Outcome::Failed(Failure::Unwritable));
+        assert!(!src.exists(), "搬不动更要先把用户目录里那份清掉");
+    }
+
+    /// 文件在但解不开＝坏图，不是成功也不是取消。这一格走的是既有 `classify`，
+    /// 换后端不改判据。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_portal_frame_that_does_not_decode_is_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("Screenshot-7.png");
+        std::fs::write(&src, b"\x89PNG\x0d\x0a\x1a\x0a-not-a-png").unwrap();
+        let dst = target_path(dir.path(), 8, 2, 3);
+
+        let outcome = settle(portal::Reply::Image(src), &dst, false);
+        assert_eq!(outcome, Outcome::Failed(Failure::Corrupt));
+    }
+
+    /// "用户放弃"这一格在两条链上读法不同：交互档是取消（不建贴图、不落提示条），
+    /// 静默档没有这个出口——文件没来就是拿不到画面。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_silent_grab_has_no_cancellation_slot_but_the_interactive_one_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let dst = target_path(dir.path(), 9, 3, 4);
+        assert_eq!(
+            settle(portal::Reply::Cancelled, &dst, true),
+            Outcome::Cancelled,
+            "交互档读不出取消，用户放弃会被报成失败"
+        );
+        assert_eq!(
+            settle(portal::Reply::Cancelled, &dst, false),
+            Outcome::Failed(Failure::NoPixels),
+            "静默档冒出取消，抓屏失败就会被说成\"你没截\""
+        );
+    }
+
+    /// 门户缺席 / 应了但给不出图：两类失败各有归属，且都必须带着下一步那句话
+    /// （REQ-002 不许静默）。这里断言的是"有话说"，措辞归 `explain()` 那条既有纪律。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_absent_portal_and_an_empty_reply_both_say_what_to_do_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let dst = target_path(dir.path(), 10, 4, 5);
+        for (reply, kind) in [
+            (portal::Reply::Unreachable, Failure::ToolMissing),
+            (portal::Reply::NoPixels, Failure::NoPixels),
+        ] {
+            let outcome = settle(reply, &dst, false);
+            assert_eq!(outcome, Outcome::Failed(kind));
+            let text = outcome.explain().expect("失败必须有一句给用户");
+            assert!(text.contains("粘贴"), "{kind:?} 那句没有退路");
+        }
+    }
+
+    /// 点名第二块屏时报缺屏，**不把同一张并集图当成第二块屏的画面**（REQ-003 末句）。
+    /// 这条同时保证 Linux 上不会因为序号越界去敲一次门户。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_second_named_display_is_reported_missing_instead_of_duplicated() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            grab_screen(dir.path(), 1, 2),
+            Outcome::Failed(Failure::NoPixels)
+        );
+        assert!(dir.path().exists());
+        assert!(list(dir.path()).is_empty(), "没抓成却在目录里留了东西");
     }
 }

@@ -27,6 +27,8 @@
 //!
 //! 取窗口与 `system::alpha` 共用 `super::window::ns_window`。
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))] // 标题栏绿键与双击（NSWindow），Linux 档不由我们画标题栏
+
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// 绿键被点了。写它的是 AppKit 的 action 方法（主线程），读它的是帧循环（同一线程）；

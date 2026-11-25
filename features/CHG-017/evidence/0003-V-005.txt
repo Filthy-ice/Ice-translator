@@ -1,0 +1,4 @@
+请求已发出，等待门户回信（最多 90 秒，含授权框）: /org/freedesktop/portal/desktop/request/1_240/t
+结论: response=0（0 成功 / 1 用户取消 / 其它失败）
+  uri = file:///home/zhanghaobing/%E5%9B%BE%E7%89%87/Screenshot-5.png
+  读到像素: 2560x1440，文件 1804957 字节

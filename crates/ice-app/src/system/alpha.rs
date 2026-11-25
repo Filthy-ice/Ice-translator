@@ -31,7 +31,20 @@ pub fn set(frame: &eframe::Frame, alpha: f32) -> bool {
 }
 
 /// 非 macOS 没有整窗 alpha 的公开入口，恒返回 false，让调用方走 `apply_dim`。
-#[cfg(not(target_os = "macos"))]
+/// Linux 档：整窗不透明度走 EWMH 的 `_NET_WM_WINDOW_OPACITY`（GNOME 的合成器认这一个）。
+///
+/// 与 mac 那条同一个形状：**写进去、读回来、以读到的为准**。差超过 1% 就算没写成——
+/// 这与"发出去就当成功"的区别，就是用户看见窗口透不透。
+#[cfg(target_os = "linux")]
+pub fn set(frame: &eframe::Frame, alpha: f32) -> bool {
+    let Some(window) = crate::system::window_x11::xid(frame) else {
+        return false;
+    };
+    crate::system::window_x11::set_opacity(window, alpha)
+        .is_some_and(|got| (got - alpha.clamp(0.0, 1.0)).abs() <= 0.01)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn set(_frame: &eframe::Frame, _alpha: f32) -> bool {
     false
 }

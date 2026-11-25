@@ -254,6 +254,10 @@ fn main() {
         }
     };
 
+    // 后端档位判一次就定下（CHG-017 REQ-001）：置顶、贴边与全局快捷键那几格都读它，
+    // 中途翻转会让按钮在一次点击之间自己变灰。放在建窗之前，第一帧问能力时已经有据
+    crate::system::backend::arm();
+
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()

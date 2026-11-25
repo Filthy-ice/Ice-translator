@@ -1,0 +1,5 @@
+$ cargo run -p ice-app --example hotkey_grab_probe
+F1: keycode=67 → 成功
+F2: keycode=68 → 成功
+F3: keycode=69 → 成功
+（环境：GNOME 50 + XWayland，2026-11-25 02:0x，XGrabKey 四组锁掩码逐组 check()，抓完立刻 UngrabKey）

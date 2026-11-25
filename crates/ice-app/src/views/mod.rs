@@ -12,6 +12,7 @@ use ice_core::language::EngineKind;
 use crate::state::{AppState, Confirm, FailureAction, Job, Tab};
 use crate::theme;
 
+pub mod chrome;
 pub mod compact;
 pub mod full;
 pub mod history;

@@ -15,6 +15,9 @@ use ice_core::history::HistoryStore;
 use ice_core::language::{EngineKind, Language};
 
 use crate::state::{AppState, Confirm, KeyState, Tone};
+// 只有 Linux 的档位行用它；mac 侧那一格整体不编译，导入留着就是 unused import
+#[cfg(target_os = "linux")]
+use crate::system::backend::Tier;
 use crate::system::capture;
 use crate::theme::{self, MAX_FONT_SCALE, MIN_FONT_SCALE};
 
@@ -64,6 +67,13 @@ fn window_group(ui: &mut egui::Ui, state: &AppState, effects: &mut Effects) {
                 effects.reset_geometry = true;
             }
         });
+        // CHG-017 REQ-001：走 XWayland 换功能是用户点头选的，代价（观感、置顶不保证）
+        // 必须看得见，否则出问题只能反过来问用户"你当时到底选了啥"。mac 与 Windows 上
+        // 这一句整体不编译进去，界面与 `aa6c050` 逐字相同（REQ-012 的平台边界）
+        #[cfg(target_os = "linux")]
+        ui.label(
+            RichText::new(backend_line(crate::system::backend::current())).color(theme::MUTED),
+        );
         ui.horizontal(|ui| {
             let quit = ui.button("退出程序");
             record(&ctx, "btn_quit", quit.rect);
@@ -575,6 +585,11 @@ pub const fn theme_label(theme: Theme) -> &'static str {
 fn hotkey_group(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) {
     ui.label(RichText::new("快捷键").strong());
     ui.label(RichText::new(HOTKEY_NOTE).color(theme::MUTED).small());
+    // 这一句只在"按下去确实没反应"的那一档出现（REQ-006 的 `Unavailable` 口径）。
+    // mac/Windows 的 `hotkey` 恒真，界面上看不到变化
+    if let Some(caveat) = hotkey_caveat(capture::capability()) {
+        ui.label(RichText::new(caveat).color(theme::WARN).small());
+    }
     let defaults = ice_core::config::HotkeyConfig::default();
     let slots: [(&str, &str, String); 3] = [
         ("capture", "截图", state.config.hotkey.capture.clone()),
@@ -656,6 +671,27 @@ fn hotkey_group(ui: &mut egui::Ui, state: &mut AppState, effects: &mut Effects) 
             }
         });
     }
+}
+
+/// 设置页那一行后端档位（Linux）。文案 = `Tier::label()` 的后果句，这里只加前缀——
+/// 档位话术的唯一出处在 `system::backend`，视图再抄一份就会漂移
+#[cfg(target_os = "linux")]
+fn backend_line(tier: Tier) -> String {
+    format!("图形后端：{}", tier.label())
+}
+
+/// 全局键这一档该补的那句话；`None` = 这一档按得响，不补
+///
+/// 拆成纯函数是为了能被无头断言（"设置页说得出当前档位与后果"这件事，刮 galleies 的文本
+/// 测不稳），也是 REQ-011 那条"探测结果 SHALL 是纯数据"的界面侧对应物。
+/// 话术要求与 `HotkeyFailure::explain()` 同：给出下一步，而不是只说"不支持"。
+fn hotkey_caveat(cap: capture::Capability) -> Option<&'static str> {
+    if cap.hotkey {
+        return None;
+    }
+    Some(
+        "当前桌面（Wayland 原生）拿不到全局快捷键：这三个组合只在本程序有焦点时生效，背后按要去图片页点按钮。",
+    )
 }
 
 /// 那句必须出现在界面上的说明：裸 F 键在默认设置下可能是亮度/调度键，而这件事
@@ -936,6 +972,38 @@ mod tests {
         };
         let output = ctx.run_ui(raw, |ui| show(ui, state, effects, ai_available));
         output.drop_without_applying_deltas();
+    }
+
+    /// 档位行与快捷键那句补充都是纯函数：设置页"说得出当前处在哪一档"这件事
+    /// 要能被无头断言，而不是靠人眼看渲染结果（REQ-011）
+    #[test]
+    fn the_settings_page_names_the_backend_and_its_consequence() {
+        #[cfg(target_os = "linux")]
+        {
+            let x11 = backend_line(Tier::X11);
+            assert!(x11.contains("图形后端"), "{x11}");
+            assert!(x11.contains("全局快捷键"), "{x11} 只报了名词没报后果");
+            assert!(backend_line(Tier::WaylandNative).contains("由桌面决定"));
+        }
+        let capable = capture::Capability {
+            capture: true,
+            pin: true,
+            hotkey: true,
+            ocr: true,
+        };
+        assert!(
+            hotkey_caveat(capable).is_none(),
+            "按得响却补了一句做不到的话"
+        );
+        let stuck = capture::Capability {
+            hotkey: false,
+            ..capable
+        };
+        let text = hotkey_caveat(stuck).expect("这一档必须说得出后果");
+        assert!(
+            text.contains("图片页") || text.contains("焦点"),
+            "{text} 只说了不支持，没给下一步"
+        );
     }
 
     /// 点击要跨帧：命中测试用的是**上一帧**的控件矩形，所以 `ctx` 得留着连跑几帧，

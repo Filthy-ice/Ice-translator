@@ -30,6 +30,8 @@
 //! 所以只用 `popUpStatusItemMenu:` 就地弹一次：它在追踪期间自己接管那枚状态项，返回后我们
 //! 立刻把菜单摘干净并核对接线，左键那条路原样留着。
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))] // `NSStatusItem` 那一套；Linux 档见 `tray_sni`（T-012 已实现）
+
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -39,9 +41,10 @@ use image::{ImageEncoder, Rgba, RgbaImage};
 use crate::state::TrayState;
 use crate::system::hotkeys::Action;
 
-/// 本包这套能力走不走得通。Windows 的 `Shell_NotifyIcon`、Linux 的 `StatusNotifierItem`
-/// 按 NFR-7 另立待办，不在这里假装支持。
-pub const SUPPORTED: bool = cfg!(target_os = "macos");
+/// 本包这套能力走不走得通：mac 走 `NSStatusItem`，Linux 走手写的 `StatusNotifierItem`
+/// （`system::tray_sni`，2026-11-25 真机挂上 watcher）；Windows 的 `Shell_NotifyIcon`
+/// 仍按 NFR-7 待办，不在这里假装支持。
+pub const SUPPORTED: bool = cfg!(any(target_os = "macos", target_os = "linux"));
 
 /// 菜单第一项（左键立的是同一个意图，只是不经菜单）。
 pub const SHOW: &str = "显示窗口";
@@ -70,6 +73,13 @@ static PENDING: AtomicU8 = AtomicU8::new(CODE_NONE);
 /// 唤醒源。隐藏的窗口收不到输入事件，`mark()` 必须能自己把事件循环叫起来，
 /// 所以这里存一份 `egui::Context`（克隆廉价，内部是 `Arc`）。
 static CONTEXT: OnceLock<egui::Context> = OnceLock::new();
+
+/// 记下唤醒源。两个平台都要（Linux 的 SNI 回调同样得把停摆的帧循环叫醒）。
+pub fn remember_context(ctx: &egui::Context) {
+    if CONTEXT.get().is_none() {
+        let _ = CONTEXT.set(ctx.clone());
+    }
+}
 
 /// 托盘转交给应用分派的四件事之一。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -801,17 +811,22 @@ pub use mac::{install, set_policy, sync};
 
 /// 非 macOS 这一支只导出同名函数，恒 `Unavailable`：关窗因此整档退回今天的最小化语义，
 /// 那一侧的编译面 SHALL NOT 引用 `mac` 里的任何一个 objc 符号（REQ-006）。
-#[cfg(not(target_os = "macos"))]
+/// Linux 档：手写的 StatusNotifierItem（`system::tray_sni`），意图落同一个 `PENDING`。
+#[cfg(target_os = "linux")]
+pub use crate::system::tray_sni::{install, set_policy, sync};
+
+/// 其余非 mac 平台只导出同名函数，恒 `Unavailable`：关窗退回最小化语义。
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn install(_mode: UiMode, _ctx: &egui::Context, _scale: f64) -> TrayState {
     TrayState::Unavailable
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn sync(_mode: UiMode) -> TrayState {
     TrayState::Unavailable
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub const fn set_policy(_regular: bool) -> bool {
     false
 }
@@ -970,6 +985,9 @@ mod tests {
     /// 本包只承诺 macOS 这一侧（NFR-7：Windows/Linux 的托盘另立待办），不许把话说满
     #[test]
     fn support_is_declared_for_exactly_the_platform_we_verified() {
-        assert_eq!(SUPPORTED, cfg!(target_os = "macos"));
+        assert_eq!(
+            SUPPORTED,
+            cfg!(any(target_os = "macos", target_os = "linux"))
+        );
     }
 }

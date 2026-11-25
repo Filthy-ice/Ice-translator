@@ -85,14 +85,78 @@ pub fn cover_display(title: &str, target: egui::Rect) -> Cover {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+pub fn cover_display(title: &str, target: egui::Rect) -> Cover {
+    let Some(window) = super::window_x11::find_own_window(title) else {
+        return Cover {
+            frame: target,
+            covers: false,
+        };
+    };
+    // Linux 档唯一的"真盖住"是**全屏**：GNOME 的 X11 全屏由合成器摆到整块屏上，
+    // 并让顶栏与 Dock 自己让位（实测 `_NET_WORKAREA` 的 32px 顶栏在全屏窗上不出现）。
+    // mac 那边不敢用全屏是因为会切 Space 带动画，这一档没有那件事。
+    let _ = super::window_x11::set_state(window, "_NET_WM_STATE_FULLSCREEN", true);
+    let _ = super::window_x11::set_state(window, "_NET_WM_STATE_ABOVE", true);
+    let Some(want) = topleft(target) else {
+        return Cover {
+            frame: target,
+            covers: false,
+        };
+    };
+    let Some((x, y, w, h)) = super::window_x11::geometry(window) else {
+        return Cover {
+            frame: target,
+            covers: false,
+        };
+    };
+    let now = egui::Rect::from_min_size(
+        egui::pos2(x as f32, y as f32),
+        egui::vec2(w as f32, h as f32),
+    );
+    let covers = (now.min.x - want.min.x).abs() <= 1.0
+        && (now.min.y - want.min.y).abs() <= 1.0
+        && (now.width() - want.width()).abs() <= 1.0
+        && (now.height() - want.height()).abs() <= 1.0;
+    Cover {
+        frame: appkit_of(now).unwrap_or(target),
+        covers,
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn cover_display(_title: &str, target: egui::Rect) -> Cover {
-    // 非 mac 拿不到这一跳。整个截图入口在那一侧本来就是 `Unsupported`（`capability()` 那一处），
+    // 那一侧拿不到这一跳。整个截图入口本来就是 `Unsupported`（`capability()` 那一处），
     // 这里返回 false 只是保证"任何平台都不许把没做到的说成做到了"。
     Cover {
         frame: target,
         covers: false,
     }
+}
+
+/// 调用方给的是 **AppKit 口径**（`ScreenSpec.appkit`，左下原点），而 X11 的坐标是左上原点。
+/// 换算是 `screen::flip` 的逆，基准高仍是主屏整屏高——**只在这一处换**，与 mac 侧"不翻两次"
+/// 同一条纪律（翻错一次就是遮罩跑到另一块屏上那种缺陷）。
+#[cfg(target_os = "linux")]
+fn topleft(appkit: egui::Rect) -> Option<egui::Rect> {
+    let main_height = crate::system::screen::probe()?.first()?.frame.h;
+    Some(egui::Rect::from_min_size(
+        egui::pos2(appkit.min.x, main_height - appkit.height() - appkit.min.y),
+        appkit.size(),
+    ))
+}
+
+/// 上面那个的逆：读回 X11 的矩形，交回 AppKit 口径（`Cover.frame` 的契约不变）
+#[cfg(target_os = "linux")]
+fn appkit_of(topleft: egui::Rect) -> Option<egui::Rect> {
+    let main_height = crate::system::screen::probe()?.first()?.frame.h;
+    Some(egui::Rect::from_min_size(
+        egui::pos2(
+            topleft.min.x,
+            main_height - topleft.height() - topleft.min.y,
+        ),
+        topleft.size(),
+    ))
 }
 
 /// 把应用提到前台，并把那扇 `title` 窗设为键盘窗——**esc 能不能进来就取决于这一句**
@@ -132,11 +196,50 @@ pub fn focus(title: &str) -> Focus {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Linux 档：请窗口管理器把焦点给它，再**读回来**核对。
+///
+/// 激活在这一档同样是异步的（窗口管理器走自己的事件循环），所以每帧重下、以读回为准，
+/// 与 mac 那条"发出去那一刻读到的是 false"（本文件上方第 3 条）同一条纪律。
+#[cfg(target_os = "linux")]
+pub fn focus(title: &str) -> Focus {
+    let Some(window) = super::window_x11::find_own_window(title) else {
+        return Focus {
+            active: false,
+            key: false,
+        };
+    };
+    remember_front();
+    let _ = super::window_x11::activate(window);
+    let active = super::window_x11::active_window() == Some(window);
+    let key = super::window_x11::input_focus() == Some(window);
+    Focus { active, key }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn focus(_title: &str) -> Focus {
     Focus {
         active: false,
         key: false,
+    }
+}
+
+/// 遮罩之前前台那一扇窗。mac 靠 `NSApplication::hide` 把焦点还给系统，Linux 没有这一跳，
+/// 只能自己记下"进来之前是谁"再还回去。
+#[cfg(target_os = "linux")]
+static FRONT: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
+
+#[cfg(target_os = "linux")]
+fn remember_front() {
+    let Some(active) = super::window_x11::active_window() else {
+        return;
+    };
+    if super::window_x11::owned_by_us(active) {
+        return; // 已经是我们自己的窗了：别把"我们自己"记成要去还的那个前台
+    }
+    if let Ok(mut front) = FRONT.lock() {
+        if front.is_none() {
+            *front = Some(active);
+        }
     }
 }
 
@@ -153,7 +256,19 @@ pub fn step_back() {
     NSApplication::sharedApplication(mtm).hide(None);
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Linux 档：把焦点还给进遮罩之前那扇窗（记不到就什么都不做）。
+///
+/// **这一格同样是诚实的**：窗口管理器可以拒绝这次激活（焦点防抢），拒绝时这里没有可
+/// 读回的东西可用——所以只做动作、不承诺"一定还得回去"，走查条目与 mac 侧同一格。
+#[cfg(target_os = "linux")]
+pub fn step_back() {
+    let front = FRONT.lock().ok().and_then(|mut slot| slot.take());
+    if let Some(window) = front {
+        let _ = super::window_x11::activate(window);
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn step_back() {}
 
 #[cfg(target_os = "macos")]

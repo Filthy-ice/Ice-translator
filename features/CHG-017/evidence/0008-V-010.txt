@@ -1,0 +1,9 @@
+T-012 托盘（SNI）真机读数 2026-11-25 22:52
+- watcher：org.kde.StatusNotifierWatcher 由 gnome-shell(pid 5613) 持有，IsStatusNotifierHostRegistered=true
+- 应用侧：日志 托盘这一档定下来了 next=Available（pid 47400）
+- bus：org.kde.StatusNotifierItem-47400-1（busctl --user list 可见，comm=ice-translator）
+- watcher 登记列表含 org.kde.StatusNotifierItem-47400-1
+- 属性：IconName='ice-translator'；IconPixmap=(22,22,ARGB32)
+- 菜单 GetLayout：5 项 显示窗口 / 全量 / 设置 / 清除历史截图 / 退出程序（labels 与 tray::menu_titles 一致）
+- 点选路径：com.canonical.dbusmenu.Event(id,'clicked') → tray::mark(Outcome) → App::logic 的 pump_tray（与 mac 同一个 PENDING 槽）
+- 缺陷（自查修掉）：第一版把 D-Bus 连接留在 spawn 里，函数退出即释放名字 → 日志 Available 但菜单栏无图标；现在连接由 Tray 持有到进程结束

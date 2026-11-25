@@ -1,0 +1,6 @@
+T-002 取图路径对照（2026-11-25，GNOME 50 + XWayland）
+$ cargo run -p ice-app --example grab_source_compare
+GetImage 回信失败: X11 error X11Error { error_kind: Match, error_code: 8, sequence: 1,
+  bad_value: 889, minor_opcode: 0, major_opcode: 73, extension_name: None, request_name: Some("GetImage") }
+结论：XWayland 下对 root 直接 GetImage 返回 BadMatch（error_code 8），整屏抓取这条路在本机
+连"缺 Wayland 原生窗"都谈不上——它根本取不回像素。门户那条（Screenshot）同一时刻能出 2560×1440。

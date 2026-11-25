@@ -77,6 +77,9 @@ fn spawn_probe_with(
 }
 
 pub struct IceApp {
+    /// Linux 档自绘标题栏时，系统装饰是否已经关掉（启动那一帧补一刀用）
+    #[cfg(target_os = "linux")]
+    chrome_ready: bool,
     pub state: AppState,
     runtime: Runtime,
     runner: JobRunner,
@@ -208,6 +211,8 @@ impl IceApp {
             pending_save: PendingSave::None,
             hotkeys_started: false,
             root_opaque_pending: true,
+            #[cfg(target_os = "linux")]
+            chrome_ready: false,
             shots_dir,
             lock,
             key_probe,
@@ -489,7 +494,11 @@ impl IceApp {
                 let area = (self.state.mode() == UiMode::Compact)
                     .then(area_for)
                     .flatten();
-                self.apply_snap(ctx, settled, area);
+                match crate::system::screen::frame_rect(settled) {
+                    Some(settled) => self.apply_snap(ctx, settled, area),
+                    // 框还没套上：这一次吸附先不判，位置照旧落盘由下一帧/下一次拖动补
+                    None => self.flush_config(true),
+                }
             }
             // 还在等静止：续一帧重绘。原生拖拽结束后事件循环未必还有别的理由再画一帧，
             // 不续的话"静止满 150ms"永远等不到，吸附一次都不会发生。
@@ -528,6 +537,12 @@ impl IceApp {
             }
             return;
         }
+        // Linux 档的拖动都由自绘标题栏发起（`StartDrag` 那条路自己 `arm`），
+        // 这里再按"几何在动"去 arm 反而会把**启动落位**当成用户拖动：2026-11-26 实测，
+        // 去装饰后启动那一帧窗口被摆到 x=0，静止 150ms 后就被当成"拖到左边松手"吸上了左边缘。
+        if cfg!(target_os = "linux") && !cfg!(test) {
+            return;
+        }
         if moved
             && was_still
             && !self.drag_settler.is_armed()
@@ -552,6 +567,27 @@ impl IceApp {
         // 别让用户去 Dock 里找窗口。REQ-009 的启动路径与插拔恢复在 T-010 接上，
         // 这里先覆盖"拖完就丢"这一种。
         if !area.intersect(settled).is_positive() {
+            // Linux 档：整块拖到屏幕外也是"往边上拖"的一种，按近的那一侧收进去
+            // （用户 2026-11-26："停靠屏幕边上，或者一部分超出屏幕都要收进去"）。
+            #[cfg(target_os = "linux")]
+            if !cfg!(test) {
+                let edge = if settled.center().x < area.center().x {
+                    DockEdge::Left
+                } else {
+                    DockEdge::Right
+                };
+                self.state.config.ui.docked_edge = edge;
+                self.dock_anchor = None;
+                self.dock_shown = false;
+                let x = if edge == DockEdge::Left {
+                    area.min.x
+                } else {
+                    area.max.x - settled.width()
+                };
+                self.place_compact(ctx, Pos2::new(x, settled.min.y), edge);
+                ctx.request_repaint();
+                return;
+            }
             let fitted = mode::fit_into_area(settled, area);
             self.place_compact(ctx, fitted.min, self.state.config.ui.docked_edge);
             return;
@@ -578,10 +614,31 @@ impl IceApp {
             self.state.config.ui.snap_threshold_px,
             self.state.config.ui.dock_sliver_px,
         );
+        // Linux 档（D-L1）：贴边之后**不在这里收**——Mutter 不让挪出屏幕，收的动作是
+        // `watch_dock` 里那条"去装饰窄条"。这里先把窗落到边内、把锚点清掉让它去收。
+        #[cfg(target_os = "linux")]
+        let (snapped, edge) = if edge != DockEdge::None && !cfg!(test) {
+            let x = if edge == DockEdge::Right {
+                area.max.x - settled.width()
+            } else {
+                area.min.x
+            };
+            self.dock_anchor = None;
+            (
+                Rect::from_min_size(Pos2::new(x, settled.min.y), settled.size()),
+                edge,
+            )
+        } else {
+            (snapped, edge)
+        };
         // 吸附结果与当前几何一致时一个命令都不发：否则程序自己挪的那一次又会被下一轮
         // 判定当成"移动"，150ms 后再吸附一次，无限循环且每轮写盘（REQ-009 的节流被打穿）
-        let already_there =
-            (snapped.min - settled.min).length() <= 0.5 && edge == self.state.config.ui.docked_edge;
+        // Linux 档贴边时**不许**走"位置没变就算了"：收起态是另一套几何（窄条），
+        // 窗口此刻停在边上并不等于已经收好（用户 2026-11-26："有时候停靠边上还是收不进去"）
+        let linux_edge = cfg!(target_os = "linux") && !cfg!(test) && edge != DockEdge::None;
+        let already_there = !linux_edge
+            && (snapped.min - settled.min).length() <= 0.5
+            && edge == self.state.config.ui.docked_edge;
         if already_there {
             self.flush_config(true);
             return;
@@ -606,7 +663,9 @@ impl IceApp {
     ///
     /// 层级也在这里对齐：停靠边的唯一改动入口就是它，吸附落位要升到置顶层级
     /// （AppKit 的 `.floating`，Q-012），解除停靠要降回用户的置顶开关，两处都不用等到下一帧。
-    fn place_compact(&mut self, ctx: &egui::Context, position: Pos2, edge: DockEdge) {
+    fn place_compact(&mut self, ctx: &egui::Context, frame_position: Pos2, edge: DockEdge) {
+        // 判据在"框"坐标里算，下发换回客户窗坐标（Linux 上两者差一层窗口管理器边框）
+        let position = crate::system::screen::client_origin(frame_position);
         tracing::debug!(x = position.x, y = position.y, ?edge, "下发窗口原点");
         ctx.send_viewport_cmd(ViewportCommand::OuterPosition(position));
         // 记下这次是"自己要求的移动"，`observe_native_move` 在它落地前不认成用户拖动
@@ -906,7 +965,14 @@ impl IceApp {
             }
             titlebar::Outcome::Unavailable => {
                 if !ZOOM_UNHOOKED_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    #[cfg(target_os = "macos")]
                     tracing::warn!("接不上标题栏绿键，从精简窗切回全量只剩 Cmd+Shift+M");
+                    #[cfg(target_os = "linux")]
+                    tracing::warn!(
+                        "Linux 档没有标题栏绿键；从精简窗切回全量用界面那颗，或 Ctrl+Shift+M"
+                    );
+                    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                    tracing::warn!("这台机器上没有标题栏绿键；切回全量只剩快捷键");
                 }
             }
         }
@@ -1089,7 +1155,34 @@ impl IceApp {
             // 读不到几何（还没建好、或正在最小化）：这一帧什么都判不了
             return;
         };
-        let window = Rect::from_min_size(outer.min, inner.size());
+        // Linux 上 `outer` 是客户窗，用户看见的是外面那层框：吸附、热区、唤出都按框算。
+        // 框还没套上（建窗后约 1.4 秒内）就这一帧什么都不做——按"没有框"算一遍的代价是
+        // 锚点定死、收位永远偏 25px（真机"露出鸡脚"就是它）。
+        let client_rect = Rect::from_min_size(outer.min, inner.size());
+        // 收起条是**去装饰**的，本来就没有框：这时 `frame_rect` 会一直交回 `None`，
+        // 用它早退就永远处理不到悬停。所以收起态退回客户窗矩形（无装饰时两者就是同一个）。
+        let tucked_strip = self.dock_anchor.is_some() && !self.dock_shown;
+        let window = match crate::system::screen::frame_rect(client_rect) {
+            Some(window) => window,
+            None if tucked_strip => client_rect,
+            None => return,
+        };
+
+        // 自愈：配置说"在这一侧停靠"，但窗口还不是那条窄条（刚拖到边上、或从唤出态被
+        // 中断）——重落一次。稳态下宽度就是 sliver，这条不触发。
+        if cfg!(target_os = "linux")
+            && !cfg!(test)
+            && !self.dock_shown
+            && self.dock_anchor.is_some()
+        {
+            let sliver = self.state.config.ui.dock_sliver_px;
+            if (window.width() - sliver).abs() > 0.5 && !self.pending_geometry.is_pending() {
+                if let Some(area) = area_for() {
+                    self.land_dock(ctx, window, area, edge);
+                    return;
+                }
+            }
+        }
 
         // 锚点缺失 = 这一次"停靠"还没真正落到位：带着停靠态启动，或切进简洁形态时盘上存的
         // 是唤出位的 x（上一次在唤出态被强杀）。按配置里的边重算收起位再下发，幂等。
@@ -1100,7 +1193,6 @@ impl IceApp {
             self.land_dock(ctx, window, area, edge);
             return;
         }
-
         // 指针在屏幕坐标系里的位置：**先问窗口服务器**。`hover_pos()` 量的是"事件投递给我们了
         // 没有"，应用不在前台时它会说指针不见了，而用户的鼠标还压在条上——收回计时就是这么
         // 提前跑起来的（D-22，症状与判据见 `mode::DOCK_HOVER_PAD`）。
@@ -1111,14 +1203,30 @@ impl IceApp {
                 .map(|at| at + outer.min.to_vec2())
         });
         // 创口带判定用窗口内坐标：唤出与收回都会整条挪窗，指针在窗口里的相对位置才是热区本身
-        let local = Rect::from_min_size(Pos2::ZERO, inner.size());
+        let local = Rect::from_min_size(Pos2::ZERO, window.size());
         let pointer = cursor
             .filter(|at| window.contains(*at))
-            .map(|at| Pos2::new(at.x - outer.min.x, at.y - outer.min.y));
+            .map(|at| Pos2::new(at.x - window.min.x, at.y - window.min.y));
         // "走开了"要走出外扩那一圈才算：正好压在边线上、鼠标还在去的路上不算走开
         let away = mode::walked_away(window, cursor);
         if self.dock_shown {
-            if !away || self.state.focus_in_source || ctx.input(|i| i.pointer.any_down()) {
+            // Linux 档（2026-11-26 用户口径）：**没聚焦就 1 秒后自动收回**——窗口弹出来只要
+            // 没被点进来（输入行没焦点、窗口没焦点、没按住），到点就收；聚焦期间不打扰。
+            // mac 那支仍按"走出窗口外扩一圈才算走开"（改不得：那是 D-22 的实测口径）。
+            let linux_unfocused = cfg!(target_os = "linux") && !cfg!(test);
+            let any_down = ctx.input(|i| i.pointer.any_down());
+            let stay = if linux_unfocused {
+                // 2026-11-26 用户口径（第二次修正）：**指针还在窗口里就别收**——他在调主题
+                // 滑块，指针还没出界面窗就自己收回去了（mac 早期也是这个毛病，后修的）。
+                // 之前那版按"窗口焦点/是否按着"判，松手后 1 秒就收，正好在他看效果时消失。
+                // 真要收回：指针离开窗口（不是那圈 24px 缓冲）0.5 秒后收。
+                any_down || window.contains(cursor.unwrap_or(Pos2::new(f32::INFINITY, 0.0)))
+            } else {
+                // mac 那支保持原样：只看"走出外扩圈"与输入行焦点，**不看**窗口焦点
+                !away || self.state.focus_in_source || any_down
+            };
+            let wait = mode::DOCK_AUTO_HIDE;
+            if stay {
                 // 指针还在附近，或正在输入行里打字、按住窗口拖到了边外（选译文选出了界）：
                 // 那几种情况下"指针离开"是操作的一部分，不是"不看我了"（REQ-003 的例外）
                 self.dock_left_at = None;
@@ -1126,7 +1234,7 @@ impl IceApp {
                 let now = Instant::now();
                 let since = *self.dock_left_at.get_or_insert(now);
                 let gone = now.duration_since(since);
-                if gone >= mode::DOCK_AUTO_HIDE {
+                if gone >= wait {
                     let Some(area) = area_for() else {
                         return;
                     };
@@ -1138,7 +1246,7 @@ impl IceApp {
                     return;
                 } else {
                     // 一次性续期：收回计时是这里唯一需要"没人动鼠标也要醒"的东西
-                    ctx.request_repaint_after(mode::DOCK_AUTO_HIDE - gone);
+                    ctx.request_repaint_after(wait - gone);
                 }
             }
         } else {
@@ -1170,8 +1278,55 @@ impl IceApp {
     ///
     /// 已经在位时只补锚点、一个命令都不发：程序自己挪的那一次会被静止判定当成松手，
     /// 白写一次盘。
+    /// Linux 档的"收起"（缺陷 D-L1）：Mutter **不允许**把托管窗挪出屏幕（实测请求 x=-479 被夹回 0），
+    /// 所以 mac 那条"整条挪到边外只留 sliver"在这档物理上做不到。等价做法：
+    /// **去掉窗口装饰 + 把窗口缩成 `sliver` 宽的一条**贴在边上（去装饰是必须的：留着框的话，
+    /// 框左右各 25px 边框照样可见，屏幕上会是 31px）。唤出 = 装回装饰 + 恢复尺寸。
+    /// 无头测试不跑这一支（测试喂合成矩形、验的是 mac 那套判据）。
+    #[cfg(target_os = "linux")]
+    fn linux_strip(&self) -> bool {
+        !cfg!(test)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn tuck_as_strip(&mut self, ctx: &egui::Context, strip: Rect) {
+        ctx.send_viewport_cmd(ViewportCommand::Decorations(false));
+        ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(strip.size()));
+        ctx.send_viewport_cmd(ViewportCommand::InnerSize(strip.size()));
+        ctx.send_viewport_cmd(ViewportCommand::OuterPosition(strip.min));
+        self.commanded = Some(strip.min);
+        self.state.config.ui.compact_rect.x = strip.min.x;
+        self.state.config.ui.compact_rect.y = strip.min.y;
+        self.dock_anchor = Some(strip.min);
+        self.state.mark_config_dirty();
+        self.flush_config(true);
+    }
+
+    /// 收起条落在哪（**客户窗坐标**，`OuterPosition` 收的就是它）
+    #[cfg(target_os = "linux")]
+    fn strip_rect(&self, area: Rect, edge: DockEdge, client_y: f32, client_h: f32) -> Rect {
+        let width = self.state.config.ui.dock_sliver_px;
+        let x = if edge == DockEdge::Right {
+            area.max.x - width
+        } else {
+            area.min.x
+        };
+        Rect::from_min_size(Pos2::new(x, client_y), egui::vec2(width, client_h))
+    }
+
     fn land_dock(&mut self, ctx: &egui::Context, window: Rect, area: Rect, edge: DockEdge) {
         self.drag_settler.disarm();
+        #[cfg(target_os = "linux")]
+        if self.linux_strip() {
+            let client_min = crate::system::screen::client_origin(window.min);
+            let client_h = mode::target_size(&self.state.config.ui, UiMode::Compact).y;
+            let strip = self.strip_rect(area, edge, client_min.y, client_h);
+            self.tuck_as_strip(ctx, strip);
+            self.dock_shown = false;
+            self.dock_latched = true;
+            ctx.request_repaint();
+            return;
+        }
         let tucked = mode::dock(window, area, edge, self.state.config.ui.dock_sliver_px);
         if (tucked.min - window.min).length() <= 0.5 {
             self.dock_anchor = Some(tucked.min);
@@ -1185,6 +1340,37 @@ impl IceApp {
 
     /// 悬停唤出：整条回到可用区内，锚点跟着搬到唤出位（TC-3.5-f）。**不改停靠边**。
     fn show_dock(&mut self, ctx: &egui::Context, window: Rect, area: Rect, edge: DockEdge) {
+        #[cfg(target_os = "linux")]
+        if self.linux_strip() {
+            self.drag_settler.disarm();
+            let full = mode::target_size(&self.state.config.ui, UiMode::Compact);
+            let client_min = crate::system::screen::client_origin(window.min);
+            let x = if edge == DockEdge::Right {
+                area.max.x - full.x
+            } else {
+                area.min.x
+            };
+            // **不许**在这里再把系统装饰装回来：标题栏现在是自绘的，装回来就是"两条标题栏"
+            // （2026-11-26 用户实测：贴边收起后再悬停唤出，白色系统标题栏又出现了）。
+            ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(mode::MIN_COMPACT_SIZE));
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(full));
+            // 唤出后**内容**要贴着边：直接给客户窗坐标，别走 `place_compact` 的
+            // "框→客户"换算（那会再让出 25px，看起来就是离边有距离）
+            let at = Pos2::new(x, client_min.y);
+            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(at));
+            self.commanded = Some(at);
+            self.state.config.ui.compact_rect.x = at.x;
+            self.state.config.ui.compact_rect.y = at.y;
+            self.state.config.ui.docked_edge = edge;
+            self.dock_anchor = Some(at);
+            self.state.mark_config_dirty();
+            self.flush_config(true);
+            mode::apply_topmost(ctx, &mut self.state);
+            self.dock_shown = true;
+            self.dock_left_at = None;
+            ctx.request_repaint();
+            return;
+        }
         let shown = mode::reveal_rect(window, area, edge);
         self.drag_settler.disarm();
         self.place_compact(ctx, shown.min, edge);
@@ -1197,6 +1383,19 @@ impl IceApp {
     ///
     /// 不关闸门的话，收回瞬间指针恰好还压在热区上 → 下一帧又唤出 → 500ms 后又收回，来回抖。
     fn hide_dock(&mut self, ctx: &egui::Context, window: Rect, area: Rect, edge: DockEdge) {
+        #[cfg(target_os = "linux")]
+        if self.linux_strip() {
+            self.drag_settler.disarm();
+            let client_min = crate::system::screen::client_origin(window.min);
+            let client_h = mode::target_size(&self.state.config.ui, UiMode::Compact).y;
+            let strip = self.strip_rect(area, edge, client_min.y, client_h);
+            self.tuck_as_strip(ctx, strip);
+            self.dock_shown = false;
+            self.dock_latched = true;
+            self.dock_left_at = None;
+            ctx.request_repaint();
+            return;
+        }
         let tucked = mode::dock(window, area, edge, self.state.config.ui.dock_sliver_px);
         self.drag_settler.disarm();
         self.place_compact(ctx, tucked.min, edge);
@@ -2340,6 +2539,9 @@ impl eframe::App for IceApp {
         // 整窗底色（含原生标题栏那条带子）跟着**这一帧生效的那套主题**走：`ui.visuals()` 就是
         // egui 解析完 `theme_preference` 之后真正在用的那套，与内容区同一个出处、同一个时刻
         self.apply_native_background(frame, ui.visuals().dark_mode);
+        // Linux 的标题栏归窗口管理器画：把这一帧的亮暗告诉它，否则就是"标题栏白、界面黑"
+        #[cfg(target_os = "linux")]
+        crate::system::window_x11::set_theme_variant(ui.visuals().dark_mode);
         // CHG-011：进程级透明让主窗也变半透明（事实 20），把**根窗**单独发回不透明。
         // 只在需要时发（首帧 + 换形态换窗后），不每帧骚扰。药丸那扇独立窗不受这条影响，仍浮空。
         if self.root_opaque_pending {
@@ -2379,6 +2581,18 @@ impl eframe::App for IceApp {
         let ai_available = self.ai_available();
         // 双击标题栏的改道只属于全量窗：形态在这里，判定也只在这一句
         self.apply_dblclick_hook(frame, &ctx, self.state.mode() == UiMode::Full);
+        // Linux 档的标题栏由我们画（去掉了系统装饰），两种形态都要先占掉这一条。
+        // 装饰在 `mode::apply` 里随形态切换一并去掉；这里兜住"启动时没走 apply"那一回。
+        #[cfg(target_os = "linux")]
+        {
+            if !self.chrome_ready {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+                self.chrome_ready = true;
+            }
+            // 圆角：去掉了系统装饰，四角由 SHAPE 掩码裁出来（内部按尺寸缓存，稳态不重下）
+            crate::system::window_x11::apply_rounded_corners(12);
+            views::chrome::show(ui, &mut effects, self.state.mode() == UiMode::Compact);
+        }
         match self.state.mode() {
             UiMode::Full => {
                 // 全量窗永不半透明（REQ-007 第四条），但这一档要在这里显式写回 100%：
@@ -4192,8 +4406,37 @@ mod tests {
     /// 1440×900 的屏上，一个 1080×720（外框 752 高）的全量窗被双击：
     /// 要铺到可用区 (0,25)-(1440,900)，也就是内尺寸 1440×(875-32)=1440×843。
     /// 护栏同时上膛——还原那一帧量到的还是整屏，不拦就被写进 `full_rect`（D-6 换个入口）。
+    /// 钉一块 1440×900 的假屏（可用区从 y=25 起，与 mac 菜单栏那条近似一致）。
+    ///
+    /// 这三个用例断言的是"可用区 = 整屏减去顶部那一条"。mac 上这件事天然成立：测试线程拿不到
+    /// `MainThreadMarker`，探针交回 `None`，走 `fallback_area`。Linux 的探针在测试线程也连得上
+    /// X，真去问就会拿本机显示器（2560×1440）算出另一组数——这里显式钉住，等于把那条
+    /// "测试里没有真屏幕"的假设补回来。
+    #[cfg(target_os = "linux")]
+    fn pin_desktop_1440x900() {
+        use crate::system::screen::{RawRect, RawScreen};
+        crate::system::screen::pin_geometry_for_test(vec![RawScreen {
+            frame: RawRect {
+                x: 0.0,
+                y: 0.0,
+                w: 1440.0,
+                h: 900.0,
+            },
+            visible: RawRect {
+                x: 0.0,
+                y: 0.0,
+                w: 1440.0,
+                h: 875.0,
+            },
+        }]);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn pin_desktop_1440x900() {}
+
     #[test]
     fn a_double_click_fills_the_work_area_and_arms_the_guard() {
+        pin_desktop_1440x900();
         let dir = tempfile::tempdir().unwrap();
         let mut app = app(dir.path(), plain_state());
         let c = ctx();
@@ -4347,6 +4590,7 @@ mod tests {
     /// 吸附落位时闸门是关着的，所以先用一帧"指针在窗口外"把它打开——这也证明开闸不需要挪窗口。
     #[test]
     fn hovering_the_strip_reveals_the_docked_window() {
+        pin_desktop_1440x900();
         let dir = tempfile::tempdir().unwrap();
         let c = ctx();
         let mut app = docked_app(dir.path(), &c);
@@ -4432,6 +4676,7 @@ mod tests {
     /// 闸门必须挡住下一次唤出，否则就是"弹出来→收回去"来回抖（TC-3.5-g）
     #[test]
     fn it_retracts_after_the_pointer_leaves_and_does_not_bounce_back() {
+        pin_desktop_1440x900();
         let dir = tempfile::tempdir().unwrap();
         let c = ctx();
         let mut app = docked_app(dir.path(), &c);

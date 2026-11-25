@@ -11,6 +11,8 @@
 //! 回信协议：`Reply` 三态、`classify` 判定、容量 4 的有界通道，结果只能问面板身上那个
 //! `URL`（[`reply_of`]）。
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))] // AppKit 的打开/保存面板；Linux 档按 NFR-7 如实降级
+
 use std::path::PathBuf;
 
 /// 面板回来后给界面的一条消息
@@ -168,9 +170,46 @@ pub fn request_save(
     true
 }
 
-/// 非 macOS 没有 AppKit 面板：恒 `false`，调用方给出降级提示（那台机器上「复制图片」还在，
-/// 所以这条路走不通不等于成品出不去，NFR-7）。
-#[cfg(not(target_os = "macos"))]
+/// Linux 档（CHG-017 T-014）：走门户的 `FileChooser.SaveFile`。
+///
+/// 与 mac 那条异步形状一致：这里只答"请求发出去没有"，结果从回信通道回来。
+/// 门户那条链会等到用户点完（最长 5 分钟），所以整段放进线程——UI 线程不许等它。
+///
+/// 两个实测决定：`parent_window` 必须是真实存在的 `x11:0x…`（空串时后端报
+/// "Failed to associate portal window with parent window"）；门户确实会回信
+/// （2026-11-25 深夜用户点"取消" → `code=1`、`uris=[]`），前一版"收不到回信"是探针
+/// 从没让对话框真正结束造成的误判。
+#[cfg(target_os = "linux")]
+pub fn request_save(
+    tx: &ReplySender,
+    ctx: &egui::Context,
+    default_name: &str,
+    allowed_types: &[&str],
+) -> bool {
+    let _ = allowed_types; // 过滤器本轮不传：默认名已经带扩展名，GNOME 按它猜类型
+    let sender = tx.clone();
+    let repaint = ctx.clone();
+    let name = default_name.to_string();
+    let parent = crate::system::window_x11::parent_window();
+    std::thread::spawn(move || {
+        let reply = match crate::system::portal::save_file(&parent, &name) {
+            crate::system::portal::SaveReply::Picked(path) => {
+                Reply::Picked(path.display().to_string())
+            }
+            crate::system::portal::SaveReply::Cancelled => Reply::Cancelled,
+            crate::system::portal::SaveReply::Unreachable
+            | crate::system::portal::SaveReply::Failed => Reply::Failed,
+        };
+        // 面板是我们的进程在等，用户那一下不会产生我们窗口的输入事件——手动叫一帧
+        let _ = sender.try_send(reply);
+        repaint.request_repaint();
+    });
+    true
+}
+
+/// 其余非 mac 平台没有 AppKit 面板也没有门户：恒 `false`，调用方给出降级提示
+/// （那台机器上「复制图片」还在，所以这条路走不通不等于成品出不去，NFR-7）。
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn request_save(
     _tx: &ReplySender,
     _ctx: &egui::Context,

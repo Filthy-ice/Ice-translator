@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "id": "CHG-017",
+  "title": "Linux 移植：mac 已实现能力按 X11/Wayland 分档补齐（OCR 识别本轮不做）",
+  "version": "v0.1",
+  "status": "IMPLEMENTING",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [
+    {
+      "id": "Q-1",
+      "blocking": true,
+      "question": "门户截图首次授权被拒或拿不到图（H1）时，Linux 侧要「隐藏截图入口并说明原因」还是改走「系统截图工具 + 读剪贴板」的替代入口？",
+      "resolution": "批准时按默认口径：门户拒授权/拿不到图则隐藏截图入口并说明原因，不做剪贴板替代入口；若 H1 实测成立本条自动作废（spec.md 未决问题）",
+      "source": "spec.md 未决问题 / 事实 F2、F3、H1"
+    },
+    {
+      "id": "Q-2",
+      "blocking": true,
+      "question": "XWayland 下置顶若被窗口管理器忽略，设置页要「显示置顶不保证」还是「直接隐藏该功能入口」？",
+      "resolution": "批准时按默认口径：置顶失效时设置页显示「当前桌面置顶不保证」，入口不隐藏（spec.md 未决问题）",
+      "source": "spec.md 未决问题 / 用户 2026-11-24 选定走 XWayland 换功能"
+    },
+    {
+      "id": "Q-3",
+      "blocking": false,
+      "question": "全局热键二期是否上 portal GlobalShortcuts（接口在场，本机权限库从未建表且首次要弹窗）？本轮只做 X11 XGrabKey。",
+      "resolution": "本轮不做，仅 X11 XGrabKey；portal GlobalShortcuts 记二期候选",
+      "source": "事实 F2、F3 / 非目标表"
+    },
+    {
+      "id": "Q-4",
+      "blocking": false,
+      "question": "19 条红测试中若存在 genuinely 依赖 mac 语义的断言，改成两档断言还是记入 Linux 行为差异并写进 docs/07？",
+      "resolution": "",
+      "source": "事实 F8 / REQ-012"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-24T15:39:44+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-11-24T15:46:57+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-11-24T15:47:02+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-24T15:55:00+00:00",
+      "action": "note",
+      "detail": "用户批准；追加硬约束「不要动 mac 和 win 的代码，改动只能涉及 linux 版本」，写入 spec.md 允许动作节"
+    },
+    {
+      "at": "2026-11-24T15:52:57+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2",
+        "version": "v0.1",
+        "by": "zhanghaobing",
+        "reference": "本会话 2026-11-24 用户回复「批准」（含平台边界硬约束追加后重算的快照）",
+        "at": "2026-11-24T15:52:57+00:00",
+        "snapshot": "approvals/v0.1-fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2.md",
+        "scope": "local-delivery",
+        "context_hash": "26129d74c984f372cc0f6a1f76efafab545fdda7c3a8359fccd5ad9603e89287",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    },
+    {
+      "at": "2026-11-24T16:01:19+00:00",
+      "action": "plan-stamp",
+      "detail": {
+        "change": "CHG-017",
+        "version": "v0.1",
+        "spec_hash": "fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2"
+      }
+    },
+    {
+      "at": "2026-11-24T16:02:47+00:00",
+      "action": "seal-plan",
+      "detail": "f0231689507e1f45fccb30499d499054cffb25aef5c8adf9b4fadcb0dbda74ec"
+    },
+    {
+      "at": "2026-11-24T16:02:57+00:00",
+      "action": "transition",
+      "detail": "IMPLEMENTING"
+    },
+    {
+      "at": "2026-11-24T17:06:21+00:00",
+      "action": "task-done",
+      "detail": "T-004"
+    },
+    {
+      "at": "2026-11-24T17:06:21+00:00",
+      "action": "task-done",
+      "detail": "T-005"
+    },
+    {
+      "at": "2026-11-24T17:06:22+00:00",
+      "action": "task-done",
+      "detail": "T-006"
+    },
+    {
+      "at": "2026-11-24T17:07:02+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-001",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-24T17:11:47+00:00",
+      "action": "task-done",
+      "detail": "T-001"
+    },
+    {
+      "at": "2026-11-24T17:12:04+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-005",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-24T17:13:32+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-005",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-24T17:23:04+00:00",
+      "action": "task-done",
+      "detail": "T-007"
+    },
+    {
+      "at": "2026-11-24T17:32:09+00:00",
+      "action": "task-done",
+      "detail": "T-008"
+    },
+    {
+      "at": "2026-11-24T17:36:34+00:00",
+      "action": "task-done",
+      "detail": "T-009"
+    },
+    {
+      "at": "2026-11-24T17:36:34+00:00",
+      "action": "task-done",
+      "detail": "T-010"
+    },
+    {
+      "at": "2026-11-24T17:36:34+00:00",
+      "action": "task-done",
+      "detail": "T-011"
+    },
+    {
+      "at": "2026-11-24T17:36:34+00:00",
+      "action": "task-done",
+      "detail": "T-013"
+    },
+    {
+      "at": "2026-11-24T18:12:13+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-004",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-24T18:12:17+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-006",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-25T14:45:13+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-008",
+        "result": "failed"
+      }
+    },
+    {
+      "at": "2026-11-25T14:47:40+00:00",
+      "action": "task-done",
+      "detail": "T-015"
+    },
+    {
+      "at": "2026-11-25T14:47:44+00:00",
+      "action": "task-done",
+      "detail": "T-016"
+    },
+    {
+      "at": "2026-11-25T14:47:44+00:00",
+      "action": "task-done",
+      "detail": "T-017"
+    },
+    {
+      "at": "2026-11-25T14:47:49+00:00",
+      "action": "check",
+      "detail": {
+        "verification": "V-002",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-25T14:53:05+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-010",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-25T14:53:05+00:00",
+      "action": "task-done",
+      "detail": "T-012"
+    },
+    {
+      "at": "2026-11-25T14:53:51+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-007",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-25T14:53:51+00:00",
+      "action": "task-done",
+      "detail": "T-002"
+    },
+    {
+      "at": "2026-11-25T14:53:51+00:00",
+      "action": "task-done",
+      "detail": "T-003"
+    },
+    {
+      "at": "2026-11-25T15:08:16+00:00",
+      "action": "record",
+      "detail": {
+        "verification": "V-008",
+        "result": "passed"
+      }
+    },
+    {
+      "at": "2026-11-25T15:08:16+00:00",
+      "action": "task-done",
+      "detail": "T-014"
+    }
+  ],
+  "approval": {
+    "hash": "fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2",
+    "version": "v0.1",
+    "by": "zhanghaobing",
+    "reference": "本会话 2026-11-24 用户回复「批准」（含平台边界硬约束追加后重算的快照）",
+    "at": "2026-11-24T15:52:57+00:00",
+    "snapshot": "approvals/v0.1-fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2.md",
+    "scope": "local-delivery",
+    "context_hash": "26129d74c984f372cc0f6a1f76efafab545fdda7c3a8359fccd5ad9603e89287",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": "f0231689507e1f45fccb30499d499054cffb25aef5c8adf9b4fadcb0dbda74ec"
+}

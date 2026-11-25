@@ -108,7 +108,14 @@ pub fn read() -> Vec<Entry> {
 
 /// 非 macOS 没有这张表：X11 那边要自己遍历 `_NET_CLIENT_LIST_STACKING` 并逐个问几何，
 /// Wayland 连全局窗口列表都不给客户端。恒空 = 认窗这一档自动缺席，拖选照常（NFR-7 的分档）。
-#[cfg(not(target_os = "macos"))]
+/// Linux 档（T-013）：X11 给得出叠放顺序与几何，就照 `_NET_CLIENT_LIST_STACKING` 认；
+/// Wayland 原生档没有这张表（连全局窗口列表都不给客户端），恒空、认窗自动缺席。
+#[cfg(target_os = "linux")]
+pub fn read() -> Vec<Entry> {
+    crate::system::window_x11::stacked_entries()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn read() -> Vec<Entry> {
     Vec::new()
 }

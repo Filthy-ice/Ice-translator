@@ -1,8 +1,9 @@
-//! 应用侧的系统集成：钥匙串、剪贴板、快捷键、文件面板、单实例锁、屏幕可用区、整窗底色与不透明度、标题栏绿键、Dock 磁贴图标、菜单栏托盘、鼠标按键现场状态、区域截图。
+//! 应用侧的系统集成：钥匙串、剪贴板、快捷键、文件面板、单实例锁、后端档位、屏幕可用区、整窗底色与不透明度、标题栏绿键、Dock 磁贴图标、菜单栏托盘、鼠标按键现场状态、区域截图。
 
 pub mod alpha;
 pub mod annotate;
 pub mod attach;
+pub mod backend;
 pub mod background;
 pub mod bar;
 pub mod capture;
@@ -17,6 +18,8 @@ pub mod mouse;
 pub mod panel;
 pub mod pill;
 pub mod pin;
+#[cfg(target_os = "linux")]
+pub mod portal;
 pub mod probe;
 pub mod screen;
 pub mod secrets;
@@ -25,8 +28,12 @@ pub mod shadow;
 pub mod single_instance;
 pub mod titlebar;
 pub mod tray;
+#[cfg(target_os = "linux")]
+pub mod tray_sni;
 #[cfg(target_os = "macos")]
 pub mod window;
+#[cfg(target_os = "linux")]
+pub mod window_x11;
 pub mod windows;
 
 /// 叫醒**主窗那一扇视口**。子窗（贴图窗、遮罩窗）里推完意图之后必须调它。

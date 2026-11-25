@@ -368,7 +368,10 @@ pub fn initial_viewport(cfg: &UiConfig) -> ViewportBuilder {
         .with_title("Ice Translator")
         .with_inner_size([rect.w, rect.h])
         .with_position([rect.x, rect.y])
-        .with_decorations(true)
+        // Linux 档：标题栏由 `views::chrome` 自绘（系统装饰按系统主题上色，与应用亮暗档
+        // 必然一边对不上）。建窗时就给 `false`——运行期再改在 X11 上不牢（实测窗口重建/重映
+        // 射时系统框会回来，屏幕上就是"两个标题栏"）。
+        .with_decorations(!cfg!(target_os = "linux"))
         .with_resizable(true)
         // 失焦半透明（REQ-007）要靠**窗口**的 alpha 通道，而 `ViewportCommand::Transparent`
         // 在 macOS 上不保证重建 surface，所以这个属性只能在创建期给（T-001 的 H3 实测成立：
@@ -634,6 +637,13 @@ pub fn apply(
     // 这一句必须在改 mode **之前**：`capture` 按 mode 选槽，先翻了 mode 就是把切换前的实时
     // 尺寸记进目标槽（缺陷 D-13，见 `AppState::next_mode`）。
     capture(ctx, state, pending);
+    // Linux 档：切到全量就**解除停靠**（2026-11-26 用户："双击变全量再切回精简，
+    // 位置变了、直接收进屏幕边缘"）。简洁窗的落点记的是收起条那个 x，不解除的话
+    // 切回来会立刻又收成 6px；解除后它停在边上、整条可见。
+    #[cfg(target_os = "linux")]
+    if mode == UiMode::Full && state.config.ui.docked_edge != crate::mode::DockEdge::None {
+        state.config.ui.docked_edge = crate::mode::DockEdge::None;
+    }
     state.set_mode(mode);
     // 换形态就是放弃铺满，且**必须在 `capture` 之后**清：铺满期间 `capture` 靠这个标记
     // 不写任何东西，实时的那个整屏尺寸因此从来没进过槽，切回来的几何还是"铺满之前"的。
@@ -643,6 +653,11 @@ pub fn apply(
     for command in commands_for_mode(&state.config.ui, mode) {
         ctx.send_viewport_cmd(command);
     }
+    // Linux 档：系统装饰后再补一刀"去掉它"——标题栏由 `views::chrome` 自绘，颜色才跟内容
+    // 同源（系统装饰由窗口管理器按**系统**主题上色，与应用的亮暗档必然有一边对不上）。
+    // 放在这里而不是 `commands_for_mode` 里：那个函数是纯的、被 mac 与测试共用。
+    #[cfg(target_os = "linux")]
+    ctx.send_viewport_cmd(ViewportCommand::Decorations(false));
     pending.set(target, Instant::now());
     apply_topmost(ctx, state);
     ctx.request_repaint();
@@ -1245,10 +1260,11 @@ mod tests {
             ..UiConfig::default()
         };
         let builder = initial_viewport(&compact);
+        // Linux 档自绘标题栏（2026-11-26），mac 仍是原生顶部栏
         assert_eq!(
             builder.decorations,
-            Some(true),
-            "Q-013：简洁形态启动也带原生顶部栏（最小化与关闭按钮在栏上）"
+            Some(!cfg!(target_os = "linux")),
+            "mac：简洁形态启动也带原生顶部栏；Linux：标题栏由 `views::chrome` 自绘"
         );
         assert_eq!(builder.inner_size, Some(Vec2::new(460.0, 160.0)));
         assert!(
@@ -1267,7 +1283,8 @@ mod tests {
             ..UiConfig::default()
         };
         let builder = initial_viewport(&full);
-        assert!(builder.decorations.unwrap_or(false));
+        // 同上：mac 有原生顶部栏，Linux 自绘
+        assert_eq!(builder.decorations, Some(!cfg!(target_os = "linux")));
         assert_eq!(builder.min_inner_size, Some(MIN_FULL_SIZE));
         assert_eq!(
             builder.transparent,

@@ -25,11 +25,19 @@
 //! 3. **这台机器上没有这个文件也得照常起来**：读不到就什么都不做，中文回落到系统 provider
 //!    （就是改动前的行为），并记一条 debug——不能因为找不到字体让界面空白。
 //!
+//! Linux 侧（CHG-017 REQ-008）多一条同样的纪律，只是**面号不是常量而是选出来的**：
+//! `NotoSansCJK-Regular.ttc` 的 8 个面里第 0 面是 JP、第 2 面才是 SC，`font_typeset` 那条自绘度量
+//! 与这里的 `FontData::from_blob` 必须落在同一个面上，否则"量出来的"和"看到的"是两种字形。
+//! 选面的唯一出处是 `ice_vision::paint::pick_primary_face`。
+//!
 //! 一个已知代价：`STHeiti Medium.ttc` 是 55MB，`FontData` 要求字面数据在内存里
 //! （`egui::FontData::from_blob` 只接 `Arc<[u8]>` 那类共享字节，没有文件映射的入口），
 //! 所以进程多常驻约 55MB。这是"固定用某个系统的某一款字体"的必要开销。
 
 use egui::{Context, FontData, FontDefinitions, FontFamily};
+#[cfg(target_os = "linux")]
+use ice_core::font::LINUX_CJK_CANDIDATES;
+#[cfg(not(target_os = "linux"))]
 use ice_core::font::{HEITI_PATH, HEITI_SC_FACE_INDEX};
 
 /// 装进 `FontDefinitions` 时用的族名，只在内部用，不上界面
@@ -46,11 +54,11 @@ pub const HEITI_CHECK_SAMPLE: &str =
 /// 光看界面只能靠肉眼，而"装上了却排在 Ubuntu-Light 后面"正是最容易犯又最难发现的错。
 /// 返回 `None` = 这台机器上拿不到这个文件。
 pub fn definitions() -> Option<FontDefinitions> {
-    let bytes = std::fs::read(HEITI_PATH).ok()?;
+    let (bytes, face) = system_cjk_font()?;
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         HEITI_FAMILY.to_owned(),
-        FontData::from_blob(std::sync::Arc::new(bytes), HEITI_SC_FACE_INDEX).into(),
+        FontData::from_blob(std::sync::Arc::new(bytes), face).into(),
     );
     // 正文与控件（Proportional）：黑体排在最前，拉丁一并换成黑体——用户要的是"全部"
     fonts
@@ -66,6 +74,27 @@ pub fn definitions() -> Option<FontDefinitions> {
         .map_or(mono.len(), |i| i + 1);
     mono.insert(at, HEITI_FAMILY.to_owned());
     Some(fonts)
+}
+
+/// 本机那支中文字体的字节与面号。
+///
+/// - mac（与 Windows 维持现状）：[`HEITI_PATH`] + [`HEITI_SC_FACE_INDEX`]，路径与面号都是
+///   `ice_core::font` 里钉死的常量，取值与 `aa6c050` 逐字相同；
+/// - Linux（CHG-017 REQ-008）：按 [`LINUX_CJK_CANDIDATES`] 顺序试，面号交给
+///   `ice_vision::paint::pick_primary_face` 现选——**与自绘度量同一条选面规则**，
+///   这样屏幕上看到的字与量出来的框宽不可能来自两个面。
+#[cfg(not(target_os = "linux"))]
+fn system_cjk_font() -> Option<(Vec<u8>, u32)> {
+    Some((std::fs::read(HEITI_PATH).ok()?, HEITI_SC_FACE_INDEX))
+}
+
+#[cfg(target_os = "linux")]
+fn system_cjk_font() -> Option<(Vec<u8>, u32)> {
+    LINUX_CJK_CANDIDATES.iter().find_map(|path| {
+        let bytes = std::fs::read(path).ok()?;
+        let face = ice_vision::paint::pick_primary_face(&bytes)?;
+        Some((bytes, face))
+    })
 }
 
 /// 把黑体装成界面首选字体。返回 `false` = 这台机器上拿不到这个文件，界面按改动前的方式跑。

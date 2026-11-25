@@ -30,8 +30,19 @@ pub fn left_button_down() -> Option<bool> {
     Some(NSEvent::pressedMouseButtons() & LEFT_BUTTON_BIT != 0)
 }
 
-/// 非 macOS 没有等价且免权限的"硬件按键状态"入口，恒返回 `None`，由调用方退回时间判定。
-#[cfg(not(target_os = "macos"))]
+/// Linux 档：问窗口服务器当前的按键掩码（`XQueryPointer` 的 `mask` 第 8 位＝左键）。
+/// 与 mac 的 `+pressedMouseButtons` 同一个思路：读的是服务器里的当前状态，不是事件流。
+#[cfg(target_os = "linux")]
+pub fn left_button_down() -> Option<bool> {
+    if cfg!(test) {
+        // 测试里恒"不知道"：与 mac 上测试线程拿不到 `MainThreadMarker` 是同一个效果。
+        // 真去问 X 会把跑测试那一刻的真实光标读进来，无头断言就被"他当时鼠标在哪"左右。
+        return pinned_pointer().map(|(_, _, mask)| mask & super::window_x11::BUTTON1_MASK != 0);
+    }
+    super::window_x11::pointer().map(|(_, _, mask)| mask & super::window_x11::BUTTON1_MASK != 0)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn left_button_down() -> Option<bool> {
     None
 }
@@ -57,9 +68,38 @@ pub fn cursor() -> Option<egui::Pos2> {
     ))
 }
 
-/// 非 macOS 上等价入口是 Wayland 的死路（`zwp_pointer_constraints` 那一套拿不到全局光标），
-/// 恒返回 `None`，由调用方退回事件代理量。
-#[cfg(not(target_os = "macos"))]
+/// Linux 档：`XQueryPointer` 给的是 root 坐标（左上原点），与 egui 的坐标系同一个原点，
+/// 不需要 mac 那道翻转。问不到（没有 X）交回 `None`，调用方照旧退回事件代理量。
+#[cfg(target_os = "linux")]
+pub fn cursor() -> Option<egui::Pos2> {
+    let (x, y, _) = if cfg!(test) {
+        pinned_pointer()?
+    } else {
+        super::window_x11::pointer()?
+    };
+    Some(egui::pos2(x as f32, y as f32))
+}
+
+/// 测试里那条线程钉住的答案；生产构建恒 `None`（`cfg!(test)` 那两处就会直接去问 X）
+#[cfg(target_os = "linux")]
+fn pinned_pointer() -> Option<(i32, i32, u16)> {
+    #[cfg(test)]
+    {
+        TEST_POINTER.with(|slot| (*slot.borrow()).flatten())
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+thread_local! {
+    static TEST_POINTER: std::cell::RefCell<Option<Option<(i32, i32, u16)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub const fn cursor() -> Option<egui::Pos2> {
     None
 }

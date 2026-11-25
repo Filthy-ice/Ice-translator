@@ -32,6 +32,7 @@
 //! 本机实测过的（探针按这些码注册、他按下就命中）。其余那批是公开表抄来的，**没实测**——
 //! 所以 W-5.1 走查改过键之后要真按一次，不许把没量的那半张表当成量过的。
 
+#[cfg(target_os = "macos")]
 use std::ffi::c_void;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -41,12 +42,16 @@ use ice_core::config::{BaseKey, Combo, HotkeyConfig};
 use crate::system::hotkeys::Action;
 
 /// Carbon 的事件类：`kEventClassKeyboard`（`CarbonEvents.h:1339`，值是四字符码 `'keyb'`）
+#[cfg(target_os = "macos")]
 const K_EVENT_CLASS_KEYBOARD: u32 = 0x6B65_7962;
 /// `kEventHotKeyPressed`（`CarbonEvents.h:4693`）：**是个整数 5**，不是四字符码
+#[cfg(target_os = "macos")]
 const K_EVENT_HOT_KEY_PRESSED: u32 = 5;
 /// `kEventParamDirectObject`（`CarbonEventsCore.h:178`），值是 `'----'`
+#[cfg(target_os = "macos")]
 const K_EVENT_PARAM_DIRECT_OBJECT: u32 = 0x2D2D_2D2D;
 /// `typeEventHotKeyID`（`CarbonEvents.h:376`），值是 `'hkid'`
+#[cfg(target_os = "macos")]
 const TYPE_EVENT_HOT_KEY_ID: u32 = 0x686B_6964;
 
 /// Carbon 的修饰键掩码（`Events.h` 的 bit 8..12）。`rightShift`/`rightOption`/`rightControl`
@@ -57,11 +62,13 @@ const CARBON_OPTION: u32 = 1 << 11;
 const CARBON_CONTROL: u32 = 1 << 12;
 
 /// 我们自己的 signature，回信里用来确认"这是我们注册的那批键"
+#[cfg(target_os = "macos")]
 const HOT_KEY_SIGNATURE: u32 = 0x4943_4531; // 'ICE1'
 const ID_CAPTURE: u32 = 1;
 const ID_PIN_LAST: u32 = 2;
 const ID_REOPEN: u32 = 3;
 
+#[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct EventTypeSpec {
@@ -69,6 +76,7 @@ struct EventTypeSpec {
     event_kind: u32,
 }
 
+#[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct EventHotKeyID {
@@ -76,6 +84,7 @@ struct EventHotKeyID {
     id: u32,
 }
 
+#[cfg(target_os = "macos")]
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
     fn GetEventDispatcherTarget() -> *mut c_void;
@@ -120,14 +129,19 @@ const CODE_REOPEN: u8 = 3;
 ///
 /// Carbon 给的是裸指针（不是引用计数对象，也不归我们释放内存，只作为注销凭据），
 /// 而它只在主线程被创建、被注销——这份 `Send` 是照这个前提给的，不是"反正编译器要求"。
+#[cfg(target_os = "macos")]
 struct HandleList(std::vec::Vec<*mut c_void>);
 // SAFETY: 句柄只在主线程 `apply()` 与 `unregister_all()` 里读写，跨线程搬运没有实际发生
+#[cfg(target_os = "macos")]
 unsafe impl Send for HandleList {}
 
+#[cfg(target_os = "macos")]
 static HANDLER_ARMED: OnceLock<()> = OnceLock::new();
 
+#[cfg(target_os = "macos")]
 static HANDLES: OnceLock<std::sync::Mutex<HandleList>> = OnceLock::new();
 
+#[cfg(target_os = "macos")]
 fn handles() -> &'static std::sync::Mutex<HandleList> {
     HANDLES.get_or_init(|| std::sync::Mutex::new(HandleList(Vec::new())))
 }
@@ -137,6 +151,7 @@ fn handles() -> &'static std::sync::Mutex<HandleList> {
 /// **只做两件事**：把码写进原子位、叫循环重绘。这里不索引、不解包、不分配——回调跑在
 /// Carbon 的调用栈上，panic 会跨过 FFI 边界。参数顺序按 `CarbonEventsCore.h:893`
 /// （大小、实际大小出参、数据出参），写反不报错、只在派发时读脏。
+#[cfg(target_os = "macos")]
 extern "C" fn on_hot_key(_call: *mut c_void, event: *mut c_void, _user: *mut c_void) -> i32 {
     let mut id = EventHotKeyID {
         signature: 0,
@@ -200,10 +215,10 @@ impl HotkeyFailure {
     }
 }
 
-/// 这一格能力只在 mac 有实现（Windows 的 `RegisterHotKey` 与本包的 Linux 那一档都只登记
-/// 不实现，见 `docs/05` §8 与 `capability()`）。非 mac 上 `apply` 恒 `Err(Unavailable)`，
-/// 而调用点本来就该被这个常量挡住——两处都留是为了"忘了判平台"时也不会真去调 Carbon。
-pub const SUPPORTED: bool = cfg!(target_os = "macos");
+/// 这一格能力在 mac（Carbon）与 Linux 的 X11 档（`XGrabKey`）有实现；Windows 只登记不实现
+/// （`docs/05` §8 与 `capability()`）。Wayland 原生档上 Linux 也会在注册那一刻拿到
+/// `Err(Unavailable)`——判据在 `capability().hotkey`，这里只是"这个构建有没有写实现"。
+pub const SUPPORTED: bool = cfg!(any(target_os = "macos", target_os = "linux"));
 
 /// 主线程调用一次：存下 `Context` 并装上 handler。
 ///
@@ -211,6 +226,11 @@ pub const SUPPORTED: bool = cfg!(target_os = "macos");
 /// 的派发挂在主 run loop 上，而实测 eframe/winit 那个 AppKit 循环会替我们派发（事实 35）。
 pub fn arm(ctx: &egui::Context) {
     let _ = CONTEXT.set(ctx.clone());
+    install_handler();
+}
+
+#[cfg(target_os = "macos")]
+fn install_handler() {
     // handler 只装一次：重复装会攒出多份回调，一次按下派发多遍（`PENDING` 是覆盖式的，
     // 症状反而是"只响一次"，更难查）
     if HANDLER_ARMED.set(()).is_err() {
@@ -235,6 +255,9 @@ pub fn arm(ctx: &egui::Context) {
         tracing::warn!(code = status, "全局热键的处理器装不上");
     }
 }
+
+#[cfg(not(target_os = "macos"))]
+fn install_handler() {}
 
 /// 一条要注册出去的键：号、虚拟键码、Carbon 掩码，以及它是哪一格（撞车时报得出名字）
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,6 +313,11 @@ pub fn apply(config: &HotkeyConfig) -> Result<(), HotkeyFailure> {
     if !SUPPORTED {
         return Err(HotkeyFailure::Unavailable);
     }
+    apply_carbon(config)
+}
+
+#[cfg(target_os = "macos")]
+fn apply_carbon(config: &HotkeyConfig) -> Result<(), HotkeyFailure> {
     // 先注销旧的：同一把键重复注册返回 -9878，所以"改键"不是"再注册一次"就完事
     unregister_all();
     let plan = registration_plan(config).map_err(|(name, other)| {
@@ -316,9 +344,277 @@ pub fn apply(config: &HotkeyConfig) -> Result<(), HotkeyFailure> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn apply_carbon(config: &HotkeyConfig) -> Result<(), HotkeyFailure> {
+    x11_hotkeys::apply(config)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn apply_carbon(_config: &HotkeyConfig) -> Result<(), HotkeyFailure> {
+    Err(HotkeyFailure::Unavailable)
+}
+
+/// Linux 档的全局热键（CHG-017 T-011，design D-8）：`XGrabKey` 抓 root，事件只写
+/// `PENDING` 这一个原子位、只叫一次重绘——**不开第二条分派路径**
+/// （本文件文件头"图钉那次两条通道各走各的"就是这条纪律的来源）。
+///
+/// 四条本机逼出来的形状：
+///
+/// 1. **同一个组合抓四遍**（带上 CapsLock / NumLock 的掩码）。不抓变体的话，开着大写或
+///    小键盘时按键的 `state` 多一位，匹配不上，用户看到的就是"偶尔不好使"。
+/// 2. **注册失败看 cookie 而不是返回值**：X11 的错误是异步回来的，`grab_key` 本身几乎
+///    总成功，`BadAccess` 在 `cookie.check()` 那一刻才出现——那正是"被别的软件占了"。
+/// 3. **一条连接、一条读事件的线程**：请求（抓/放）由任意线程发，事件只由那条线程读；
+///    同一个 `RustConnection` 内部是串行化的，多线程发请求是支持的用法。
+/// 4. **连不上 X 就是 `Unavailable`**：Wayland 原生档上本来就没有 root 可抓，
+///    设置页那句"只能用图片页那颗按钮"正是在这一档说的。
+#[cfg(target_os = "linux")]
+mod x11_hotkeys {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
+
+    use ice_core::config::{BaseKey, Combo, HotkeyConfig, is_unbound, parse_combo};
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{ConnectionExt as _, Grab, GrabMode, ModMask, Window};
+    use x11rb::rust_connection::RustConnection;
+
+    use super::{
+        CODE_CAPTURE, CODE_NONE, CODE_PIN_LAST, CODE_REOPEN, CONTEXT, HotkeyFailure, ID_CAPTURE,
+        ID_PIN_LAST, ID_REOPEN, PENDING, registration_plan,
+    };
+
+    const SHIFT: u16 = 1 << 0;
+    const LOCK: u16 = 1 << 1;
+    const CONTROL: u16 = 1 << 2;
+    const ALT: u16 = 1 << 3;
+    const NUM: u16 = 1 << 4;
+    const SUPER: u16 = 1 << 6;
+
+    /// 一条已经抓在手里的键（`mods` 是不含锁位变体的那组基础掩码）
+    struct Bound {
+        keycode: u8,
+        mods: u16,
+        id: u32,
+    }
+
+    static BOUND: Mutex<Vec<Bound>> = Mutex::new(Vec::new());
+    static CONN: OnceLock<(RustConnection, Window)> = OnceLock::new();
+    static READER: OnceLock<()> = OnceLock::new();
+
+    pub(super) fn apply(config: &HotkeyConfig) -> Result<(), HotkeyFailure> {
+        // 自撞车在这一层先判掉：与 mac 共用同一条计划（报错里带得出是哪两条）
+        registration_plan(config).map_err(|(name, other)| {
+            tracing::warn!(hotkey = name, conflicts = other, "两条动作撞在同一个组合上");
+            HotkeyFailure::SelfConflict
+        })?;
+        let (conn, root) = match connect() {
+            Some(pair) => pair,
+            // 没有 X：Wayland 原生档（或 XWayland 没起）。这句话交给 `explain()` 去说
+            None => return Err(HotkeyFailure::Unavailable),
+        };
+        install_reader(conn, root);
+        // 先放旧的再抓新的（改键不是"再注册一次"）
+        conn.ungrab_key(Grab::ANY, root, ModMask::ANY).ok();
+        conn.flush().ok();
+
+        let mut bound: Vec<Bound> = Vec::new();
+        for (id, name, raw) in [
+            (ID_CAPTURE, "capture", &config.capture),
+            (ID_PIN_LAST, "pin_last", &config.pin_last),
+            (ID_REOPEN, "reopen", &config.reopen),
+        ] {
+            if is_unbound(raw) {
+                continue;
+            }
+            let Some(combo) = parse_combo(raw) else {
+                tracing::warn!(hotkey = name, "快捷键认不出来，这一把不注册");
+                continue;
+            };
+            let Some(keysym) = keysym_of(&combo.base) else {
+                tracing::warn!(hotkey = name, "快捷键用的键我们不支持，这一把不注册");
+                continue;
+            };
+            let Some(keycode) = keycode_for(conn, keysym) else {
+                tracing::warn!(hotkey = name, "这个键位在当前键盘布局里没有键码");
+                continue;
+            };
+            let mods = mods_of(&combo);
+            for extra in [0, LOCK, NUM, LOCK | NUM] {
+                let mask = ModMask::from(mods | extra);
+                let grabbed = match conn.grab_key(
+                    false,
+                    root,
+                    mask,
+                    keycode,
+                    GrabMode::ASYNC,
+                    GrabMode::ASYNC,
+                ) {
+                    // X11 的错误是异步回来的：`check()` 那一刻才看到 BadAccess
+                    Ok(cookie) => cookie.check().is_ok(),
+                    Err(_) => false,
+                };
+                if !grabbed {
+                    // BadAccess：这个组合已经被别人（或我们自己上一轮）抓着了
+                    let _ = conn.ungrab_key(Grab::ANY, root, ModMask::ANY);
+                    conn.flush().ok();
+                    let taken = HotkeyFailure::Taken;
+                    tracing::warn!(hotkey = name, "全局热键抓不到（被占用或同一组合重复）");
+                    return Err(taken);
+                }
+            }
+            bound.push(Bound { keycode, mods, id });
+        }
+        conn.flush().ok();
+        if let Ok(mut slot) = BOUND.lock() {
+            *slot = bound;
+        }
+        Ok(())
+    }
+
+    fn connect() -> Option<(&'static RustConnection, Window)> {
+        if let Some(pair) = CONN.get() {
+            return Some((&pair.0, pair.1));
+        }
+        let (conn, screen_num) = x11rb::connect(None).ok()?;
+        let root = conn.setup().roots[screen_num].root;
+        let _ = CONN.set((conn, root));
+        let pair = CONN.get()?;
+        Some((&pair.0, pair.1))
+    }
+
+    /// 读事件的那条线程：只读一次装，X 断了就退出（没有可服务的根窗了）
+    fn install_reader(conn: &'static RustConnection, root: Window) {
+        if READER.set(()).is_err() {
+            return;
+        }
+        std::thread::spawn(move || {
+            let mut backoff = Duration::from_millis(50);
+            loop {
+                match conn.wait_for_event() {
+                    Ok(event) => on_event(event, root),
+                    Err(_) => {
+                        // 连接坏了：睡一小会儿再试，避免空转；真断了就再也醒不来
+                        std::thread::sleep(backoff);
+                        backoff = (backoff * 2).min(Duration::from_secs(2));
+                    }
+                }
+            }
+        });
+    }
+
+    fn on_event(event: x11rb::protocol::Event, root: Window) {
+        let x11rb::protocol::Event::KeyPress(press) = event else {
+            return;
+        };
+        if press.event != root {
+            return;
+        }
+        let state = u16::from(press.state) & !(LOCK | NUM);
+        let id = BOUND.lock().ok().and_then(|list| {
+            list.iter()
+                .find(|b| b.keycode == press.detail && b.mods == state)
+                .map(|b| b.id)
+        });
+        let code = match id {
+            Some(ID_CAPTURE) => CODE_CAPTURE,
+            Some(ID_PIN_LAST) => CODE_PIN_LAST,
+            Some(ID_REOPEN) => CODE_REOPEN,
+            _ => CODE_NONE,
+        };
+        if code != CODE_NONE {
+            PENDING.store(code, std::sync::atomic::Ordering::SeqCst);
+            // 停摆的帧循环不会自己醒：这一句就是那 104 毫秒（事实 38，Linux 同样成立）
+            if let Some(ctx) = CONTEXT.get() {
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    /// `BaseKey` → X11 keysym。拉丁字母/数字的 keysym 就是它们的 ASCII
+    pub(super) fn keysym_of(base: &BaseKey) -> Option<u32> {
+        Some(match base {
+            BaseKey::Function(n) if (1..=12).contains(n) => 0xffbe + u32::from(n - 1),
+            BaseKey::Letter(ch) => *ch as u32,
+            BaseKey::Digit(ch) => *ch as u32,
+            _ => return None,
+        })
+    }
+
+    /// `Combo` → X11 修饰键掩码。`cmd`/`super` 在 X11 上是 Mod4（GNOME 的 Super）
+    pub(super) fn mods_of(combo: &Combo) -> u16 {
+        let mut mask = 0;
+        if combo.shift {
+            mask |= SHIFT;
+        }
+        if combo.control {
+            mask |= CONTROL;
+        }
+        if combo.option {
+            mask |= ALT;
+        }
+        if combo.cmd {
+            mask |= SUPER;
+        }
+        mask
+    }
+
+    /// keysym → 当前键盘布局的键码（第一映射列就是"这键不带修饰时打的字符"）
+    fn keycode_for(conn: &RustConnection, keysym: u32) -> Option<u8> {
+        let setup = conn.setup();
+        let first = setup.min_keycode;
+        let count = setup.max_keycode - first + 1;
+        let reply = conn.get_keyboard_mapping(first, count).ok()?.reply().ok()?;
+        let per = reply.keysyms.len() / usize::from(count);
+        if per == 0 {
+            return None;
+        }
+        let index = reply
+            .keysyms
+            .chunks(per)
+            .position(|chunk| chunk.contains(&x11rb::protocol::xproto::Keysym::from(keysym)))?;
+        u8::try_from(first as usize + index).ok()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// F1…F12 与 X11 的 keysym 段一一对上；字母数字就是 ASCII
+        #[test]
+        fn the_keysyms_are_the_ones_the_x_server_uses() {
+            assert_eq!(keysym_of(&BaseKey::Function(1)), Some(0xffbe));
+            assert_eq!(keysym_of(&BaseKey::Function(12)), Some(0xffc9));
+            assert_eq!(keysym_of(&BaseKey::Function(13)), None);
+            assert_eq!(keysym_of(&BaseKey::Letter('f')), Some(0x66));
+            assert_eq!(keysym_of(&BaseKey::Digit('7')), Some(0x37));
+        }
+
+        /// 四条修饰键各归各的掩码，且组合起来是或（不是覆盖）
+        #[test]
+        fn every_modifier_lands_on_its_own_x11_bit() {
+            let mut combo = Combo {
+                base: BaseKey::Function(1),
+                cmd: false,
+                shift: false,
+                option: false,
+                control: false,
+            };
+            assert_eq!(mods_of(&combo), 0, "裸 F1 不许凭空带修饰");
+            combo.shift = true;
+            combo.control = true;
+            assert_eq!(mods_of(&combo), SHIFT | CONTROL);
+            combo.option = true;
+            combo.cmd = true;
+            assert_eq!(mods_of(&combo), SHIFT | CONTROL | ALT | SUPER);
+        }
+    }
+}
+
 /// `eventHotKeyExistsErr`（`CarbonEventsCore.h:152`）
+#[cfg(target_os = "macos")]
 const EVENT_HOT_KEY_EXISTS: i32 = -9878;
 
+#[cfg(target_os = "macos")]
 fn register(key_code: u16, modifiers: u32, id: u32) -> Result<*mut c_void, i32> {
     let mut handle: *mut c_void = std::ptr::null_mut();
     let status = unsafe {
@@ -337,6 +633,7 @@ fn register(key_code: u16, modifiers: u32, id: u32) -> Result<*mut c_void, i32> 
     if status == 0 { Ok(handle) } else { Err(status) }
 }
 
+#[cfg(target_os = "macos")]
 fn unregister_all() {
     let Ok(mut list) = handles().lock() else {
         return;
@@ -481,6 +778,9 @@ mod tests {
     }
 
     /// 事件类型那四个值：**这就是上一版整批读数为假的根因**，锁死字面值
+    ///
+    /// 那四个常量随 Carbon FFI 一起只在 macOS 存在，所以这条锁也只在 macOS 编译
+    #[cfg(target_os = "macos")]
     #[test]
     fn the_carbon_event_type_constants_are_the_ones_from_the_sdk() {
         assert_eq!(K_EVENT_CLASS_KEYBOARD, u32::from_be_bytes(*b"keyb"));

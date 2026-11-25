@@ -1,0 +1,143 @@
+{
+  "baseline": {
+    "change": "CHG-017",
+    "version": "v0.1",
+    "spec_hash": "fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2"
+  },
+  "design": [
+    { "requirement": "REQ-001", "section": "## REQ-001 实现与验证" },
+    { "requirement": "REQ-002", "section": "## REQ-002 实现与验证" },
+    { "requirement": "REQ-003", "section": "## REQ-003 实现与验证" },
+    { "requirement": "REQ-004", "section": "## REQ-004 实现与验证" },
+    { "requirement": "REQ-005", "section": "## REQ-005 实现与验证" },
+    { "requirement": "REQ-006", "section": "## REQ-006 实现与验证" },
+    { "requirement": "REQ-007", "section": "## REQ-007 实现与验证" },
+    { "requirement": "REQ-008", "section": "## REQ-008 实现与验证" },
+    { "requirement": "REQ-009", "section": "## REQ-009 实现与验证" },
+    { "requirement": "REQ-010", "section": "## REQ-010 实现与验证" },
+    { "requirement": "REQ-011", "section": "## REQ-011 实现与验证" },
+    { "requirement": "REQ-012", "section": "## REQ-012 实现与验证" }
+  ],
+  "verifications": [
+    {
+      "id": "V-001",
+      "requirements": ["REQ-001", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-008", "REQ-009", "REQ-011", "REQ-012"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": ["cargo", "test", "--workspace"],
+      "note": "完成线是 F8 那 19 条红（app 2 / jobs 1 / state 16）全绿且既有 566 条不回退。这条能证明档位→能力那张纯函数表、ttc 面选择、`registration_plan` 的先解绑、遮罩与贴图的状态机；**不能证明**门户真出图（H1）、SNI 真出图标（H2）、默认键真抢到（H5）——那三条只有真机判"
+    },
+    {
+      "id": "V-002",
+      "requirements": ["REQ-012"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+      "note": "平台门纪律的廉价防线：本会话两处 Linux 编译断裂（Carbon `link kind framework`、example 里裸 `use objc2`）都是「顶层 use / link 属性没 gate」这一族，`--all-targets` 才抓得到 examples"
+    },
+    {
+      "id": "V-003",
+      "requirements": ["REQ-012"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "local",
+      "required": true,
+      "command": ["cargo", "check", "--target", "aarch64-apple-darwin", "--workspace"],
+      "note": "平台边界硬约束的反向证明：不得把 mac 的门拆了补 Linux"
+    },
+    {
+      "id": "V-004",
+      "requirements": ["REQ-001", "REQ-012"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "本机真机：清掉 `WAYLAND_DISPLAY` 起进程，核对 winit 实际后端、`raw_window_handle` 拿到的 XID 与 `xwininfo -root -children` 的 36 个子窗对表、Vulkan/wgpu 是否仍在呈现（H4）。取数全走数值与日志，不看截图"
+    },
+    {
+      "id": "V-005",
+      "requirements": ["REQ-002"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "本机真机跑 `examples/portal_shot_probe`：门户是否给我们这个 app id 出图、URI 形态、耗时、首次是否弹授权（H1）。同一轮补 T-002 的门户 vs X11 `GetImage` 像素统计对比——这条把「XWayland 拍不到 Wayland 原生应用」从推断钉成数字"
+    },
+    {
+      "id": "V-006",
+      "requirements": ["REQ-002"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_CODE",
+      "environment": "mock",
+      "required": true,
+      "note": "脚本化 `org.freedesktop.portal.Request::Response`（成功 / 用户拒绝 / 超时 / URI 不可读四路）证明我们的状态机与分岔。**Mock 不得当成 H1 的证据**（design 验证层次表）"
+    },
+    {
+      "id": "V-007",
+      "requirements": ["REQ-003", "REQ-004", "REQ-009"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "本机真机数值：`xrandr --listmonitors` 报 1 块 DP-1 2560x1440+0+0 而 Wayland 窗坐在 +0+32，`probe()` 之后遮罩铺的并集与顶栏偏移是否对得上；`query_tree` 窗数与 `xwininfo` 的 36 对表，并核对「Wayland 原生应用不在这张表里」这句话有没有依据（REQ-009 不许报没依据的免责声明）"
+    },
+    {
+      "id": "V-008",
+      "requirements": ["REQ-005", "REQ-008"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "本机真机：定格→框选→钉住→空格工具条→画笔/箭头/马赛克/文字→复制与保存整链跑通，且译文图片导出不报 `VisionError::Font`（字体面走 D-5 的 name 表选 SC，不硬编码索引）"
+    },
+    {
+      "id": "V-009",
+      "requirements": ["REQ-006"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "本机真机：别的应用前台按 F1/F2/F3 命中（H5）。**无法软件自证**——`XGrabKey` 抢到没抢到只有按了才知道，每轮需人在机器前。抢不到 SHALL 给出可用默认值建议（只改填值，不改区间）"
+    },
+    {
+      "id": "V-010",
+      "requirements": ["REQ-007"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "本机真机 SNI 冒烟（H2）：`org.kde.StatusNotifierWatcher`（由 gnome-shell pid 5481 持有）上出现我们的 item、图标可见、一次菜单点击命中分派。冒烟未过之前不得先写完整实现"
+    },
+    {
+      "id": "V-011",
+      "requirements": ["REQ-010"],
+      "repo": "ice-translator",
+      "kind": "VERIFIED_RUNTIME",
+      "environment": "sandbox",
+      "required": true,
+      "note": "本机真机：`org.freedesktop.secrets` 有无 owner（H3）→ 有则 keyring 写入读回一次（值不进日志与证据文件）；无则界面明说「这台机器没有安全存储，密钥不落盘」，SHALL NOT 回退明文配置。arboard 与 `kill(pid,0)` 各验一次并标注「无需移植」"
+    },
+    {
+      "id": "V-012",
+      "requirements": ["REQ-001", "REQ-004", "REQ-005", "REQ-007"],
+      "repo": "ice-translator",
+      "kind": "BUSINESS_CONFIRMED",
+      "environment": "business",
+      "required": true,
+      "note": "你在机器前过一遍手感并逐格确认：档位一行看得懂、置顶不生效时那句「不保证」看得见、托盘收起与唤回对得上、标注那条链可用。缺这一条不得记 ACCEPTED（REQ-002 的取图与 REQ-006 的热键也在这一轮一起看，但它们的客观判据在 V-005/V-009）"
+    },
+    {
+      "id": "V-013",
+      "requirements": ["REQ-002"],
+      "repo": "ice-translator",
+      "kind": "HYPOTHESIS",
+      "environment": "sandbox",
+      "required": false,
+      "note": "H1 未闭合的记账：本机权限库 `screenshot/screenshot` 表已存在且有他应用条目（证明门户截图路径走得通过），但**没证明我们这个 app 拿得到图**。V-005 跑绿后把这条改成 VERIFIED 或删除（删前逐条问）"
+    }
+  ]
+}

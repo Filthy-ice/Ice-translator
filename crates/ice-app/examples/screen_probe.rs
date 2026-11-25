@@ -7,9 +7,18 @@
 //! cargo run -p ice-app --example screen_probe
 //! ```
 
+#[cfg(target_os = "macos")]
 use objc2::MainThreadMarker;
+#[cfg(target_os = "macos")]
 use objc2_app_kit::NSScreen;
 
+/// 探针读的是 `NSScreen`，Linux/Windows 这一侧没有等价物，只留一句说明而不是编译断裂
+#[cfg(not(target_os = "macos"))]
+fn main() {
+    eprintln!("screen_probe 依赖 NSScreen，只在 macOS 上有读数意义");
+}
+
+#[cfg(target_os = "macos")]
 fn main() {
     let Some(mtm) = MainThreadMarker::new() else {
         eprintln!("拿不到主线程标记，探针无法读 NSScreen");

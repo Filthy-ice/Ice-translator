@@ -297,9 +297,74 @@ pub fn apply_cool_light(style: &mut egui::Style) {
     widgets.open.weak_bg_fill = COOL_RAISED;
 }
 
+/// 实际交给 egui 的那一档：`System` 在 Linux 上要自己解出亮/暗。
+///
+/// egui 的 `ThemePreference::System` 靠 winit 报的系统偏好，而 **winit 在 X11 上恒 `None`**，
+/// 于是"跟随系统"实际一直落到深色——用户那条"中间档界面是黑的、标题栏是白的"就是它
+/// （2026-11-26）。这里改问门户 `Settings.Read("org.freedesktop.appearance","color-scheme")`
+/// （0 无偏好 / 1 深 / 2 浅），5 秒缓存；问不到（没有门户）才把 `System` 原样交回去。
+fn resolved_preference(theme: Theme) -> ThemePreference {
+    if theme != Theme::System {
+        return preference(theme);
+    }
+    #[cfg(all(target_os = "linux", not(test)))]
+    {
+        match system_color_scheme() {
+            Some(true) => ThemePreference::Dark,
+            Some(false) => ThemePreference::Light,
+            None => ThemePreference::System,
+        }
+    }
+    #[cfg(not(all(target_os = "linux", not(test))))]
+    {
+        ThemePreference::System
+    }
+}
+
+/// 系统的颜色偏好：`Some(true)` = 深色，`Some(false)` = 浅色，`None` = 问不到/没偏好。
+#[cfg(target_os = "linux")]
+#[cfg_attr(test, allow(dead_code))] // 测试里不走这条（无头断言不该连会话总线）
+fn system_color_scheme() -> Option<bool> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<(Instant, Option<bool>)>> = Mutex::new(None);
+    if let Ok(cache) = CACHE.lock() {
+        if let Some((at, value)) = cache.as_ref() {
+            if at.elapsed() < Duration::from_secs(5) {
+                return *value;
+            }
+        }
+    }
+    let read = zbus::blocking::Connection::session().ok().and_then(|conn| {
+        let reply = conn
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.Settings"),
+                "Read",
+                &("org.freedesktop.appearance", "color-scheme"),
+            )
+            .ok()?;
+        let value: zbus::zvariant::OwnedValue = reply.body().deserialize().ok()?;
+        let scheme = u32::try_from(value).ok()?;
+        match scheme {
+            1 => Some(true),
+            // 2 = prefer-light；**0 = "没有偏好"在 GNOME 里就是浅色默认外观**
+            // （2026-11-26 实测：系统设成"默认"时门户回 0、GTK 主题是 Yaru 浅色，
+            // 之前把 0 当"问不到"交给 egui，于是内容黑、标题栏白）
+            2 | 0 => Some(false),
+            _ => None,
+        }
+    });
+    if let Ok(mut cache) = CACHE.lock() {
+        *cache = Some((Instant::now(), read));
+    }
+    read
+}
+
 /// 每帧同步一次外观设置（改动即时生效，无需"应用"按钮）
 pub fn apply(ctx: &egui::Context, ui: &UiConfig) {
-    ctx.set_theme(preference(ui.theme));
+    ctx.set_theme(resolved_preference(ui.theme));
     apply_font_scale(ctx, ui.font_scale);
     let line_spacing = ui.line_spacing;
     ctx.all_styles_mut(move |style| {
