@@ -1,4 +1,4 @@
-# CHG-017 · Linux 移植：mac 已实现能力按 X11/Wayland 分档补齐（OCR 识别本轮不做）
+# LNX-001 · Linux 移植：mac 已实现能力按 X11/Wayland 分档补齐（OCR 识别本轮不做）
 
 ## 原始意图与来源
 
@@ -194,7 +194,7 @@ WHEN 本包收口 THEN `cargo fmt --all`、`cargo clippy --workspace --all-targe
   4. Windows 平台在本包的档位是**维持现状**（NFR-7 的 `cargo check` 通过即可）；发现 Linux 改动会连带影响 Win 侧编译时，停下来交回用户，不自行重排。
 - 批准本规格 = 允许在 Linux 上做设计、拆任务、实现与本机验证（含重启本机 GUI 实例、装本机字体/D-Bus 探测）。
 - **不含**：任何部署、远端仓库写（push 需单独确认）、`docs/` 基线之外的口径改动、删除任何文件或旧证据（删前逐条问）、以及把密钥/截图证据提交进公开仓库（本仓公开：截图 SHALL 裁到仅含本应用窗口，逐张确认，`docs/03-ui-design.md` §5）。
-- 与本包分开落的两件事（已在会话中改好、**待你点头即提交**）：`crates/ice-app/src/system/global_hotkeys.rs` 的 Carbon 平台门（36 行纯新增，0 删除）、`crates/ice-app/examples/screen_probe.rs` 的 objc2 顶层 use 门。它们是 NFR-7"Linux 能编译"范围内的修编译，不是新业务判断，所以不进 CHG-017 账本。
+- 与本包分开落的两件事（已在会话中改好、**待你点头即提交**）：`crates/ice-app/src/system/global_hotkeys.rs` 的 Carbon 平台门（36 行纯新增，0 删除）、`crates/ice-app/examples/screen_probe.rs` 的 objc2 顶层 use 门。它们是 NFR-7"Linux 能编译"范围内的修编译，不是新业务判断，所以不进 LNX-001 账本。
 - 停止条件：外部契约推翻前提（例如门户拒给我们出图、`XGrabKey` 在本机被 Shell 全占）→ 记 SPEC_DEVIATION 退回 SPEC_REVIEW，不自行动业务写路径。
 
 ## 时间估算

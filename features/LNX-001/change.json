@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "id": "CHG-017",
+  "id": "LNX-001",
   "title": "Linux 移植：mac 已实现能力按 X11/Wayland 分档补齐（OCR 识别本轮不做）",
   "version": "v0.1",
-  "status": "IMPLEMENTING",
+  "status": "APPROVED",
   "kind": "feature",
   "repos": [
     "ice-translator"
@@ -80,7 +80,7 @@
       "at": "2026-11-24T16:01:19+00:00",
       "action": "plan-stamp",
       "detail": {
-        "change": "CHG-017",
+        "change": "LNX-001",
         "version": "v0.1",
         "spec_hash": "fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2"
       }
@@ -259,20 +259,42 @@
       "at": "2026-11-25T15:08:16+00:00",
       "action": "task-done",
       "detail": "T-014"
+    },
+    {
+      "at": "2026-11-25T17:29:33+00:00",
+      "action": "SPEC_DEVIATION",
+      "detail": "改号：CHG-017 → LNX-001（Linux 移植独占前缀，与 mac 的 CHG 序列永不撞号；用户 2026-11-26 决定，从 001 起编）。正文语义未变，仅编号替换"
+    },
+    {
+      "at": "2026-11-25T17:29:34+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "73873bc2b37854d01f6f79faf9fdc94813c8003b9aaad9bb6c49e164d85d87cc",
+        "version": "v0.1",
+        "by": "zhanghaobing",
+        "reference": "用户 2026-11-26 指示：CHG 前缀换成 Linux 专用、从 01 起编以避开与 mac 的冲突",
+        "at": "2026-11-25T17:29:34+00:00",
+        "snapshot": "approvals/v0.1-73873bc2b37854d01f6f79faf9fdc94813c8003b9aaad9bb6c49e164d85d87cc.md",
+        "scope": "local-delivery",
+        "context_hash": "26129d74c984f372cc0f6a1f76efafab545fdda7c3a8359fccd5ad9603e89287",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
     }
   ],
   "approval": {
-    "hash": "fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2",
+    "hash": "73873bc2b37854d01f6f79faf9fdc94813c8003b9aaad9bb6c49e164d85d87cc",
     "version": "v0.1",
     "by": "zhanghaobing",
-    "reference": "本会话 2026-11-24 用户回复「批准」（含平台边界硬约束追加后重算的快照）",
-    "at": "2026-11-24T15:52:57+00:00",
-    "snapshot": "approvals/v0.1-fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2.md",
+    "reference": "用户 2026-11-26 指示：CHG 前缀换成 Linux 专用、从 01 起编以避开与 mac 的冲突",
+    "at": "2026-11-25T17:29:34+00:00",
+    "snapshot": "approvals/v0.1-73873bc2b37854d01f6f79faf9fdc94813c8003b9aaad9bb6c49e164d85d87cc.md",
     "scope": "local-delivery",
     "context_hash": "26129d74c984f372cc0f6a1f76efafab545fdda7c3a8359fccd5ad9603e89287",
     "branches": {
       "ice-translator": "main"
     }
   },
-  "plan_hash": "f0231689507e1f45fccb30499d499054cffb25aef5c8adf9b4fadcb0dbda74ec"
+  "plan_hash": null
 }

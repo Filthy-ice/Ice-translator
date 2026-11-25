@@ -254,7 +254,7 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 | 字体 | **界面正文不再走系统解析**（2026-10-28 变更 H）：`fonts::install` 在建窗闭包里把 `/System/Library/Fonts/STHeiti Medium.ttc` 读进内存、`ctx.set_fonts` 装成 `Proportional` 族第 0 位，中文才落到黑体-简上。三条不显然的约束：① 这个 `.ttc` 有两面，**第 1 面才是黑体-简**（第 0 面是黑体-繁，两面都覆盖常用简体字，选错不崩不缺字，只有肉眼看得出）；② `Monospace` 族里黑体排在 Hack **之后**，否则对照页的拉丁列不再等宽；③ `set_fonts` 是整体替换，只在启动调一次（每帧调会把字形图集作废），eframe 的 `egui_system_font_provider` 仍挂在 provider 上兜底生僻字（它排在我们的清单之后）。代价：55MB 字体常驻内存（`FontData` 没有文件映射入口）。文件读不到就什么都不做、中文回落系统解析并记一条 debug——不能因为缺字体让界面空白 | Windows / Linux 无这一份文件：`install` 返回 `false`，沿用 eframe 的系统字体回退；真要跨平台一致需自带字体文件，v1 不覆盖 |
 | 应用形态 | 需打包 `.app` 才有 Dock 图标与正常生命周期 | 直接 exe |
 
-### 8.1 Linux 档（CHG-017，2026-11-25 真机推进）——上表"Windows / Linux"那一列的现状
+### 8.1 Linux 档（LNX-001，2026-11-25 真机推进）——上表"Windows / Linux"那一列的现状
 
 上表那一列写的是**当年静态核查**的结论，2026-11-25 这一轮把 Linux（GNOME 50 + XWayland）真机跑过一遍，
 现状按主题记在这里；下面每一条都带实测出处，未做的写明未做：

@@ -1,8 +1,8 @@
-Change: CHG-017
+Change: LNX-001
 Version: v0.1
 Spec-Hash: fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2
 
-# CHG-017 · Design
+# LNX-001 · Design
 
 基线：`origin/main` @ `aa6c050`（Linux 编译面在本会话修好两处平台门后可用）。规格快照 `fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2`（v0.1 APPROVED，批准人 zhanghaobing，2026-11-24）。
 

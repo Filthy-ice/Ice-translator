@@ -1,6 +1,6 @@
-Change: CHG-017
+Change: LNX-001
 Version: v0.1
-Spec-Hash: fa20de951d58500f1d8d0024adebbd17ec3ee646dc21025176e0e0f9a201fac2
+Spec-Hash: 73873bc2b37854d01f6f79faf9fdc94813c8003b9aaad9bb6c49e164d85d87cc
 
 # Tasks（由 tasks.json 生成，勿直接修改）
 - [x] T-001 门户截图取证（先证 H1，再写实现）：新增 `examples/portal_shot_probe.rs`（linux 门，非 mac 才编译），用 zbus blocking 走 `org.freedesktop.portal.Desktop` → `Screenshot(sa{sv}o)` 非交互 → 收 `Response` → 读 URI → 打印尺寸与像素统计（均值/max/min）。留盘读数：是否出图、URI 形态、耗时、首次是否弹授权 | ice-translator | REQ-002

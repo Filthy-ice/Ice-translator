@@ -334,9 +334,9 @@
 ## P7 译文回填 — 待记录
 ## P8 收口 — 待记录
 
-## P9 Linux 移植（CHG-017）— 2026-11-25 实现推进，走查待用户
+## P9 Linux 移植（LNX-001）— 2026-11-25 实现推进，走查待用户
 
-规格与任务账在 `features/CHG-017/`（spec/design/tasks/evidence）。口径：**只搬 mac 已有、且这一轮定了要搬的**。
+规格与任务账在 `features/LNX-001/`（spec/design/tasks/evidence）。口径：**只搬 mac 已有、且这一轮定了要搬的**。
 
 - 已实现并通过无头验证：`backend`（档位判定 + 能力表）、`screen`（RandR/`_NET_WORKAREA`）、
   `portal`（截图取图，常驻连接与订阅）、`cover`（X11 全屏 + 焦点 + 还焦点）、`window_x11`
