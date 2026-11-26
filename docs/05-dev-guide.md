@@ -265,7 +265,7 @@ python3 -B tests/test_workflow.py       # SDD 引擎自身回归（36 项）
 | 屏幕可用区 | `system::screen::probe()` 的 Linux 分支：RandR 1.5 + `_NET_WORKAREA`（本机实测 1 块虚拟屏 2560×1440、workarea `[0,32,2560,1349]`），换算回 AppKit 口径，`flip/select/union/fallback_area` 一行未改；带 1 秒缓存（帧循环调用，不每帧建 X 连接） |
 | 区域截图·取图 | 门户 `org.freedesktop.portal.Screenshot`（`system::portal`），读完即删；**连接与订阅是进程级常驻**——按次建连接会在第二张起永远收不到回信（2026-11-25 真机缺陷，已修） |
 | 遮罩 | `cover_display` 用 `_NET_WM_STATE_FULLSCREEN|ABOVE` 真盖住整屏并让顶栏让位，`focus()` 激活并读回 `_NET_ACTIVE_WINDOW`/`GetInputFocus`，`step_back()` 把焦点还给进来之前那扇窗（由本进程自己记） |
-| 全局热键 | `XGrabKey`（四组锁掩码 + `cookie.check()` 判 BadAccess），命中只写同一个 `PENDING`。本机实测 F1/F2/F3 都抓得到；**XTEST 注入的按键触发不了被动抓取**，所以自动化测试验不了这一格，只有真人按键算数 |
+| 全局热键 | **门户优先、X 回落**（LNX-002）：先走 `GlobalShortcuts`——`XGrabKey` 在焦点是 Wayland 窗口时收不到（用户 2026-11-26：点 DING 桌面按 F1 无反应、点 Qoder 正常），与本进程档位无关（本进程仍跑 XWayland）；门户不可用才回落 `XGrabKey`。首次绑定会弹一次系统授权框，绑定在工作线程，失败用 toast 说。命中只写同一个 `PENDING`。**XTEST 验不了这一格**，只有真人按键算数 |
 | 置顶 / 停靠 | 置顶沿用 egui `always_on_top`（winit X11 → `_NET_WM_STATE_ABOVE`）；停靠落点 X11 可设，但 Mutter 可能夹回工作区（同上表） |
 | 半透明 | `alpha::set` 写 `_NET_WM_WINDOW_OPACITY` 并读回；**但 wgpu 的 X11 表面本机不支持透明合成**（启动日志 `Transparent window … does not support CompositeAlphaMode`），所以观感上不生效——如实记着，不当成功 |
 | 托盘 | 已实现（T-012，`system::tray_sni`）：手写 `org.kde.StatusNotifierItem` + `com.canonical.dbusmenu`，注册到 `org.kde.StatusNotifierWatcher`；图标 = 主题名 `ice-translator` + 22×22 ARGB32 位图；菜单五项与 `tray::menu_titles` 一致，点选只写同一个 `PENDING`（`pump_tray` 不改）。真机：日志 `托盘这一档定下来了 next=Available`，watcher 列表可见 `org.kde.StatusNotifierItem-<pid>-1`。**注意**：第一版把 D-Bus 连接留在 `spawn()` 里，函数退出即释放名字（日志 Available 但菜单栏无图标），现在连接由 `Tray` 持有到进程结束 |

@@ -41,6 +41,27 @@ pub const HIDDEN_HEARTBEAT: Duration = Duration::from_millis(250);
 /// 没有逐帧补间，多发一条就会多发一次原生 resize 事件。`OuterPosition` 对全量形态也下发
 /// 是 CHG-004 的改动——从贴边停靠的悬浮条切回全量时不下发的话，窗口会留在屏幕边缘那条位置
 /// 上，与 FR-3.6"记住位置尺寸"矛盾。
+/// 下发一组形态命令。**Linux 档在末尾补一刀"去掉系统装饰"**：标题栏由 `views::chrome`
+/// 自绘，谁在中间又发了 `Decorations(true)`，屏幕上就是"两条标题栏"（2026-11-26 用户实测：
+/// 全量与精简都出现，起因为 `reveal`/恢复路径各自重发了一遍 `commands_for_mode`）。
+/// 所有下发口都走这一个函数，别直接 `send_viewport_cmd(Decorations(true))`。
+pub fn send(ctx: &egui::Context, commands: &[ViewportCommand]) {
+    for command in commands {
+        // Linux 档把列表里任何 `Decorations(..)` 改成"无装饰"，而不是额外追加一条：
+        // 重发尺寸那类路径本来就不带装饰命令，测试也按"两条"钉着（见
+        // `a_first_stage_expiry_resends_the_size_and_position_once`）。
+        // 无头测试按 mac 口径断言（列表里应当还是 `Decorations(true)`），只有真机构建改写成无装饰
+        #[cfg(all(target_os = "linux", not(test)))]
+        let command = match command {
+            ViewportCommand::Decorations(_) => ViewportCommand::Decorations(false),
+            other => other.clone(),
+        };
+        #[cfg(any(not(target_os = "linux"), test))]
+        let command = command.clone();
+        ctx.send_viewport_cmd(command);
+    }
+}
+
 pub fn commands_for_mode(cfg: &UiConfig, mode: UiMode) -> Vec<ViewportCommand> {
     let rect = rect_for(cfg, mode);
     // 用户 2026-10-27 决定（Q-013）：简洁窗也要有原生顶部栏与最小化/关闭按钮。
@@ -650,9 +671,7 @@ pub fn apply(
     state.fill = None;
     let target = target_size(&state.config.ui, mode);
     tracing::debug!(?mode, w = target.x, h = target.y, "下发形态切换的几何命令");
-    for command in commands_for_mode(&state.config.ui, mode) {
-        ctx.send_viewport_cmd(command);
-    }
+    send(ctx, &commands_for_mode(&state.config.ui, mode));
     // Linux 档：系统装饰后再补一刀"去掉它"——标题栏由 `views::chrome` 自绘，颜色才跟内容
     // 同源（系统装饰由窗口管理器按**系统**主题上色，与应用的亮暗档必然有一边对不上）。
     // 放在这里而不是 `commands_for_mode` 里：那个函数是纯的、被 mac 与测试共用。
@@ -915,9 +934,7 @@ pub fn reveal(
     }
     let mode = state.config.ui.mode;
     let target = target_size(&state.config.ui, mode);
-    for command in commands_for_mode(&state.config.ui, mode) {
-        ctx.send_viewport_cmd(command);
-    }
+    send(ctx, &commands_for_mode(&state.config.ui, mode));
     // 重发同样是一组异步请求，护栏要跟着重新上（D-6）
     pending.set(target, Instant::now());
     apply_topmost(ctx, state);

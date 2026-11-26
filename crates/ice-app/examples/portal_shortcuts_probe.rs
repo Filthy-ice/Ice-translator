@@ -23,8 +23,15 @@ fn main() {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         for msg in iter.flatten() {
-            let path = msg.header().path().map(|p| p.as_str().to_string()).unwrap_or_default();
-            if let Ok(reply) = msg.body().deserialize::<(u32, HashMap<String, OwnedValue>)>() {
+            let path = msg
+                .header()
+                .path()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_default();
+            if let Ok(reply) = msg
+                .body()
+                .deserialize::<(u32, HashMap<String, OwnedValue>)>()
+            {
                 let _ = tx.send((path, reply));
             }
         }
@@ -32,11 +39,15 @@ fn main() {
     let options: HashMap<&str, OwnedValue> = HashMap::from([
         (
             "handle_token",
-            zbus::zvariant::Value::from("iceprobecreater".to_string()).try_into().unwrap(),
+            zbus::zvariant::Value::from("iceprobecreater".to_string())
+                .try_into()
+                .unwrap(),
         ),
         (
             "session_handle_token",
-            zbus::zvariant::Value::from("iceprobecreate".to_string()).try_into().unwrap(),
+            zbus::zvariant::Value::from("iceprobecreate".to_string())
+                .try_into()
+                .unwrap(),
         ),
     ]);
     let reply = conn

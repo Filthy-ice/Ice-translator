@@ -732,9 +732,10 @@ impl IceApp {
         self.dock_anchor = None;
         self.state.mark_config_dirty();
         self.flush_config(true);
-        for command in mode::commands_for_mode(&self.state.config.ui, current_mode) {
-            ctx.send_viewport_cmd(command);
-        }
+        mode::send(
+            ctx,
+            &mode::commands_for_mode(&self.state.config.ui, current_mode),
+        );
         self.pending_geometry.set(
             mode::target_size(&self.state.config.ui, current_mode),
             Instant::now(),
@@ -771,9 +772,7 @@ impl IceApp {
                 filled = self.state.fill.is_some(),
                 "尺寸未落定，重发尺寸与原点请求"
             );
-            for command in commands {
-                ctx.send_viewport_cmd(command);
-            }
+            mode::send(ctx, &commands);
             ctx.request_repaint_after(mode::MODE_GEOMETRY_GRACE);
             return;
         }
@@ -1026,9 +1025,7 @@ impl IceApp {
             return;
         }
         self.state.fill = fill;
-        for command in commands {
-            ctx.send_viewport_cmd(command);
-        }
+        mode::send(ctx, &commands);
         self.pending_geometry.set(target, Instant::now());
         // `area` 是这一句里最有用的数：D-24 现场"下发的目标比实测大一截"到底大在哪个屏、
         // 哪块可用区上，只看尺寸看不出来。只记矩形，不记屏名也不记任何用户内容（NFR-3）。
@@ -1324,9 +1321,11 @@ impl IceApp {
         self.drag_settler.disarm();
         #[cfg(target_os = "linux")]
         if self.linux_strip() {
-            let client_min = crate::system::screen::client_origin(window.min);
+            // y 只用盘上记的那一条：从实时几何推的话，收起/唤出高度一差（6×173 vs 6×160），
+            // 每循环一次就往上挪一点——用户 2026-11-26 报的"越来越往上面了"。
+            let y = self.state.config.ui.compact_rect.y;
             let client_h = mode::target_size(&self.state.config.ui, UiMode::Compact).y;
-            let strip = self.strip_rect(area, edge, client_min.y, client_h);
+            let strip = self.strip_rect(area, edge, y, client_h);
             self.tuck_as_strip(ctx, strip);
             self.dock_shown = false;
             self.dock_latched = true;
@@ -1350,7 +1349,8 @@ impl IceApp {
         if self.linux_strip() {
             self.drag_settler.disarm();
             let full = mode::target_size(&self.state.config.ui, UiMode::Compact);
-            let client_min = crate::system::screen::client_origin(window.min);
+            // 与收起同一口径：y 用盘上那条，不从实时几何推（否则每次循环往上挪）
+            let y = self.state.config.ui.compact_rect.y;
             let x = if edge == DockEdge::Right {
                 area.max.x - full.x
             } else {
@@ -1362,7 +1362,7 @@ impl IceApp {
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(full));
             // 唤出后**内容**要贴着边：直接给客户窗坐标，别走 `place_compact` 的
             // "框→客户"换算（那会再让出 25px，看起来就是离边有距离）
-            let at = Pos2::new(x, client_min.y);
+            let at = Pos2::new(x, y);
             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(at));
             self.commanded = Some(at);
             self.state.config.ui.compact_rect.x = at.x;
@@ -1392,9 +1392,11 @@ impl IceApp {
         #[cfg(target_os = "linux")]
         if self.linux_strip() {
             self.drag_settler.disarm();
-            let client_min = crate::system::screen::client_origin(window.min);
+            // y 只用盘上记的那一条：从实时几何推的话，收起/唤出高度一差（6×173 vs 6×160），
+            // 每循环一次就往上挪一点——用户 2026-11-26 报的"越来越往上面了"。
+            let y = self.state.config.ui.compact_rect.y;
             let client_h = mode::target_size(&self.state.config.ui, UiMode::Compact).y;
-            let strip = self.strip_rect(area, edge, client_min.y, client_h);
+            let strip = self.strip_rect(area, edge, y, client_h);
             self.tuck_as_strip(ctx, strip);
             self.dock_shown = false;
             self.dock_latched = true;
