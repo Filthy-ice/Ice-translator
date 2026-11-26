@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "id": "LNX-002",
+  "title": "Wayland 档全局热键：xdg-desktop-portal GlobalShortcuts（X11 档保持 XGrabKey）",
+  "version": "v0.1",
+  "status": "APPROVED",
+  "kind": "feature",
+  "repos": [
+    "ice-translator"
+  ],
+  "questions": [],
+  "history": [
+    {
+      "at": "2026-11-26T20:08:53+00:00",
+      "action": "new",
+      "detail": "本地草稿"
+    },
+    {
+      "at": "2026-11-26T20:09:00+00:00",
+      "action": "transition",
+      "detail": "CLARIFIED"
+    },
+    {
+      "at": "2026-11-26T20:09:03+00:00",
+      "action": "transition",
+      "detail": "SPEC_REVIEW"
+    },
+    {
+      "at": "2026-11-26T20:09:04+00:00",
+      "action": "approve",
+      "detail": {
+        "hash": "d8b7935fec3be95120d97ca6d9414290973a365395032e9122a1b32159e49637",
+        "version": "v0.1",
+        "by": "zhanghaobing",
+        "reference": "用户 2026-11-26 委派：Wayland 下改用门户 GlobalShortcuts、X11 回落，交付可运行产物",
+        "at": "2026-11-26T20:09:04+00:00",
+        "snapshot": "approvals/v0.1-d8b7935fec3be95120d97ca6d9414290973a365395032e9122a1b32159e49637.md",
+        "scope": "local-delivery",
+        "context_hash": "1d9b0d12bd527eef058a602f023adec7aa127f51895be6d3a3501ba0155a68e5",
+        "branches": {
+          "ice-translator": "main"
+        }
+      }
+    }
+  ],
+  "approval": {
+    "hash": "d8b7935fec3be95120d97ca6d9414290973a365395032e9122a1b32159e49637",
+    "version": "v0.1",
+    "by": "zhanghaobing",
+    "reference": "用户 2026-11-26 委派：Wayland 下改用门户 GlobalShortcuts、X11 回落，交付可运行产物",
+    "at": "2026-11-26T20:09:04+00:00",
+    "snapshot": "approvals/v0.1-d8b7935fec3be95120d97ca6d9414290973a365395032e9122a1b32159e49637.md",
+    "scope": "local-delivery",
+    "context_hash": "1d9b0d12bd527eef058a602f023adec7aa127f51895be6d3a3501ba0155a68e5",
+    "branches": {
+      "ice-translator": "main"
+    }
+  },
+  "plan_hash": null
+}

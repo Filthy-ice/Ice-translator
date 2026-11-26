@@ -344,9 +344,43 @@ fn apply_carbon(config: &HotkeyConfig) -> Result<(), HotkeyFailure> {
     Ok(())
 }
 
+/// Linux 档的注册顺序（LNX-002）：**门户优先、X 回落**。
+///
+/// 不是"按本进程的档位二选一"：`XGrabKey` 失效的条件是**焦点在 Wayland 窗口**，
+/// 而我们自己按设计跑在 XWayland（X11 档）——所以 X11 档同样要先试门户。
+/// 用户 2026-11-26 实测：点 DING 桌面按 F1 没反应，点 Qoder（XWayland）就正常。
 #[cfg(target_os = "linux")]
 fn apply_carbon(config: &HotkeyConfig) -> Result<(), HotkeyFailure> {
-    x11_hotkeys::apply(config)
+    use crate::system::backend::{self, Tier};
+    if matches!(backend::current(), Tier::NoBackend) {
+        return Err(HotkeyFailure::Unavailable);
+    }
+    match super::portal_shortcuts::apply(config) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            tracing::info!(?err, "门户全局热键不可用，回落到 XGrabKey");
+            x11_hotkeys::apply(config)
+        }
+    }
+}
+
+/// 门户那一路命中一条时走这里：与 mac / `XGrabKey` 落**同一个** `PENDING` 与同一次重绘。
+#[cfg(target_os = "linux")]
+pub(super) fn note_id(id: &str) {
+    let code = match id {
+        "capture" => CODE_CAPTURE,
+        "pin_last" => CODE_PIN_LAST,
+        "reopen" => CODE_REOPEN,
+        _ => CODE_NONE,
+    };
+    if code == CODE_NONE {
+        tracing::warn!(shortcut = id, "门户回的快捷键 id 不认识，这一下丢掉");
+        return;
+    }
+    PENDING.store(code, Ordering::SeqCst);
+    if let Some(ctx) = CONTEXT.get() {
+        ctx.request_repaint();
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

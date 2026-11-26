@@ -402,6 +402,12 @@ impl IceApp {
         if let Some(action) = crate::system::global_hotkeys::take_action() {
             self.run(action, ctx, effects);
         }
+        // 门户那条绑定是异步的（要等授权框）：失败在这一帧被看到，用既有 toast 说一句
+        #[cfg(target_os = "linux")]
+        if let Some(failure) = crate::system::portal_shortcuts::take_failure() {
+            self.state.toast(Tone::Warn, failure.explain());
+            ctx.request_repaint();
+        }
     }
 
     /// 菜单栏托盘的泵：定档、核对、把 `outcome` 交回**既有**的 `run` 分派。

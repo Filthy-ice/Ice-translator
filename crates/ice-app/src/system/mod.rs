@@ -20,6 +20,8 @@ pub mod pill;
 pub mod pin;
 #[cfg(target_os = "linux")]
 pub mod portal;
+#[cfg(target_os = "linux")]
+pub mod portal_shortcuts;
 pub mod probe;
 pub mod screen;
 pub mod secrets;

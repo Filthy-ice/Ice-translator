@@ -76,7 +76,7 @@ impl Tier {
             Tier::Mac => "macOS",
             Tier::Windows => "Windows",
             Tier::X11 => "X11：置顶、贴边收起与全局快捷键可用",
-            Tier::WaylandNative => "Wayland 原生：窗口位置与全局快捷键由桌面决定",
+            Tier::WaylandNative => "Wayland 原生：窗口位置由桌面决定（全局快捷键走门户授权）",
             Tier::NoBackend => "没有连上图形后端",
         }
     }

@@ -76,7 +76,11 @@ pub fn capability_of(tier: crate::system::backend::Tier) -> Capability {
         // 门户在运行期缺席/拒授权仍走 [`Failure`]，不在这一格撒谎
         capture: CAPTURE_COMPILED,
         pin: matches!(tier, Tier::Mac | Tier::Windows | Tier::X11),
-        hotkey: matches!(tier, Tier::Mac | Tier::Windows | Tier::X11),
+        // Wayland 原生档也有热键了（LNX-002：门户 `GlobalShortcuts`，与焦点无关）
+        hotkey: matches!(
+            tier,
+            Tier::Mac | Tier::Windows | Tier::X11 | Tier::WaylandNative
+        ),
         ocr: ice_vision::native_ocr_supported(),
     }
 }
@@ -862,8 +866,8 @@ mod tests {
             );
             let wayland = capability_of(Tier::WaylandNative);
             assert!(
-                wayland.capture && !wayland.pin && !wayland.hotkey,
-                "Wayland 原生档：截得下来，但置顶与全局键不许谎报"
+                wayland.capture && !wayland.pin && wayland.hotkey,
+                "Wayland 原生档：截得下来；置顶仍不许谎报；全局热键自 LNX-002 起走门户（与焦点无关）"
             );
             assert!(!capability_of(Tier::NoBackend).pin);
             // 截图那一格是声明而不是探测：它喂的是截图门，探测会把环境依赖带进状态机
