@@ -147,6 +147,17 @@ pub fn apply(config: &HotkeyConfig) -> Result<(), HotkeyFailure> {
         tracing::warn!("连不上会话总线（{err}），全局热键走不了门户");
         HotkeyFailure::Unavailable
     })?;
+    // 非沙箱二进制没有身份，门户会回 NotAllowed: An app id is required。
+    // 先在 host portal 里用桌面文件 id 注册，后续调用才认这个应用。
+    if let Err(err) = conn.call_method(
+        Some(PORTAL),
+        PORTAL_PATH,
+        Some("org.freedesktop.host.portal.Registry"),
+        "Register",
+        &("ice-translator", HashMap::<&str, OwnedValue>::new()),
+    ) {
+        tracing::warn!("host portal 注册失败（{err}），继续尝试建会话");
+    }
     let session = create_session(&conn).map_err(|err| {
         tracing::warn!("门户 GlobalShortcuts 建会话失败（{err}）");
         HotkeyFailure::Unavailable
